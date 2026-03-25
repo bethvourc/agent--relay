@@ -10,6 +10,7 @@ from pathlib import Path
 from agent_relay.agents import AGENT_NAMES, get_agent_adapter
 from agent_relay.capture import CaptureOptions, capture_session
 from agent_relay.checkpoints import create_checkpoint, utc_now
+from agent_relay.fs import write_text_atomic
 from agent_relay.launcher import build_handoff_record, launch_handoff, latest_handoff
 from agent_relay.models import (
     SCHEMA_VERSION,
@@ -18,15 +19,14 @@ from agent_relay.models import (
     VALIDATION_STATUSES,
     ValidationState,
 )
+from agent_relay.read_views import list_sessions_for_dashboard, load_session_for_inspect
 from agent_relay.resume import EVIDENCE_DEPTHS, ResumeRenderOptions, render_resume_packet
 from agent_relay.storage import (
     default_repo_root,
-    list_sessions,
     load_checkpoint,
     load_session,
     resume_dir,
     save_session,
-    write_text_atomic,
 )
 from agent_relay.summary import write_summary
 from agent_relay.ui import (
@@ -306,39 +306,42 @@ def cmd_launch(args: argparse.Namespace) -> int:
 
 def cmd_inspect(args: argparse.Namespace) -> int:
     repo_root = default_repo_root(args.repo)
-    session = load_session(repo_root, args.session)
+    session = load_session_for_inspect(repo_root, args.session)
     if args.json:
-        emit_json(session.to_dict())
+        emit_json(session)
     elif args.quiet:
-        emit_quiet(session.session_id)
+        emit_quiet(str(session["session_id"]))
     else:
-        render_inspect(args.console, session.to_dict())
+        render_inspect(args.console, session)
     return 0
 
 
 def cmd_dashboard(args: argparse.Namespace) -> int:
     repo_root = default_repo_root(args.repo)
-    sessions = list_sessions(repo_root)
+    sessions = list_sessions_for_dashboard(repo_root)
 
     if args.json:
         emit_json({
             "command": "dashboard",
             "sessions": [
                 {
-                    "session_id": s.session_id,
-                    "agent": s.current_agent,
-                    "status": s.current_status,
-                    "objective": s.objective,
-                    "updated_at": s.updated_at,
+                    "session_id": s["session_id"],
+                    "agent": s["current_agent"],
+                    "status": s["current_status"],
+                    "objective": s["objective"],
+                    "updated_at": s["updated_at"],
+                    "storage_model": s.get("storage_model"),
+                    "health": s.get("health"),
+                    "error": s.get("error"),
                 }
                 for s in sessions
             ],
         })
     elif args.quiet:
         for s in sessions:
-            emit_quiet(s.session_id)
+            emit_quiet(str(s["session_id"]))
     else:
-        render_dashboard(args.console, [s.to_dict() for s in sessions])
+        render_dashboard(args.console, sessions)
     return 0
 
 

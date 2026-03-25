@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 from pathlib import Path
 
+from agent_relay.fs import write_json_atomic, write_text_atomic
 from agent_relay.models import CheckpointRecord, ModelValidationError, SessionState
 
 STATE_DIRNAME = ".agent-relay"
@@ -48,24 +48,6 @@ def ensure_session_layout(repo_root: Path, session_id: str) -> Path:
     resume_dir(repo_root, session_id).mkdir(parents=True, exist_ok=True)
     artifacts_dir(repo_root, session_id).mkdir(parents=True, exist_ok=True)
     return root
-
-
-def write_text_atomic(path: Path, content: str) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        encoding="utf-8",
-        dir=path.parent,
-        delete=False,
-    ) as handle:
-        handle.write(content)
-        temp_path = Path(handle.name)
-    temp_path.replace(path)
-    return path
-
-
-def write_json_atomic(path: Path, data: dict[str, object]) -> Path:
-    return write_text_atomic(path, json.dumps(data, indent=2) + "\n")
 
 
 def load_session(repo_root: Path, session_id: str) -> SessionState:

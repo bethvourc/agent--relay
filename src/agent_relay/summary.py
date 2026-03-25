@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from agent_relay.fs import write_text_atomic
 from agent_relay.models import CheckpointRecord, SessionState
-from agent_relay.storage import summary_path, write_text_atomic
+from agent_relay.storage import summary_path
 
 
 def render_summary(session: SessionState, checkpoint: CheckpointRecord) -> str:
