@@ -9,12 +9,13 @@ This initial scaffold includes:
 - a docs index in `docs/README.md`
 - a developer-facing design doc in `docs/developer/v1-design.md`
 - a developer-facing progress tracker in `docs/developer/roadmap-status.md`
+- a developer-facing release checklist in `docs/developer/release-checklist.md`
 - a runnable demo walkthrough in `docs/examples/demo-walkthrough.md`
 - an end-to-end implementation plan in `docs/agent/implementation-plan.md`
 - an execution-grade plan in `docs/agent/execution-plan.md`
 - a milestone spec in `docs/agent/milestones/milestone-1-reliable-session-core.md`
 - a minimal Python CLI package in `src/agent_relay`
-- basic tests for local session creation and handoff preparation
+- tests covering the session core, CLI flows, UI rendering, and bidirectional integration
 - built-in `Claude Code` and `Codex` adapters for handoff and launch behavior
 - launch command templating recorded in handoff metadata
 

@@ -10,10 +10,10 @@ It answers three practical questions:
 
 ## Current Status
 
-- Current phase: `Ready for Phase 7`
-- Completed phases: `Phase 1`, `Phase 2`, `Phase 3`, `Phase 4`, `Phase 5`, `Phase 6`
+- Current phase: `V1 Baseline Complete`
+- Completed phases: `Phase 1`, `Phase 2`, `Phase 3`, `Phase 4`, `Phase 5`, `Phase 6`, `Phase 7`
 - In progress: `None`
-- Not started: `Phase 7`
+- Not started: `None`
 
 ## V1 Goal
 
@@ -137,13 +137,20 @@ What is done:
 
 ### Phase 7: Validation and Demo Flow
 
-Status: `Not Started`
+Status: `Completed`
 
 What this phase covers:
 
 - a reproducible demo walkthrough
 - end-to-end validation in a real repository
 - integration-style confidence beyond unit tests
+
+What is done:
+
+- the demo walkthrough now validates both `claude -> codex` and `codex -> claude` in one session
+- the walkthrough uses the installed CLI path and current `pause` and `prepare` flow
+- a bidirectional integration test now exercises session continuity across multiple handoffs
+- a developer-facing release checklist now exists for the local-first MVP
 
 ## What You Can Use Right Now
 
@@ -157,14 +164,14 @@ The CLI already supports:
 - `launch`
 - `inspect`
 
-That means the local-first skeleton is real and usable today, even though the remaining refactor and hardening phases are still in progress.
+That means the current local-first v1 baseline is implemented, usable, and validated locally.
 
 ## Recommended Next Step
 
 The next engineering step is:
 
-1. validate the new capture flow in a real repository
-2. tighten the demo walkthrough around pause, prepare, failover, and launch
-3. add integration-style confidence beyond unit tests
+1. package the CLI more cleanly for distribution
+2. run the walkthrough in additional real repositories
+3. decide which post-v1 hardening work belongs in the next milestone
 
-That starts Phase 7 and shifts the work from feature construction to validation and demo confidence.
+That moves the project from v1 completion into packaging and broader real-world validation.

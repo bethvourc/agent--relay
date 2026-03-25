@@ -8,6 +8,7 @@ Use these when you want to understand the product direction and track project pr
 
 - [v1-design.md](/Users/bethvour/projects/agent-relay/docs/developer/v1-design.md)
 - [roadmap-status.md](/Users/bethvour/projects/agent-relay/docs/developer/roadmap-status.md)
+- [release-checklist.md](/Users/bethvour/projects/agent-relay/docs/developer/release-checklist.md)
 
 ## Examples
 

@@ -1,157 +1,197 @@
 # Agent Relay Demo Walkthrough
 
-This walkthrough gives you one concrete end-to-end path you can run locally.
+This walkthrough is the Phase 7 validation path.
 
-It covers:
+It proves one session can move:
 
-1. creating a session
-2. writing a checkpoint
-3. preparing a failover
-4. dry-running the launch step
-5. executing the launch step safely
-6. inspecting the resulting session files
+1. `Claude Code -> Codex`
+2. `Codex -> Claude Code`
+
+without losing the same repo-local session history.
 
 ## Goal
 
-By the end of this walkthrough, you will have a real session under `.agent-relay/`, a target-specific resume packet, a recorded handoff, and a successful launch result in `state.json`.
+By the end of this walkthrough, you will have:
 
-## Why This Walkthrough Uses a Launch Override
+- one real session under `.agent-relay/`
+- multiple checkpoints in the same session
+- both `resume/codex.md` and `resume/claude.md`
+- two successful handoff launch records in `state.json`
+- a final session that continues after both handoffs
+
+## Why This Walkthrough Uses Safe Launch Overrides
 
 The default launch commands are:
 
 - `claude`: `cd {repo_root} && claude`
 - `codex`: `cd {repo_root} && codex`
 
-If you already have those CLIs installed, you can use the defaults.
-
-This walkthrough uses `AGENT_RELAY_CODEX_LAUNCH_TEMPLATE` so you can test the full flow even if neither CLI is installed. The override writes a marker file instead of launching a real agent.
+This walkthrough uses safe overrides so you can validate the full orchestration path even if neither real CLI is installed locally.
 
 ## Prerequisites
 
 - Python 3.11+
 - this repository checked out at `/Users/bethvour/projects/agent-relay`
 
-## 1. Set Up Variables
+## 1. Set Up The Tooling
 
 Run:
 
 ```bash
 export AGENT_RELAY_ROOT=/Users/bethvour/projects/agent-relay
 export DEMO_REPO=/tmp/agent-relay-demo
+
 mkdir -p "$DEMO_REPO"
 cd "$AGENT_RELAY_ROOT"
+
+if [ ! -x venv/bin/python ]; then
+  python3 -m venv venv
+fi
+
+venv/bin/python -m pip install -e .
 ```
 
-## 2. Verify The CLI Surface
+## 2. Configure Safe Launch Commands
 
 Run:
 
 ```bash
-PYTHONPATH=src python3 -m agent_relay.cli --help
+export AGENT_RELAY_CODEX_LAUNCH_TEMPLATE="cd {repo_root} && python3 -c 'from pathlib import Path; Path(\"codex-launch.txt\").write_text(\"ok\")'"
+export AGENT_RELAY_CLAUDE_LAUNCH_TEMPLATE="cd {repo_root} && python3 -c 'from pathlib import Path; Path(\"claude-launch.txt\").write_text(\"ok\")'"
+```
+
+These override the real launches and write marker files into the demo repo instead.
+
+## 3. Verify The CLI Surface
+
+Run:
+
+```bash
+venv/bin/agent-relay --help
 ```
 
 You should see these commands:
 
 - `start`
 - `checkpoint`
+- `pause`
+- `prepare`
 - `failover`
 - `launch`
 - `inspect`
+- `dashboard`
 
-## 3. Configure A Safe Launch Command
-
-Run:
-
-```bash
-export AGENT_RELAY_CODEX_LAUNCH_TEMPLATE="cd {repo_root} && python3 -c 'from pathlib import Path; Path(\"launch-marker.txt\").write_text(\"ok\")'"
-```
-
-This makes the future `launch --execute` step write `launch-marker.txt` into the demo repo instead of requiring the real Codex CLI.
-
-## 4. Start A Session
+## 4. Start The Session
 
 Run:
 
 ```bash
-SESSION_ID=$(PYTHONPATH=src python3 -m agent_relay.cli start \
+SESSION_ID=$(venv/bin/agent-relay start \
   --agent claude \
-  --task "Demo handoff flow" \
+  --task "Validate bidirectional handoff flow" \
   --repo "$DEMO_REPO" \
-  | sed -n '1s/^Created session //p')
+  --quiet)
 
 echo "$SESSION_ID"
 ```
 
-What this should create:
+This creates:
 
 - `state.json`
-- an initial checkpoint under `checkpoints/`
+- an initial checkpoint
 - `summary.md`
 
-## 5. Write A Checkpoint
+## 5. Claude Code -> Codex
 
 Run:
 
 ```bash
-PYTHONPATH=src python3 -m agent_relay.cli checkpoint "$SESSION_ID" \
-  --next-action "Prepare a Codex handoff" \
-  --decision "Keep session state local-first" \
-  --touched-file "src/agent_relay/cli.py" \
+venv/bin/agent-relay checkpoint "$SESSION_ID" \
+  --next-action "Prepare the Codex handoff" \
+  --decision "Use safe launch overrides for the demo" \
+  --capture-git-changes \
   --repo "$DEMO_REPO"
-```
 
-This should append a new checkpoint and refresh `summary.md`.
+venv/bin/agent-relay prepare "$SESSION_ID" \
+  --next-action "Hand off to Codex and continue implementation" \
+  --validation-status partial \
+  --validation-summary "The launch path still needs end-to-end validation" \
+  --repo "$DEMO_REPO"
 
-## 6. Prepare Failover
-
-Run:
-
-```bash
-PYTHONPATH=src python3 -m agent_relay.cli failover "$SESSION_ID" \
+venv/bin/agent-relay failover "$SESSION_ID" \
   --to-agent codex \
-  --reason "demo walkthrough" \
+  --reason "demo walkthrough step one" \
+  --resume-evidence-depth full \
   --repo "$DEMO_REPO"
+
+venv/bin/agent-relay launch "$SESSION_ID" \
+  --repo "$DEMO_REPO" \
+  --execute
 ```
 
 What this should produce:
 
 - `resume/codex.md`
-- a new handoff record in `state.json`
-- a rendered launch command based on the safe override
+- a handoff record from `claude -> codex`
+- `$DEMO_REPO/codex-launch.txt`
+- session state with `current_agent: codex`
 
-## 7. Dry-Run The Launch Step
+## 6. Continue In The Same Session Under Codex
 
 Run:
 
 ```bash
-PYTHONPATH=src python3 -m agent_relay.cli launch "$SESSION_ID" \
+venv/bin/agent-relay checkpoint "$SESSION_ID" \
+  --next-action "Prepare a return handoff to Claude" \
+  --implementation-note "Codex completed the implementation slice and wants review" \
   --repo "$DEMO_REPO"
 ```
 
-This should print:
+This proves the session continues instead of starting over after the first handoff.
 
-- the launch target
-- the resume packet path
-- the launch command
-- the launch instructions
-
-It should not mutate the launch status yet.
-
-## 8. Execute The Launch Step
+## 7. Codex -> Claude Code
 
 Run:
 
 ```bash
-PYTHONPATH=src python3 -m agent_relay.cli launch "$SESSION_ID" \
+venv/bin/agent-relay prepare "$SESSION_ID" \
+  --next-action "Return to Claude for validation and close-out" \
+  --validation-status partial \
+  --validation-summary "Implementation is complete but final review is still pending" \
+  --repo "$DEMO_REPO"
+
+venv/bin/agent-relay failover "$SESSION_ID" \
+  --to-agent claude \
+  --reason "demo walkthrough return step" \
+  --resume-evidence-depth full \
+  --repo "$DEMO_REPO"
+
+venv/bin/agent-relay launch "$SESSION_ID" \
   --repo "$DEMO_REPO" \
   --execute
 ```
 
-Because of the override, this should create:
+What this should produce:
 
-- `$DEMO_REPO/launch-marker.txt`
+- `resume/claude.md`
+- a second handoff record from `codex -> claude`
+- `$DEMO_REPO/claude-launch.txt`
+- session state with `current_agent: claude`
 
-and update the session state so the handoff launch result becomes `succeeded`.
+## 8. Finish With One More Checkpoint
+
+Run:
+
+```bash
+venv/bin/agent-relay checkpoint "$SESSION_ID" \
+  --next-action "Ship the validated demo flow" \
+  --decision "The same session survives multiple handoffs" \
+  --validation-status passed \
+  --validation-summary "Bidirectional handoff demo completed successfully" \
+  --repo "$DEMO_REPO"
+```
+
+This final checkpoint proves the session still works after both launches.
 
 ## 9. Inspect What Was Written
 
@@ -161,41 +201,31 @@ Run:
 find "$DEMO_REPO/.agent-relay/sessions/$SESSION_ID" -maxdepth 2 -type f | sort
 cat "$DEMO_REPO/.agent-relay/sessions/$SESSION_ID/summary.md"
 cat "$DEMO_REPO/.agent-relay/sessions/$SESSION_ID/resume/codex.md"
-PYTHONPATH=src python3 -m agent_relay.cli inspect "$SESSION_ID" --repo "$DEMO_REPO"
-cat "$DEMO_REPO/launch-marker.txt"
+cat "$DEMO_REPO/.agent-relay/sessions/$SESSION_ID/resume/claude.md"
+venv/bin/agent-relay inspect "$SESSION_ID" --repo "$DEMO_REPO"
+cat "$DEMO_REPO/codex-launch.txt"
+cat "$DEMO_REPO/claude-launch.txt"
 ```
 
 You should now see:
 
-- at least two checkpoint files
-- `summary.md`
-- `resume/codex.md`
-- `state.json` showing:
-  - `current_agent: codex`
+- multiple checkpoint files in one session
+- both target-specific resume packets
+- `state.json` with:
+  - `current_agent: claude`
   - `current_status: active`
-  - a handoff record with `launch_status: succeeded`
-- `launch-marker.txt` containing `ok`
+  - two handoff records
+  - both `launch_status: succeeded`
+- `codex-launch.txt` containing `ok`
+- `claude-launch.txt` containing `ok`
 
 ## 10. Return To Default Behavior
 
-When you are done with the safe launch override, run:
+When you are done with the safe overrides, run:
 
 ```bash
 unset AGENT_RELAY_CODEX_LAUNCH_TEMPLATE
+unset AGENT_RELAY_CLAUDE_LAUNCH_TEMPLATE
 ```
 
-After that, future Codex failovers will go back to the default launch command:
-
-```text
-cd {repo_root} && codex
-```
-
-## If You Want To Use A Real Agent CLI
-
-If you already have `codex` or `claude` installed locally:
-
-1. skip the override step
-2. run `failover`
-3. run `launch --execute`
-
-That will use the real default launch template for the target agent instead of the safe demo command.
+After that, future failovers will return to the default real-agent launch commands.
