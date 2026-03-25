@@ -7,13 +7,24 @@ from pathlib import Path
 
 
 @dataclass(frozen=True)
-class AgentProfile:
+class LaunchSpec:
+    command: str
+    template: str
+    template_source: str
+    cwd: str
+    instructions: str
+
+
+@dataclass(frozen=True)
+class AgentAdapter:
     key: str
     display_name: str
     cli_command: str
     launch_template_env: str
     default_launch_template: str
     launch_instructions_template: str
+    resume_packet_target: str
+    event_capture_hook_name: str | None = None
 
     def resolve_launch_template(self) -> tuple[str, str]:
         template = os.getenv(self.launch_template_env)
@@ -21,65 +32,88 @@ class AgentProfile:
             return template, "env"
         return self.default_launch_template, "default"
 
+    def render_launch_spec(self, repo_root: Path, resume_path: Path) -> LaunchSpec:
+        template, source = self.resolve_launch_template()
+        values = self._template_values(repo_root, resume_path)
+        try:
+            command = template.format(**values)
+            instructions = self.launch_instructions_template.format(**values)
+        except KeyError as exc:
+            raise SystemExit(
+                f"Launch template for {self.key} references unknown placeholder: {exc.args[0]}"
+            ) from exc
+        return LaunchSpec(
+            command=command,
+            template=template,
+            template_source=source,
+            cwd=str(repo_root),
+            instructions=instructions,
+        )
 
-AGENT_PROFILES: dict[str, AgentProfile] = {
-    "claude": AgentProfile(
-        key="claude",
-        display_name="Claude Code",
-        cli_command="claude",
-        launch_template_env="AGENT_RELAY_CLAUDE_LAUNCH_TEMPLATE",
-        default_launch_template="cd {repo_root} && {agent_cli}",
-        launch_instructions_template=(
-            "Start {agent_name} in {repo_root_path} and use {resume_path_path} "
-            "as the first resume packet you provide."
-        ),
-    ),
-    "codex": AgentProfile(
-        key="codex",
-        display_name="Codex",
-        cli_command="codex",
-        launch_template_env="AGENT_RELAY_CODEX_LAUNCH_TEMPLATE",
-        default_launch_template="cd {repo_root} && {agent_cli}",
-        launch_instructions_template=(
-            "Start {agent_name} in {repo_root_path} and use {resume_path_path} "
-            "as the opening prompt for the handoff."
-        ),
-    ),
+    def _template_values(self, repo_root: Path, resume_path: Path) -> dict[str, str]:
+        return {
+            "agent": self.key,
+            "agent_name": self.display_name,
+            "agent_cli": shlex.quote(self.cli_command),
+            "repo_root": shlex.quote(str(repo_root)),
+            "repo_root_path": str(repo_root),
+            "resume_path": shlex.quote(str(resume_path)),
+            "resume_path_path": str(resume_path),
+            "resume_packet_target": self.resume_packet_target,
+        }
+
+
+class ClaudeCodeAdapter(AgentAdapter):
+    def __init__(self) -> None:
+        super().__init__(
+            key="claude",
+            display_name="Claude Code",
+            cli_command="claude",
+            launch_template_env="AGENT_RELAY_CLAUDE_LAUNCH_TEMPLATE",
+            default_launch_template="cd {repo_root} && {agent_cli}",
+            launch_instructions_template=(
+                "Start {agent_name} in {repo_root_path} and use {resume_path_path} "
+                "as the first resume packet you provide."
+            ),
+            resume_packet_target="claude",
+            event_capture_hook_name=None,
+        )
+
+
+class CodexAdapter(AgentAdapter):
+    def __init__(self) -> None:
+        super().__init__(
+            key="codex",
+            display_name="Codex",
+            cli_command="codex",
+            launch_template_env="AGENT_RELAY_CODEX_LAUNCH_TEMPLATE",
+            default_launch_template="cd {repo_root} && {agent_cli}",
+            launch_instructions_template=(
+                "Start {agent_name} in {repo_root_path} and use {resume_path_path} "
+                "as the opening prompt for the handoff."
+            ),
+            resume_packet_target="codex",
+            event_capture_hook_name=None,
+        )
+
+
+AGENT_REGISTRY: dict[str, AgentAdapter] = {
+    adapter.key: adapter
+    for adapter in (
+        ClaudeCodeAdapter(),
+        CodexAdapter(),
+    )
 }
 
-AGENT_NAMES = tuple(AGENT_PROFILES)
+AGENT_NAMES = tuple(AGENT_REGISTRY)
 
 
-def get_agent_profile(agent: str) -> AgentProfile:
+def get_agent_adapter(agent: str) -> AgentAdapter:
     try:
-        return AGENT_PROFILES[agent]
+        return AGENT_REGISTRY[agent]
     except KeyError as exc:
-        raise SystemExit(f"Unsupported agent profile: {agent}") from exc
+        raise SystemExit(f"Unsupported agent adapter: {agent}") from exc
 
 
-def render_launch_command(profile: AgentProfile, repo_root: Path, resume_path: Path) -> tuple[str, str, str]:
-    template, source = profile.resolve_launch_template()
-    values = _template_values(profile, repo_root, resume_path)
-    try:
-        command = template.format(**values)
-    except KeyError as exc:
-        raise SystemExit(
-            f"Launch template for {profile.key} references unknown placeholder: {exc.args[0]}"
-        ) from exc
-    return command, template, source
-
-
-def render_launch_instructions(profile: AgentProfile, repo_root: Path, resume_path: Path) -> str:
-    return profile.launch_instructions_template.format(**_template_values(profile, repo_root, resume_path))
-
-
-def _template_values(profile: AgentProfile, repo_root: Path, resume_path: Path) -> dict[str, str]:
-    return {
-        "agent": profile.key,
-        "agent_name": profile.display_name,
-        "agent_cli": shlex.quote(profile.cli_command),
-        "repo_root": shlex.quote(str(repo_root)),
-        "repo_root_path": str(repo_root),
-        "resume_path": shlex.quote(str(resume_path)),
-        "resume_path_path": str(resume_path),
-    }
+def get_agent_display_name(agent: str) -> str:
+    return get_agent_adapter(agent).display_name

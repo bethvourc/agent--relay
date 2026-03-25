@@ -13,7 +13,9 @@ src/agent_relay.egg-info/PKG-INFO
 src/agent_relay.egg-info/SOURCES.txt
 src/agent_relay.egg-info/dependency_links.txt
 src/agent_relay.egg-info/entry_points.txt
+src/agent_relay.egg-info/requires.txt
 src/agent_relay.egg-info/top_level.txt
+tests/test_agents.py
 tests/test_checkpoints.py
 tests/test_cli.py
 tests/test_launcher.py

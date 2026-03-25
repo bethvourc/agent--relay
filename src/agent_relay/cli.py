@@ -3,12 +3,13 @@ from __future__ import annotations
 import argparse
 import json
 import secrets
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from agent_relay.agents import AGENT_NAMES
+from agent_relay.agents import AGENT_NAMES, get_agent_adapter
 from agent_relay.checkpoints import create_checkpoint, utc_now
-from agent_relay.launcher import build_handoff_record, launch_handoff, launch_preview_lines, latest_handoff
+from agent_relay.launcher import build_handoff_record, launch_handoff, latest_handoff
 from agent_relay.models import (
     SCHEMA_VERSION,
     SESSION_STATUSES,
@@ -18,6 +19,7 @@ from agent_relay.models import (
 from agent_relay.resume import EVIDENCE_DEPTHS, ResumeRenderOptions, render_resume_packet
 from agent_relay.storage import (
     default_repo_root,
+    list_sessions,
     load_checkpoint,
     load_session,
     resume_dir,
@@ -25,6 +27,20 @@ from agent_relay.storage import (
     write_text_atomic,
 )
 from agent_relay.summary import write_summary
+from agent_relay.ui import (
+    create_console,
+    emit_json,
+    emit_quiet,
+    render_checkpoint_success,
+    render_dashboard,
+    render_error,
+    render_failover_success,
+    render_inspect,
+    render_launch_executing,
+    render_launch_preview,
+    render_launch_result,
+    render_start_success,
+)
 
 
 def write_latest_summary(repo_root: Path, session: SessionState) -> None:
@@ -61,8 +77,21 @@ def cmd_start(args: argparse.Namespace) -> int:
     checkpoint = create_checkpoint(repo_root, session, created_at=now)
     save_session(repo_root, session)
     write_summary(repo_root, session, checkpoint)
-    print(f"Created session {session_id}")
-    print(Path(session.repo_root) / ".agent-relay" / "sessions" / session_id / "state.json")
+    state_path = str(Path(session.repo_root) / ".agent-relay" / "sessions" / session_id / "state.json")
+
+    if args.json:
+        emit_json({
+            "command": "start",
+            "session_id": session_id,
+            "state_path": state_path,
+            "agent": args.agent,
+            "objective": args.task,
+            "status": "active",
+        })
+    elif args.quiet:
+        emit_quiet(session_id)
+    else:
+        render_start_success(args.console, session_id, state_path, args.agent, args.task)
     return 0
 
 
@@ -83,8 +112,18 @@ def cmd_checkpoint(args: argparse.Namespace) -> int:
     checkpoint = create_checkpoint(repo_root, session, created_at=session.updated_at)
     save_session(repo_root, session)
     write_summary(repo_root, session, checkpoint)
-    print(f"Updated session {args.session}")
-    print(checkpoint.checkpoint_id)
+
+    if args.json:
+        emit_json({
+            "command": "checkpoint",
+            "session_id": args.session,
+            "checkpoint_id": checkpoint.checkpoint_id,
+            "status": session.current_status,
+        })
+    elif args.quiet:
+        emit_quiet(checkpoint.checkpoint_id)
+    else:
+        render_checkpoint_success(args.console, args.session, checkpoint.checkpoint_id)
     return 0
 
 
@@ -94,12 +133,13 @@ def cmd_failover(args: argparse.Namespace) -> int:
     if not session.latest_checkpoint_id:
         raise SystemExit("Session has no checkpoint to hand off")
     prepared_at = utc_now()
-    resume_path = resume_dir(repo_root, session.session_id) / f"{args.to_agent}.md"
+    target_adapter = get_agent_adapter(args.to_agent)
+    resume_path = resume_dir(repo_root, session.session_id) / f"{target_adapter.resume_packet_target}.md"
     checkpoint = load_checkpoint(repo_root, session.session_id, session.latest_checkpoint_id)
     resume_packet = render_resume_packet(
         session,
         checkpoint,
-        args.to_agent,
+        target_adapter.key,
         handoff_reason=args.reason,
         prepared_at=prepared_at,
         options=ResumeRenderOptions(evidence_depth=args.resume_evidence_depth),
@@ -119,9 +159,28 @@ def cmd_failover(args: argparse.Namespace) -> int:
     session.updated_at = prepared_at
     save_session(repo_root, session)
     write_latest_summary(repo_root, session)
-    print(f"Prepared handoff from {handoff.from_agent} to {handoff.to_agent}")
-    print(resume_path)
-    print(handoff.launch_command)
+
+    if args.json:
+        emit_json({
+            "command": "failover",
+            "from_agent": handoff.from_agent,
+            "to_agent": handoff.to_agent,
+            "resume_path": str(resume_path),
+            "launch_command": handoff.launch_command,
+            "launch_instructions": handoff.launch_instructions,
+        })
+    elif args.quiet:
+        emit_quiet(str(resume_path))
+        emit_quiet(handoff.launch_command)
+    else:
+        render_failover_success(
+            args.console,
+            handoff.from_agent,
+            handoff.to_agent,
+            args.reason,
+            str(resume_path),
+            handoff.launch_command,
+        )
     return 0
 
 
@@ -129,26 +188,106 @@ def cmd_launch(args: argparse.Namespace) -> int:
     repo_root = default_repo_root(args.repo)
     session = load_session(repo_root, args.session)
     handoff = latest_handoff(session)
-    preview_lines = launch_preview_lines(handoff)
 
-    for line in preview_lines[:3]:
-        print(line)
     if not args.execute:
-        print(preview_lines[3])
+        if args.json:
+            emit_json({
+                "command": "launch",
+                "mode": "dry_run",
+                "target": handoff.to_agent,
+                "resume_path": handoff.resume_packet_path,
+                "launch_command": handoff.launch_command,
+                "launch_instructions": handoff.launch_instructions,
+            })
+        elif args.quiet:
+            emit_quiet(handoff.launch_command)
+        else:
+            render_launch_preview(
+                args.console,
+                handoff.to_agent,
+                handoff.resume_packet_path,
+                handoff.launch_command,
+                handoff.launch_instructions,
+            )
         return 0
 
-    return launch_handoff(repo_root, session, handoff)
+    # Confirm before executing (only in interactive rich mode)
+    if not args.json and not args.quiet and not getattr(args, "yes", False) and sys.stdin.isatty():
+        from rich.prompt import Confirm
+
+        render_launch_preview(
+            args.console,
+            handoff.to_agent,
+            handoff.resume_packet_path,
+            handoff.launch_command,
+            handoff.launch_instructions,
+        )
+        if not Confirm.ask("\n  [brand]Execute launch?[/]", console=args.console, default=True):
+            args.console.print("  [muted]Launch cancelled.[/]")
+            return 0
+
+    # Execute with spinner
+    if not args.json and not args.quiet:
+        with render_launch_executing(args.console):
+            exit_code = launch_handoff(repo_root, session, handoff)
+        render_launch_result(args.console, exit_code == 0, exit_code)
+    else:
+        exit_code = launch_handoff(repo_root, session, handoff)
+
+    if args.json:
+        emit_json({
+            "command": "launch",
+            "mode": "execute",
+            "target": handoff.to_agent,
+            "exit_code": exit_code,
+            "launch_status": handoff.launch_status,
+        })
+
+    return exit_code
 
 
 def cmd_inspect(args: argparse.Namespace) -> int:
     repo_root = default_repo_root(args.repo)
     session = load_session(repo_root, args.session)
-    print(json.dumps(session.to_dict(), indent=2))
+    if args.json:
+        emit_json(session.to_dict())
+    elif args.quiet:
+        emit_quiet(session.session_id)
+    else:
+        render_inspect(args.console, session.to_dict())
+    return 0
+
+
+def cmd_dashboard(args: argparse.Namespace) -> int:
+    repo_root = default_repo_root(args.repo)
+    sessions = list_sessions(repo_root)
+
+    if args.json:
+        emit_json({
+            "command": "dashboard",
+            "sessions": [
+                {
+                    "session_id": s.session_id,
+                    "agent": s.current_agent,
+                    "status": s.current_status,
+                    "objective": s.objective,
+                    "updated_at": s.updated_at,
+                }
+                for s in sessions
+            ],
+        })
+    elif args.quiet:
+        for s in sessions:
+            emit_quiet(s.session_id)
+    else:
+        render_dashboard(args.console, [s.to_dict() for s in sessions])
     return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agent-relay")
+    parser.add_argument("--json", action="store_true", help="Machine-readable JSON output")
+    parser.add_argument("--quiet", "-q", action="store_true", help="Minimal output")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     start = subparsers.add_parser("start", help="Create a new relay session")
@@ -190,6 +329,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run the prepared launch command instead of printing it",
     )
+    launch.add_argument(
+        "--yes", "-y",
+        action="store_true",
+        help="Skip confirmation prompt",
+    )
     launch.set_defaults(func=cmd_launch)
 
     inspect = subparsers.add_parser("inspect", help="Print session state")
@@ -197,13 +341,30 @@ def build_parser() -> argparse.ArgumentParser:
     inspect.add_argument("--repo")
     inspect.set_defaults(func=cmd_inspect)
 
+    dashboard = subparsers.add_parser("dashboard", help="Show all sessions in this repo")
+    dashboard.add_argument("--repo")
+    dashboard.set_defaults(func=cmd_dashboard)
+
+    list_cmd = subparsers.add_parser("list", help="Show all sessions (alias for dashboard)")
+    list_cmd.add_argument("--repo")
+    list_cmd.set_defaults(func=cmd_dashboard)
+
     return parser
 
 
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
-    return args.func(args)
+    args.console = create_console(json_mode=args.json, quiet=args.quiet)
+    try:
+        return args.func(args)
+    except SystemExit as exc:
+        message = str(exc) if str(exc) else "Unknown error"
+        if args.json:
+            emit_json({"error": message})
+        elif not args.quiet:
+            render_error(args.console, message)
+        return exc.code if isinstance(exc.code, int) else 1
 
 
 if __name__ == "__main__":

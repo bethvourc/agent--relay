@@ -28,10 +28,14 @@ class AgentRelayCliTests(TestCase):
             check=True,
         )
 
+    def run_cli_json(self, *args: str, extra_env: dict[str, str] | None = None) -> dict:
+        result = self.run_cli("--json", *args, extra_env=extra_env)
+        return json.loads(result.stdout)
+
     def test_start_creates_initial_state_checkpoint_and_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir).resolve()
-            result = self.run_cli(
+            data = self.run_cli_json(
                 "start",
                 "--agent",
                 "claude",
@@ -40,7 +44,11 @@ class AgentRelayCliTests(TestCase):
                 "--repo",
                 tmpdir,
             )
-            session_id = result.stdout.splitlines()[0].split()[-1]
+            session_id = data["session_id"]
+            self.assertEqual(data["command"], "start")
+            self.assertEqual(data["agent"], "claude")
+            self.assertEqual(data["status"], "active")
+
             session_root = repo_root / ".agent-relay" / "sessions" / session_id
             state_path = session_root / "state.json"
             summary = session_root / "summary.md"
@@ -60,7 +68,7 @@ class AgentRelayCliTests(TestCase):
     def test_checkpoint_creates_new_checkpoint_and_updates_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir).resolve()
-            start = self.run_cli(
+            start_data = self.run_cli_json(
                 "start",
                 "--agent",
                 "claude",
@@ -69,10 +77,10 @@ class AgentRelayCliTests(TestCase):
                 "--repo",
                 tmpdir,
             )
-            session_id = start.stdout.splitlines()[0].split()[-1]
+            session_id = start_data["session_id"]
             session_root = repo_root / ".agent-relay" / "sessions" / session_id
 
-            result = self.run_cli(
+            cp_data = self.run_cli_json(
                 "checkpoint",
                 session_id,
                 "--next-action",
@@ -87,7 +95,8 @@ class AgentRelayCliTests(TestCase):
 
             checkpoints = list((session_root / "checkpoints").glob("*.json"))
             self.assertEqual(len(checkpoints), 2)
-            latest_checkpoint_id = result.stdout.splitlines()[-1]
+            latest_checkpoint_id = cp_data["checkpoint_id"]
+            self.assertEqual(cp_data["command"], "checkpoint")
             self.assertIn(latest_checkpoint_id, {path.stem for path in checkpoints})
 
             state = json.loads((session_root / "state.json").read_text())
@@ -101,7 +110,7 @@ class AgentRelayCliTests(TestCase):
     def test_failover_writes_resume_packet_and_records_checkpoint_reference(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir).resolve()
-            start = self.run_cli(
+            start_data = self.run_cli_json(
                 "start",
                 "--agent",
                 "claude",
@@ -110,9 +119,9 @@ class AgentRelayCliTests(TestCase):
                 "--repo",
                 tmpdir,
             )
-            session_id = start.stdout.splitlines()[0].split()[-1]
+            session_id = start_data["session_id"]
 
-            self.run_cli(
+            self.run_cli_json(
                 "checkpoint",
                 session_id,
                 "--next-action",
@@ -123,7 +132,7 @@ class AgentRelayCliTests(TestCase):
                 tmpdir,
             )
 
-            result = self.run_cli(
+            fo_data = self.run_cli_json(
                 "failover",
                 session_id,
                 "--to-agent",
@@ -144,12 +153,12 @@ class AgentRelayCliTests(TestCase):
             self.assertEqual(handoff["to_agent"], "codex")
             self.assertEqual(handoff["checkpoint_id"], state["latest_checkpoint_id"])
             self.assertIn("# Codex Resume Packet", resume_path.read_text())
-            self.assertEqual(result.stdout.splitlines()[-1], handoff["launch_command"])
+            self.assertEqual(fo_data["launch_command"], handoff["launch_command"])
 
     def test_failover_uses_profile_specific_launch_template_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir).resolve()
-            start = self.run_cli(
+            start_data = self.run_cli_json(
                 "start",
                 "--agent",
                 "codex",
@@ -158,9 +167,9 @@ class AgentRelayCliTests(TestCase):
                 "--repo",
                 tmpdir,
             )
-            session_id = start.stdout.splitlines()[0].split()[-1]
+            session_id = start_data["session_id"]
 
-            self.run_cli(
+            self.run_cli_json(
                 "checkpoint",
                 session_id,
                 "--next-action",
@@ -169,7 +178,7 @@ class AgentRelayCliTests(TestCase):
                 tmpdir,
             )
 
-            result = self.run_cli(
+            fo_data = self.run_cli_json(
                 "failover",
                 session_id,
                 "--to-agent",
@@ -193,12 +202,12 @@ class AgentRelayCliTests(TestCase):
             self.assertIn("# Claude Code Resume Packet", resume_path.read_text())
             self.assertEqual(handoff["launch_template_source"], "env")
             self.assertEqual(handoff["launch_command"], expected_command)
-            self.assertEqual(result.stdout.splitlines()[-1], expected_command)
+            self.assertEqual(fo_data["launch_command"], expected_command)
 
     def test_launch_dry_run_prints_latest_handoff_without_mutating_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir).resolve()
-            start = self.run_cli(
+            start_data = self.run_cli_json(
                 "start",
                 "--agent",
                 "claude",
@@ -207,9 +216,9 @@ class AgentRelayCliTests(TestCase):
                 "--repo",
                 tmpdir,
             )
-            session_id = start.stdout.splitlines()[0].split()[-1]
+            session_id = start_data["session_id"]
 
-            self.run_cli(
+            self.run_cli_json(
                 "failover",
                 session_id,
                 "--to-agent",
@@ -220,7 +229,7 @@ class AgentRelayCliTests(TestCase):
                 tmpdir,
             )
 
-            result = self.run_cli(
+            launch_data = self.run_cli_json(
                 "launch",
                 session_id,
                 "--repo",
@@ -230,16 +239,38 @@ class AgentRelayCliTests(TestCase):
             state = json.loads((repo_root / ".agent-relay" / "sessions" / session_id / "state.json").read_text())
             handoff = state["handoffs"][0]
 
-            self.assertIn("Launch target: codex", result.stdout)
-            self.assertIn(handoff["launch_command"], result.stdout)
-            self.assertIn(handoff["launch_instructions"], result.stdout)
+            self.assertEqual(launch_data["command"], "launch")
+            self.assertEqual(launch_data["mode"], "dry_run")
+            self.assertEqual(launch_data["target"], "codex")
+            self.assertEqual(launch_data["launch_command"], handoff["launch_command"])
+            self.assertEqual(launch_data["launch_instructions"], handoff["launch_instructions"])
             self.assertEqual(handoff["launch_status"], "ready")
             self.assertEqual(state["current_agent"], "claude")
+
+    def test_dashboard_lists_sessions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.run_cli_json(
+                "start", "--agent", "claude", "--task", "First task", "--repo", tmpdir,
+            )
+            self.run_cli_json(
+                "start", "--agent", "codex", "--task", "Second task", "--repo", tmpdir,
+            )
+
+            data = self.run_cli_json("dashboard", "--repo", tmpdir)
+            self.assertEqual(data["command"], "dashboard")
+            self.assertEqual(len(data["sessions"]), 2)
+            agents = {s["agent"] for s in data["sessions"]}
+            self.assertEqual(agents, {"claude", "codex"})
+
+    def test_dashboard_empty_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data = self.run_cli_json("dashboard", "--repo", tmpdir)
+            self.assertEqual(data["sessions"], [])
 
     def test_launch_execute_runs_command_and_updates_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir).resolve()
-            start = self.run_cli(
+            start_data = self.run_cli_json(
                 "start",
                 "--agent",
                 "claude",
@@ -248,13 +279,13 @@ class AgentRelayCliTests(TestCase):
                 "--repo",
                 tmpdir,
             )
-            session_id = start.stdout.splitlines()[0].split()[-1]
+            session_id = start_data["session_id"]
 
             launch_template = (
                 f"cd {{repo_root}} && {shlex.quote(sys.executable)} -c "
                 "'from pathlib import Path; Path(\"launch-marker.txt\").write_text(\"ok\")'"
             )
-            self.run_cli(
+            self.run_cli_json(
                 "failover",
                 session_id,
                 "--to-agent",
@@ -269,6 +300,7 @@ class AgentRelayCliTests(TestCase):
             )
 
             result = self.run_cli(
+                "--json",
                 "launch",
                 session_id,
                 "--repo",

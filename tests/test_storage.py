@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from agent_relay.models import CheckpointRecord, SCHEMA_VERSION, SessionState, ValidationState
 from agent_relay.storage import (
     checkpoints_dir,
+    list_sessions,
     load_checkpoint,
     load_session,
     save_checkpoint,
@@ -79,3 +80,28 @@ class StorageTests(TestCase):
 
             self.assertEqual(path, checkpoints_dir(repo_root, session.session_id) / f"{checkpoint.checkpoint_id}.json")
             self.assertEqual(loaded, checkpoint)
+
+    def test_list_sessions_returns_sorted_sessions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir).resolve()
+
+            older = self.build_session(repo_root)
+            older.session_id = "20260324-110000-aaa111"
+            older.updated_at = "2026-03-24T11:00:00Z"
+            save_session(repo_root, older)
+
+            newer = self.build_session(repo_root)
+            newer.session_id = "20260324-120000-bbb222"
+            newer.updated_at = "2026-03-24T12:00:00Z"
+            save_session(repo_root, newer)
+
+            sessions = list_sessions(repo_root)
+            self.assertEqual(len(sessions), 2)
+            self.assertEqual(sessions[0].session_id, "20260324-120000-bbb222")
+            self.assertEqual(sessions[1].session_id, "20260324-110000-aaa111")
+
+    def test_list_sessions_empty_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir).resolve()
+            sessions = list_sessions(repo_root)
+            self.assertEqual(sessions, [])

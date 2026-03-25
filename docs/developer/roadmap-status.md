@@ -10,10 +10,10 @@ It answers three practical questions:
 
 ## Current Status
 
-- Current phase: `Ready for Phase 5`
-- Completed phases: `Phase 1`, `Phase 2`, `Phase 3`, `Phase 4`
+- Current phase: `Ready for Phase 6`
+- Completed phases: `Phase 1`, `Phase 2`, `Phase 3`, `Phase 4`, `Phase 5`
 - In progress: `None`
-- Not started: `Phase 5`, `Phase 6`, `Phase 7`
+- Not started: `Phase 6`, `Phase 7`
 
 ## V1 Goal
 
@@ -101,16 +101,20 @@ What is done:
 
 ### Phase 5: Adapter Boundaries
 
-Status: `Not Started`
+Status: `Completed`
 
 What this phase covers:
 
 - turning basic agent profiles into a cleaner adapter interface
 - keeping provider-specific behavior out of the session core
 
-Current note:
+What is done:
 
-- `agents.py` exists and provides a useful starting point, but the adapter contract is not finished yet
+- `agents.py` now exposes an explicit adapter contract
+- Claude Code and Codex adapters are separate explicit adapter instances
+- launch behavior now resolves through the adapter registry instead of loose profile helpers
+- resume and launcher modules use adapter lookups without touching the session core
+- adapter behavior has direct tests
 
 ### Phase 6: Lightweight Capture Hooks
 
@@ -148,8 +152,8 @@ That means the local-first skeleton is real and usable today, even though the re
 
 The next engineering step is:
 
-1. formalize the adapter contract in `agents.py`
-2. separate profile data from executable provider behavior
-3. prepare the codebase for Phase 6 capture hooks without leaking provider logic into the session core
+1. add faster checkpoint capture ergonomics
+2. add pause or prepare flows before handoff
+3. add optional autosave helpers without weakening the typed session core
 
-That starts Phase 5 cleanly and keeps provider-specific behavior out of the core session and checkpoint model.
+That starts Phase 6 while keeping provider-specific behavior isolated behind the adapter layer.

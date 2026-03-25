@@ -15,7 +15,7 @@ This initial scaffold includes:
 - a milestone spec in `docs/agent/milestones/milestone-1-reliable-session-core.md`
 - a minimal Python CLI package in `src/agent_relay`
 - basic tests for local session creation and handoff preparation
-- built-in `Claude Code` and `Codex` agent profiles for handoff rendering
+- built-in `Claude Code` and `Codex` adapters for handoff and launch behavior
 - launch command templating recorded in handoff metadata
 
 The project is intentionally local-first. Session data lives in a repo-local `.agent-relay/` directory so state is inspectable, durable, and independent from any single model vendor.
@@ -34,6 +34,7 @@ The CLI currently supports:
 
 Resume rendering now lives in `src/agent_relay/resume.py`. `failover` accepts `--resume-evidence-depth` with `minimal`, `standard`, or `full` to control how much latest-checkpoint evidence appears in the target packet.
 Launch execution now lives in `src/agent_relay/launcher.py`, while `cli.py` stays focused on command orchestration.
+Agent-specific launch and identity behavior now lives behind the adapter registry in `src/agent_relay/agents.py`.
 
 Failover now records a rendered launch command for the target agent profile. The built-in defaults are intentionally shallow:
 

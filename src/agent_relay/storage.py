@@ -5,7 +5,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from agent_relay.models import CheckpointRecord, SessionState
+from agent_relay.models import CheckpointRecord, ModelValidationError, SessionState
 
 STATE_DIRNAME = ".agent-relay"
 
@@ -86,6 +86,25 @@ def save_checkpoint(repo_root: Path, checkpoint: CheckpointRecord) -> Path:
         checkpoint_path(repo_root, checkpoint.session_id, checkpoint.checkpoint_id),
         checkpoint.to_dict(),
     )
+
+
+def sessions_root(repo_root: Path) -> Path:
+    return repo_root / STATE_DIRNAME / "sessions"
+
+
+def list_sessions(repo_root: Path) -> list[SessionState]:
+    root = sessions_root(repo_root)
+    if not root.exists():
+        return []
+    sessions: list[SessionState] = []
+    for state_file in sorted(root.glob("*/state.json")):
+        try:
+            session = SessionState.from_dict(json.loads(state_file.read_text()))
+            sessions.append(session)
+        except (json.JSONDecodeError, ModelValidationError):
+            continue
+    sessions.sort(key=lambda s: s.updated_at, reverse=True)
+    return sessions
 
 
 def load_checkpoint(repo_root: Path, session_id: str, checkpoint_id: str) -> CheckpointRecord:

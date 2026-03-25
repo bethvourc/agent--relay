@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from agent_relay.agents import get_agent_profile
+from agent_relay.agents import get_agent_adapter, get_agent_display_name
 from agent_relay.models import CheckpointRecord, SessionState
 
 EVIDENCE_DEPTHS = {"minimal", "standard", "full"}
@@ -28,7 +28,8 @@ def render_resume_packet(
     options: ResumeRenderOptions | None = None,
 ) -> str:
     resume_options = options or ResumeRenderOptions()
-    if target_agent == "claude":
+    target_adapter = get_agent_adapter(target_agent)
+    if target_adapter.resume_packet_target == "claude":
         return render_claude_resume_packet(
             session,
             checkpoint,
@@ -36,7 +37,7 @@ def render_resume_packet(
             prepared_at=prepared_at,
             options=resume_options,
         )
-    if target_agent == "codex":
+    if target_adapter.resume_packet_target == "codex":
         return render_codex_resume_packet(
             session,
             checkpoint,
@@ -55,7 +56,7 @@ def render_claude_resume_packet(
     prepared_at: str,
     options: ResumeRenderOptions,
 ) -> str:
-    source_profile = get_agent_profile(session.current_agent)
+    source_name = get_agent_display_name(session.current_agent)
     lines = [
         "# Claude Code Resume Packet",
         "",
@@ -70,7 +71,7 @@ def render_claude_resume_packet(
         f"- Objective: {session.objective}",
         f"- Repository root: {session.repo_root}",
         f"- Current status: {session.current_status}",
-        f"- Source agent: {source_profile.display_name}",
+        f"- Source agent: {source_name}",
         f"- Prepared at: {prepared_at}",
         f"- Handoff reason: {handoff_reason}",
         "",
@@ -102,7 +103,7 @@ def render_codex_resume_packet(
     prepared_at: str,
     options: ResumeRenderOptions,
 ) -> str:
-    source_profile = get_agent_profile(session.current_agent)
+    source_name = get_agent_display_name(session.current_agent)
     lines = [
         "# Codex Resume Packet",
         "",
@@ -112,7 +113,7 @@ def render_codex_resume_packet(
         f"- Objective: {session.objective}",
         f"- Repository root: {session.repo_root}",
         f"- Current status: {session.current_status}",
-        f"- Source agent: {source_profile.display_name}",
+        f"- Source agent: {source_name}",
         f"- Prepared at: {prepared_at}",
         f"- Handoff reason: {handoff_reason}",
         "",
@@ -169,8 +170,8 @@ def render_recent_handoffs(session: SessionState) -> list[str]:
 
     rendered = []
     for handoff in session.handoffs[-3:]:
-        source = get_agent_profile(handoff.from_agent).display_name
-        target = get_agent_profile(handoff.to_agent).display_name
+        source = get_agent_display_name(handoff.from_agent)
+        target = get_agent_display_name(handoff.to_agent)
         rendered.append(f"{handoff.prepared_at}: {source} -> {target} ({handoff.reason})")
     return rendered
 

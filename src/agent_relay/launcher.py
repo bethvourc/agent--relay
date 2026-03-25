@@ -3,11 +3,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from agent_relay.agents import (
-    get_agent_profile,
-    render_launch_command,
-    render_launch_instructions,
-)
+from agent_relay.agents import get_agent_adapter
 from agent_relay.checkpoints import utc_now
 from agent_relay.models import HandoffRecord, SessionState
 from agent_relay.storage import load_checkpoint, save_session
@@ -26,8 +22,8 @@ def build_handoff_record(
     if not session.latest_checkpoint_id:
         raise SystemExit("Session has no checkpoint to hand off")
 
-    profile = get_agent_profile(to_agent)
-    launch_command, launch_template, launch_template_source = render_launch_command(profile, repo_root, resume_path)
+    adapter = get_agent_adapter(to_agent)
+    launch_spec = adapter.render_launch_spec(repo_root, resume_path)
     return HandoffRecord(
         from_agent=session.current_agent,
         to_agent=to_agent,
@@ -36,12 +32,12 @@ def build_handoff_record(
         checkpoint_id=session.latest_checkpoint_id,
         resume_packet_path=str(resume_path),
         launch_status="ready",
-        launch_profile=profile.display_name,
-        launch_cwd=str(repo_root),
-        launch_command=launch_command,
-        launch_template=launch_template,
-        launch_template_source=launch_template_source,
-        launch_instructions=render_launch_instructions(profile, repo_root, resume_path),
+        launch_profile=adapter.display_name,
+        launch_cwd=launch_spec.cwd,
+        launch_command=launch_spec.command,
+        launch_template=launch_spec.template,
+        launch_template_source=launch_spec.template_source,
+        launch_instructions=launch_spec.instructions,
     )
 
 
