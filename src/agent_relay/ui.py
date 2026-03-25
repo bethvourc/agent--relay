@@ -475,6 +475,82 @@ def render_dashboard(console: Console, sessions: list[dict[str, Any]]) -> None:
     console.print()
 
 
+def render_help(console: Console) -> None:
+    render_banner(console)
+
+    compact = is_compact(console)
+
+    if compact:
+        console.print("[heading]Commands[/]")
+        console.print()
+        _help_row_compact(console, "start", "Create a new relay session", "--agent <name> --task <text>")
+        _help_row_compact(console, "checkpoint", "Save a session checkpoint", "<session> [--decision ...] [--blocker ...]")
+        _help_row_compact(console, "failover", "Prepare handoff to another agent", "<session> --to-agent <name> --reason <text>")
+        _help_row_compact(console, "launch", "Preview or execute a handoff", "<session> [--execute] [--yes]")
+        _help_row_compact(console, "inspect", "View session state", "<session>")
+        _help_row_compact(console, "dashboard", "List all sessions in this repo", "[--repo <path>]")
+        console.print()
+        console.print("[heading]Options[/]")
+        console.print()
+        console.print("  [brand]--json[/]       Machine-readable JSON output")
+        console.print("  [brand]--quiet[/] [brand]-q[/]  Minimal output for scripting")
+        console.print("  [brand]--help[/]  [brand]-h[/]  Show this help message")
+        console.print()
+        return
+
+    table = Table(
+        show_header=False,
+        box=None,
+        padding=(0, 2),
+        pad_edge=True,
+    )
+    table.add_column("Command", style="brand", no_wrap=True, min_width=12)
+    table.add_column("Description", style="value")
+    table.add_column("Usage", style="muted")
+
+    table.add_row("start", "Create a new relay session", "--agent <name> --task <text>")
+    table.add_row("checkpoint", "Save a session checkpoint", "<session> [--decision ...] [--blocker ...]")
+    table.add_row("failover", "Prepare handoff to another agent", "<session> --to-agent <name> --reason <text>")
+    table.add_row("launch", "Preview or execute a handoff", "<session> [--execute] [--yes]")
+    table.add_row("inspect", "View session state", "<session>")
+    table.add_row("dashboard", "List all sessions in this repo", "[--repo <path>]")
+
+    console.print(Panel(
+        table,
+        border_style="brand.dim",
+        title="[heading]commands[/]",
+        title_align="left",
+        padding=(1, 2),
+    ))
+
+    console.print()
+
+    opts = Table(show_header=False, box=None, padding=(0, 2), pad_edge=True)
+    opts.add_column("Flag", style="brand", no_wrap=True, min_width=14)
+    opts.add_column("Description", style="value")
+
+    opts.add_row("--json", "Machine-readable JSON output")
+    opts.add_row("--quiet  -q", "Minimal output for scripting")
+    opts.add_row("--help   -h", "Show this help message")
+
+    console.print(Panel(
+        opts,
+        border_style="brand.dim",
+        title="[heading]global options[/]",
+        title_align="left",
+        padding=(0, 2),
+    ))
+
+    console.print()
+    console.print("  [muted]Run[/] [brand]agent-relay <command> --help[/] [muted]for command-specific options[/]")
+    console.print()
+
+
+def _help_row_compact(console: Console, cmd: str, desc: str, usage: str) -> None:
+    console.print(f"  [brand]{cmd:12s}[/] {desc}")
+    console.print(f"  {'':12s} [muted]{usage}[/]")
+
+
 def render_error(console: Console, message: str) -> None:
     if is_compact(console):
         console.print(f"[error]Error:[/] {message}")

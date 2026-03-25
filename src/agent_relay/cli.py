@@ -35,6 +35,7 @@ from agent_relay.ui import (
     render_dashboard,
     render_error,
     render_failover_success,
+    render_help,
     render_inspect,
     render_launch_executing,
     render_launch_preview,
@@ -285,10 +286,11 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="agent-relay")
+    parser = argparse.ArgumentParser(prog="agent-relay", add_help=False)
+    parser.add_argument("--help", "-h", action="store_true", default=False)
     parser.add_argument("--json", action="store_true", help="Machine-readable JSON output")
     parser.add_argument("--quiet", "-q", action="store_true", help="Minimal output")
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers = parser.add_subparsers(dest="command")
 
     start = subparsers.add_parser("start", help="Create a new relay session")
     start.add_argument("--agent", required=True, choices=AGENT_NAMES)
@@ -356,6 +358,11 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     args.console = create_console(json_mode=args.json, quiet=args.quiet)
+
+    if args.help or args.command is None:
+        render_help(args.console)
+        return 0
+
     try:
         return args.func(args)
     except SystemExit as exc:
