@@ -4,6 +4,7 @@ src/agent_relay/__init__.py
 src/agent_relay/agents.py
 src/agent_relay/checkpoints.py
 src/agent_relay/cli.py
+src/agent_relay/launcher.py
 src/agent_relay/models.py
 src/agent_relay/resume.py
 src/agent_relay/storage.py
@@ -15,6 +16,7 @@ src/agent_relay.egg-info/entry_points.txt
 src/agent_relay.egg-info/top_level.txt
 tests/test_checkpoints.py
 tests/test_cli.py
+tests/test_launcher.py
 tests/test_models.py
 tests/test_resume.py
 tests/test_storage.py

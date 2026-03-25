@@ -33,6 +33,7 @@ The CLI currently supports:
 `start` now creates the initial `state.json`, an initial checkpoint under `checkpoints/`, and `summary.md`. Every later `checkpoint` updates the canonical session state, writes a new append-only checkpoint record, and refreshes `summary.md`.
 
 Resume rendering now lives in `src/agent_relay/resume.py`. `failover` accepts `--resume-evidence-depth` with `minimal`, `standard`, or `full` to control how much latest-checkpoint evidence appears in the target packet.
+Launch execution now lives in `src/agent_relay/launcher.py`, while `cli.py` stays focused on command orchestration.
 
 Failover now records a rendered launch command for the target agent profile. The built-in defaults are intentionally shallow:
 

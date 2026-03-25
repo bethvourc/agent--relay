@@ -10,9 +10,9 @@ It answers three practical questions:
 
 ## Current Status
 
-- Current phase: `Phase 4`
-- Completed phases: `Phase 1`, `Phase 2`, `Phase 3`
-- In progress: `Phase 4`
+- Current phase: `Ready for Phase 5`
+- Completed phases: `Phase 1`, `Phase 2`, `Phase 3`, `Phase 4`
+- In progress: `None`
 - Not started: `Phase 5`, `Phase 6`, `Phase 7`
 
 ## V1 Goal
@@ -82,7 +82,7 @@ What is done:
 
 ### Phase 4: Launch Execution
 
-Status: `In Progress`
+Status: `Completed`
 
 What this phase covers:
 
@@ -96,11 +96,8 @@ What is done:
 - dry-run prints launch target, resume path, command, and instructions
 - `--execute` runs the prepared command
 - launch success and failure state are recorded
-
-What is still open:
-
-- move launch execution out of `cli.py` into `launcher.py`
-- finalize the long-term configuration model for launch templates
+- launch execution now lives in `launcher.py`
+- launcher behavior has direct module-level tests
 
 ### Phase 5: Adapter Boundaries
 
@@ -151,8 +148,8 @@ That means the local-first skeleton is real and usable today, even though the re
 
 The next engineering step is:
 
-1. extract launch execution into `launcher.py`
-2. keep the CLI as a thin orchestration layer
-3. finalize the launch configuration boundary before Phase 5
+1. formalize the adapter contract in `agents.py`
+2. separate profile data from executable provider behavior
+3. prepare the codebase for Phase 6 capture hooks without leaking provider logic into the session core
 
-That closes out Phase 4 cleanly before moving on to adapter boundaries and capture hooks.
+That starts Phase 5 cleanly and keeps provider-specific behavior out of the core session and checkpoint model.

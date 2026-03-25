@@ -3,21 +3,15 @@ from __future__ import annotations
 import argparse
 import json
 import secrets
-import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
-from agent_relay.agents import (
-    AGENT_NAMES,
-    get_agent_profile,
-    render_launch_command,
-    render_launch_instructions,
-)
+from agent_relay.agents import AGENT_NAMES
 from agent_relay.checkpoints import create_checkpoint, utc_now
+from agent_relay.launcher import build_handoff_record, launch_handoff, launch_preview_lines, latest_handoff
 from agent_relay.models import (
     SCHEMA_VERSION,
     SESSION_STATUSES,
-    HandoffRecord,
     SessionState,
     ValidationState,
 )
@@ -33,80 +27,11 @@ from agent_relay.storage import (
 from agent_relay.summary import write_summary
 
 
-def build_handoff_record(
-    session: SessionState,
-    *,
-    repo_root: Path,
-    to_agent: str,
-    reason: str,
-    prepared_at: str,
-    resume_path: Path,
-) -> HandoffRecord:
-    if not session.latest_checkpoint_id:
-        raise SystemExit("Session has no checkpoint to hand off")
-
-    profile = get_agent_profile(to_agent)
-    launch_command, launch_template, launch_template_source = render_launch_command(profile, repo_root, resume_path)
-    return HandoffRecord(
-        from_agent=session.current_agent,
-        to_agent=to_agent,
-        reason=reason,
-        prepared_at=prepared_at,
-        checkpoint_id=session.latest_checkpoint_id,
-        resume_packet_path=str(resume_path),
-        launch_status="ready",
-        launch_profile=profile.display_name,
-        launch_cwd=str(repo_root),
-        launch_command=launch_command,
-        launch_template=launch_template,
-        launch_template_source=launch_template_source,
-        launch_instructions=render_launch_instructions(profile, repo_root, resume_path),
-    )
-
-
-def latest_handoff(session: SessionState) -> HandoffRecord:
-    if not session.handoffs:
-        raise SystemExit("No handoff has been prepared for this session")
-    return session.handoffs[-1]
-
-
 def write_latest_summary(repo_root: Path, session: SessionState) -> None:
     if not session.latest_checkpoint_id:
         return
     checkpoint = load_checkpoint(repo_root, session.session_id, session.latest_checkpoint_id)
     write_summary(repo_root, session, checkpoint)
-
-
-def launch_handoff(repo_root: Path, session: SessionState, handoff: HandoffRecord) -> int:
-    launched_at = utc_now()
-    handoff.launch_status = "launching"
-    handoff.launched_at = launched_at
-    session.current_status = "launching"
-    session.updated_at = launched_at
-    save_session(repo_root, session)
-    write_latest_summary(repo_root, session)
-
-    completed = subprocess.run(
-        handoff.launch_command,
-        cwd=handoff.launch_cwd or str(repo_root),
-        shell=True,
-        check=False,
-    )
-
-    finished_at = utc_now()
-    handoff.finished_at = finished_at
-    handoff.exit_code = completed.returncode
-    if completed.returncode == 0:
-        handoff.launch_status = "succeeded"
-        session.current_agent = handoff.to_agent
-        session.current_status = "active"
-    else:
-        handoff.launch_status = "failed"
-        session.current_status = "launch_failed"
-    session.updated_at = finished_at
-    save_session(repo_root, session)
-    write_latest_summary(repo_root, session)
-    return completed.returncode
 
 
 def cmd_start(args: argparse.Namespace) -> int:
@@ -204,12 +129,12 @@ def cmd_launch(args: argparse.Namespace) -> int:
     repo_root = default_repo_root(args.repo)
     session = load_session(repo_root, args.session)
     handoff = latest_handoff(session)
+    preview_lines = launch_preview_lines(handoff)
 
-    print(f"Launch target: {handoff.to_agent}")
-    print(handoff.resume_packet_path)
-    print(handoff.launch_command)
+    for line in preview_lines[:3]:
+        print(line)
     if not args.execute:
-        print(handoff.launch_instructions)
+        print(preview_lines[3])
         return 0
 
     return launch_handoff(repo_root, session, handoff)
