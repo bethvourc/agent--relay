@@ -1,0 +1,47 @@
+# Agent Relay
+
+Agent Relay is a local-first CLI for handing work from one coding agent to another without losing operational context.
+
+The core idea is simple: when an agent stops because of rate limits, tooling limits, or a manual pause, Agent Relay captures a structured checkpoint, prepares a resume packet, and hands the session to a new agent.
+
+This initial scaffold includes:
+
+- a v1 design document in `docs/v1-design.md`
+- an end-to-end implementation plan in `docs/implementation-plan.md`
+- an execution-grade plan in `docs/execution-plan.md`
+- a milestone spec for the session-core refactor in `docs/milestone-1-reliable-session-core.md`
+- a minimal Python CLI package in `src/agent_relay`
+- basic tests for local session creation and handoff preparation
+- built-in `Claude Code` and `Codex` agent profiles for handoff rendering
+- launch command templating recorded in handoff metadata
+
+The project is intentionally local-first. Session data lives in a repo-local `.agent-relay/` directory so state is inspectable, durable, and independent from any single model vendor.
+
+## Current CLI Spine
+
+The CLI currently supports:
+
+- `start` to create a new session under `.agent-relay/sessions/<session-id>/`
+- `checkpoint` to update the structured session state
+- `failover` to render a target-specific resume packet and prepare handoff metadata
+- `inspect` to print the persisted session state
+
+Failover now records a rendered launch command for the target agent profile. The built-in defaults are intentionally shallow:
+
+- `claude` launches with `cd {repo_root} && claude`
+- `codex` launches with `cd {repo_root} && codex`
+
+If your local agent CLI supports a richer invocation flow, override the launch template with environment variables:
+
+- `AGENT_RELAY_CLAUDE_LAUNCH_TEMPLATE`
+- `AGENT_RELAY_CODEX_LAUNCH_TEMPLATE`
+
+Available placeholders in those templates:
+
+- `{agent}`
+- `{agent_name}`
+- `{agent_cli}`
+- `{repo_root}`
+- `{repo_root_path}`
+- `{resume_path}`
+- `{resume_path_path}`
