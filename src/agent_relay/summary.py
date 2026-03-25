@@ -20,6 +20,8 @@ def render_summary(session: SessionState, checkpoint: CheckpointRecord) -> str:
     ]
     _append_bullets(lines, "Recent decisions:", session.decisions)
     _append_bullets(lines, "Blockers:", session.blockers)
+    _append_bullets(lines, "Research notes:", session.research_notes[-3:])
+    _append_bullets(lines, "Implementation notes:", session.implementation_notes[-3:])
     _append_bullets(lines, "Touched files:", session.touched_files)
     return "\n".join(lines) + "\n"
 

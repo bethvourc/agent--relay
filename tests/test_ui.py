@@ -17,9 +17,12 @@ from agent_relay.ui import (
     render_dashboard,
     render_error,
     render_failover_success,
+    render_help,
     render_inspect,
     render_launch_preview,
     render_launch_result,
+    render_pause_success,
+    render_prepare_success,
     render_start_success,
     status_badge,
     agent_badge,
@@ -113,6 +116,20 @@ class CheckpointRenderTests(TestCase):
         self.assertIn("cp-456", output)
         self.assertIn("Checkpoint saved", output)
 
+    def test_pause_success_contains_next_action(self) -> None:
+        console, buf = make_console()
+        render_pause_success(console, "sess-123", "cp-456", "Hand off after review")
+        output = buf.getvalue()
+        self.assertIn("Session paused", output)
+        self.assertIn("Hand off after review", output)
+
+    def test_prepare_success_contains_next_action(self) -> None:
+        console, buf = make_console()
+        render_prepare_success(console, "sess-123", "cp-456", "Resume in Codex")
+        output = buf.getvalue()
+        self.assertIn("Prepared for handoff", output)
+        self.assertIn("Resume in Codex", output)
+
 
 class FailoverRenderTests(TestCase):
     def test_failover_shows_handoff_arrow(self) -> None:
@@ -158,6 +175,8 @@ class InspectRenderTests(TestCase):
             "updated_at": "2026-03-24T12:30:00Z",
             "decisions": ["Use Python"],
             "blockers": [],
+            "research_notes": ["Validated the adapter boundary"],
+            "implementation_notes": ["Added prepare and pause commands"],
             "touched_files": ["src/main.py"],
             "validation": {"status": "not_run", "summary": ""},
             "handoffs": [],
@@ -167,6 +186,8 @@ class InspectRenderTests(TestCase):
         self.assertIn("sess-abc", output)
         self.assertIn("Build the thing", output)
         self.assertIn("Use Python", output)
+        self.assertIn("Validated the adapter boundary", output)
+        self.assertIn("Added prepare and pause commands", output)
         self.assertIn("src/main.py", output)
 
 
@@ -215,3 +236,12 @@ class ErrorRenderTests(TestCase):
         output = buf.getvalue()
         self.assertIn("Error", output)
         self.assertIn("Bad input", output)
+
+
+class HelpRenderTests(TestCase):
+    def test_help_includes_phase_six_commands(self) -> None:
+        console, buf = make_console()
+        render_help(console)
+        output = buf.getvalue()
+        self.assertIn("prepare", output)
+        self.assertIn("pause", output)

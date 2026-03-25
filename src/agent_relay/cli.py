@@ -8,12 +8,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from agent_relay.agents import AGENT_NAMES, get_agent_adapter
+from agent_relay.capture import CaptureOptions, capture_session
 from agent_relay.checkpoints import create_checkpoint, utc_now
 from agent_relay.launcher import build_handoff_record, launch_handoff, latest_handoff
 from agent_relay.models import (
     SCHEMA_VERSION,
     SESSION_STATUSES,
     SessionState,
+    VALIDATION_STATUSES,
     ValidationState,
 )
 from agent_relay.resume import EVIDENCE_DEPTHS, ResumeRenderOptions, render_resume_packet
@@ -40,6 +42,8 @@ from agent_relay.ui import (
     render_launch_executing,
     render_launch_preview,
     render_launch_result,
+    render_pause_success,
+    render_prepare_success,
     render_start_success,
 )
 
@@ -49,6 +53,74 @@ def write_latest_summary(repo_root: Path, session: SessionState) -> None:
         return
     checkpoint = load_checkpoint(repo_root, session.session_id, session.latest_checkpoint_id)
     write_summary(repo_root, session, checkpoint)
+
+
+def build_capture_options(
+    args: argparse.Namespace,
+    *,
+    default_status: str | None = None,
+) -> CaptureOptions:
+    status = default_status
+    if hasattr(args, "status") and args.status:
+        status = args.status
+    next_action = getattr(args, "next_action", None)
+    if next_action is not None:
+        next_action = next_action.strip()
+    return CaptureOptions(
+        status=status,
+        next_action=next_action,
+        decisions=list(getattr(args, "decision", None) or []),
+        blockers=list(getattr(args, "blocker", None) or []),
+        touched_files=list(getattr(args, "touched_file", None) or []),
+        research_notes=list(getattr(args, "research_note", None) or []),
+        implementation_notes=list(getattr(args, "implementation_note", None) or []),
+        validation_status=getattr(args, "validation_status", None),
+        validation_summary=getattr(args, "validation_summary", None),
+        research_note_file=getattr(args, "research_note_file", None),
+        implementation_note_file=getattr(args, "implementation_note_file", None),
+        validation_summary_file=getattr(args, "validation_summary_file", None),
+        capture_git_changes=bool(getattr(args, "capture_git_changes", False)),
+    )
+
+
+def run_capture_command(
+    args: argparse.Namespace,
+    *,
+    command_name: str,
+    default_status: str | None = None,
+    require_next_action: bool = False,
+) -> int:
+    repo_root = default_repo_root(args.repo)
+    session = load_session(repo_root, args.session)
+    requested_next_action = (getattr(args, "next_action", None) or "").strip()
+    existing_next_action = session.next_action.strip()
+    if require_next_action and not (requested_next_action or existing_next_action):
+        raise SystemExit("prepare requires a next action; pass --next-action or record one first")
+
+    checkpoint = capture_session(
+        repo_root,
+        session,
+        options=build_capture_options(args, default_status=default_status),
+    )
+
+    if args.json:
+        emit_json({
+            "command": command_name,
+            "session_id": args.session,
+            "checkpoint_id": checkpoint.checkpoint_id,
+            "status": session.current_status,
+            "next_action": session.next_action,
+            "validation_status": session.validation.status,
+        })
+    elif args.quiet:
+        emit_quiet(checkpoint.checkpoint_id)
+    elif command_name == "pause":
+        render_pause_success(args.console, args.session, checkpoint.checkpoint_id, session.next_action)
+    elif command_name == "prepare":
+        render_prepare_success(args.console, args.session, checkpoint.checkpoint_id, session.next_action)
+    else:
+        render_checkpoint_success(args.console, args.session, checkpoint.checkpoint_id)
+    return 0
 
 
 def cmd_start(args: argparse.Namespace) -> int:
@@ -97,35 +169,20 @@ def cmd_start(args: argparse.Namespace) -> int:
 
 
 def cmd_checkpoint(args: argparse.Namespace) -> int:
-    repo_root = default_repo_root(args.repo)
-    session = load_session(repo_root, args.session)
-    session.updated_at = utc_now()
-    if args.status:
-        session.current_status = args.status
-    if args.next_action is not None:
-        session.next_action = args.next_action
-    if args.decision:
-        session.decisions.extend(args.decision)
-    if args.blocker:
-        session.blockers.extend(args.blocker)
-    if args.touched_file:
-        session.touched_files.extend(args.touched_file)
-    checkpoint = create_checkpoint(repo_root, session, created_at=session.updated_at)
-    save_session(repo_root, session)
-    write_summary(repo_root, session, checkpoint)
+    return run_capture_command(args, command_name="checkpoint")
 
-    if args.json:
-        emit_json({
-            "command": "checkpoint",
-            "session_id": args.session,
-            "checkpoint_id": checkpoint.checkpoint_id,
-            "status": session.current_status,
-        })
-    elif args.quiet:
-        emit_quiet(checkpoint.checkpoint_id)
-    else:
-        render_checkpoint_success(args.console, args.session, checkpoint.checkpoint_id)
-    return 0
+
+def cmd_pause(args: argparse.Namespace) -> int:
+    return run_capture_command(args, command_name="pause", default_status="paused")
+
+
+def cmd_prepare(args: argparse.Namespace) -> int:
+    return run_capture_command(
+        args,
+        command_name="prepare",
+        default_status="paused",
+        require_next_action=True,
+    )
 
 
 def cmd_failover(args: argparse.Namespace) -> int:
@@ -302,13 +359,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     checkpoint = subparsers.add_parser("checkpoint", help="Update session state and create a checkpoint")
     checkpoint.add_argument("session")
-    checkpoint.add_argument("--status", choices=sorted(SESSION_STATUSES))
-    checkpoint.add_argument("--next-action")
-    checkpoint.add_argument("--decision", action="append")
-    checkpoint.add_argument("--blocker", action="append")
-    checkpoint.add_argument("--touched-file", action="append")
+    add_capture_arguments(checkpoint, allow_status=True)
     checkpoint.add_argument("--repo")
     checkpoint.set_defaults(func=cmd_checkpoint)
+
+    pause = subparsers.add_parser("pause", help="Pause a session and write a final checkpoint")
+    pause.add_argument("session")
+    add_capture_arguments(pause, allow_status=False)
+    pause.add_argument("--repo")
+    pause.set_defaults(func=cmd_pause)
+
+    prepare = subparsers.add_parser("prepare", help="Capture a clean pre-handoff checkpoint")
+    prepare.add_argument("session")
+    add_capture_arguments(prepare, allow_status=False)
+    prepare.add_argument("--repo")
+    prepare.set_defaults(func=cmd_prepare)
 
     failover = subparsers.add_parser("failover", help="Prepare a handoff packet")
     failover.add_argument("session")
@@ -352,6 +417,23 @@ def build_parser() -> argparse.ArgumentParser:
     list_cmd.set_defaults(func=cmd_dashboard)
 
     return parser
+
+
+def add_capture_arguments(parser: argparse.ArgumentParser, *, allow_status: bool) -> None:
+    if allow_status:
+        parser.add_argument("--status", choices=sorted(SESSION_STATUSES))
+    parser.add_argument("--next-action", "-n")
+    parser.add_argument("--decision", "-d", action="append")
+    parser.add_argument("--blocker", "-b", action="append")
+    parser.add_argument("--touched-file", "-f", action="append")
+    parser.add_argument("--research-note", "-r", action="append")
+    parser.add_argument("--implementation-note", "-i", action="append")
+    parser.add_argument("--research-note-file")
+    parser.add_argument("--implementation-note-file")
+    parser.add_argument("--validation-status", choices=sorted(VALIDATION_STATUSES))
+    parser.add_argument("--validation-summary")
+    parser.add_argument("--validation-summary-file")
+    parser.add_argument("--capture-git-changes", "-g", action="store_true")
 
 
 def main() -> int:

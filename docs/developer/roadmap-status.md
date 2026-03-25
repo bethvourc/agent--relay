@@ -10,10 +10,10 @@ It answers three practical questions:
 
 ## Current Status
 
-- Current phase: `Ready for Phase 6`
-- Completed phases: `Phase 1`, `Phase 2`, `Phase 3`, `Phase 4`, `Phase 5`
+- Current phase: `Ready for Phase 7`
+- Completed phases: `Phase 1`, `Phase 2`, `Phase 3`, `Phase 4`, `Phase 5`, `Phase 6`
 - In progress: `None`
-- Not started: `Phase 6`, `Phase 7`
+- Not started: `Phase 7`
 
 ## V1 Goal
 
@@ -118,13 +118,22 @@ What is done:
 
 ### Phase 6: Lightweight Capture Hooks
 
-Status: `Not Started`
+Status: `Completed`
 
 What this phase covers:
 
 - faster checkpoint ergonomics
 - optional autosave helpers
 - cleaner pause or prepare flows before handoff
+
+What is done:
+
+- `capture.py` now centralizes shared session update and checkpoint capture behavior
+- `checkpoint` supports richer capture flags for notes, validation, and touched files
+- `pause` writes a final paused checkpoint quickly
+- `prepare` writes a paused pre-handoff checkpoint and requires an explicit next action
+- optional git-based touched-file capture is available
+- optional autosave file hooks exist for research notes, implementation notes, and validation summary
 
 ### Phase 7: Validation and Demo Flow
 
@@ -142,6 +151,8 @@ The CLI already supports:
 
 - `start`
 - `checkpoint`
+- `pause`
+- `prepare`
 - `failover`
 - `launch`
 - `inspect`
@@ -152,8 +163,8 @@ That means the local-first skeleton is real and usable today, even though the re
 
 The next engineering step is:
 
-1. add faster checkpoint capture ergonomics
-2. add pause or prepare flows before handoff
-3. add optional autosave helpers without weakening the typed session core
+1. validate the new capture flow in a real repository
+2. tighten the demo walkthrough around pause, prepare, failover, and launch
+3. add integration-style confidence beyond unit tests
 
-That starts Phase 6 while keeping provider-specific behavior isolated behind the adapter layer.
+That starts Phase 7 and shifts the work from feature construction to validation and demo confidence.

@@ -107,6 +107,61 @@ class AgentRelayCliTests(TestCase):
             self.assertIn("Use repo-local state", summary)
             self.assertIn("src/agent_relay/cli.py", summary)
 
+    def test_checkpoint_captures_notes_validation_and_git_touched_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir).resolve()
+            subprocess.run(["git", "init"], cwd=repo_root, text=True, capture_output=True, check=True)
+
+            notes_dir = repo_root / "notes"
+            notes_dir.mkdir()
+            (notes_dir / "implementation.md").write_text("Added the Phase 6 capture flow\n")
+            (notes_dir / "validation.txt").write_text("Manual verification still pending\n")
+            (repo_root / "src").mkdir()
+            (repo_root / "src" / "phase6.py").write_text("print('phase6')\n")
+
+            start_data = self.run_cli_json(
+                "start",
+                "--agent",
+                "claude",
+                "--task",
+                "Capture richer checkpoint state",
+                "--repo",
+                tmpdir,
+            )
+            session_id = start_data["session_id"]
+
+            cp_data = self.run_cli_json(
+                "checkpoint",
+                session_id,
+                "--next-action",
+                "Prepare the final handoff",
+                "--research-note",
+                "Investigated the last safe checkpoint flow",
+                "--implementation-note-file",
+                "notes/implementation.md",
+                "--validation-status",
+                "partial",
+                "--validation-summary-file",
+                "notes/validation.txt",
+                "--capture-git-changes",
+                "--repo",
+                tmpdir,
+            )
+
+            session_root = repo_root / ".agent-relay" / "sessions" / session_id
+            state = json.loads((session_root / "state.json").read_text())
+            summary = (session_root / "summary.md").read_text()
+
+            self.assertEqual(cp_data["status"], "active")
+            self.assertEqual(state["validation"]["status"], "partial")
+            self.assertEqual(state["validation"]["summary"], "Manual verification still pending")
+            self.assertIn("Investigated the last safe checkpoint flow", state["research_notes"])
+            self.assertIn("Added the Phase 6 capture flow", state["implementation_notes"])
+            self.assertIn("src/phase6.py", state["touched_files"])
+            self.assertTrue(all(not path.startswith(".agent-relay/") for path in state["touched_files"]))
+            self.assertIn("Implementation notes:", summary)
+            self.assertIn("Added the Phase 6 capture flow", summary)
+
     def test_failover_writes_resume_packet_and_records_checkpoint_reference(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir).resolve()
@@ -246,6 +301,46 @@ class AgentRelayCliTests(TestCase):
             self.assertEqual(launch_data["launch_instructions"], handoff["launch_instructions"])
             self.assertEqual(handoff["launch_status"], "ready")
             self.assertEqual(state["current_agent"], "claude")
+
+    def test_prepare_creates_paused_checkpoint_before_failover(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir).resolve()
+            start_data = self.run_cli_json(
+                "start",
+                "--agent",
+                "claude",
+                "--task",
+                "Prepare a clean handoff",
+                "--repo",
+                tmpdir,
+            )
+            session_id = start_data["session_id"]
+            session_root = repo_root / ".agent-relay" / "sessions" / session_id
+
+            prepare_data = self.run_cli_json(
+                "prepare",
+                session_id,
+                "--next-action",
+                "Hand off to Codex for continuation",
+                "--decision",
+                "Pause before preparing the target packet",
+                "--repo",
+                tmpdir,
+            )
+
+            checkpoints = list((session_root / "checkpoints").glob("*.json"))
+            state = json.loads((session_root / "state.json").read_text())
+            summary = (session_root / "summary.md").read_text()
+
+            self.assertEqual(len(checkpoints), 2)
+            self.assertEqual(prepare_data["command"], "prepare")
+            self.assertEqual(prepare_data["status"], "paused")
+            self.assertEqual(state["current_status"], "paused")
+            self.assertEqual(state["next_action"], "Hand off to Codex for continuation")
+            self.assertEqual(state["latest_checkpoint_id"], prepare_data["checkpoint_id"])
+            self.assertIn("Pause before preparing the target packet", state["decisions"])
+            self.assertIn("Current status: paused", summary)
+            self.assertIn("Hand off to Codex for continuation", summary)
 
     def test_dashboard_lists_sessions(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

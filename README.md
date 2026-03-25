@@ -26,6 +26,8 @@ The CLI currently supports:
 
 - `start` to create a new session under `.agent-relay/sessions/<session-id>/`
 - `checkpoint` to update the structured session state and write a new checkpoint
+- `pause` to pause work and write a final checkpoint quickly
+- `prepare` to capture a clean pre-handoff checkpoint with an explicit next action
 - `failover` to render a target-specific resume packet and prepare handoff metadata
 - `launch` to print or execute the latest prepared handoff
 - `inspect` to print the persisted session state
@@ -35,6 +37,22 @@ The CLI currently supports:
 Resume rendering now lives in `src/agent_relay/resume.py`. `failover` accepts `--resume-evidence-depth` with `minimal`, `standard`, or `full` to control how much latest-checkpoint evidence appears in the target packet.
 Launch execution now lives in `src/agent_relay/launcher.py`, while `cli.py` stays focused on command orchestration.
 Agent-specific launch and identity behavior now lives behind the adapter registry in `src/agent_relay/agents.py`.
+Phase 6 capture helpers now live in `src/agent_relay/capture.py`, which powers richer checkpoints, `pause`, `prepare`, and optional auto-capture.
+
+`checkpoint`, `pause`, and `prepare` now support richer capture flags such as:
+
+- `--research-note`
+- `--implementation-note`
+- `--validation-status`
+- `--validation-summary`
+- `--capture-git-changes`
+
+Optional autosave helpers are available through environment variables:
+
+- `AGENT_RELAY_AUTOSAVE_GIT_TOUCHED_FILES=1`
+- `AGENT_RELAY_AUTOSAVE_RESEARCH_NOTE_FILE=<path>`
+- `AGENT_RELAY_AUTOSAVE_IMPLEMENTATION_NOTE_FILE=<path>`
+- `AGENT_RELAY_AUTOSAVE_VALIDATION_SUMMARY_FILE=<path>`
 
 Failover now records a rendered launch command for the target agent profile. The built-in defaults are intentionally shallow:
 

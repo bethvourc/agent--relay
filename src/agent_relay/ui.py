@@ -59,13 +59,6 @@ AGENT_SYMBOLS = {
     "codex": "◇",
 }
 
-BANNER_LINES = [
-    "[brand]  ╔═══════════════════════════════════════╗[/]",
-    "[brand]  ║[/]  [bold white]A G E N T[/]   [brand]R E L A Y[/]            [brand]║[/]",
-    "[brand]  ║[/]  [dim]local-first agent handoff cli[/]        [brand]║[/]",
-    "[brand]  ╚═══════════════════════════════════════╝[/]",
-]
-
 BANNER_COMPACT = "[brand]▸ AGENT RELAY[/]  [dim]·  local-first agent handoff cli[/]"
 
 
@@ -97,8 +90,13 @@ def render_banner(console: Console) -> None:
     if is_compact(console):
         console.print(BANNER_COMPACT)
     else:
-        for line in BANNER_LINES:
-            console.print(line)
+        title = Text()
+        title.append("A G E N T", style="bold white")
+        title.append("   ")
+        title.append("R E L A Y", style="brand")
+        title.append("\n")
+        title.append("local-first agent handoff cli", style="dim")
+        console.print(Panel(title, border_style="brand", padding=(0, 1), expand=False))
     console.print()
 
 
@@ -184,6 +182,7 @@ def render_start_success(
         title="[brand]new session[/]",
         title_align="left",
         padding=(1, 2),
+        expand=False,
     ))
 
 
@@ -211,6 +210,73 @@ def render_checkpoint_success(
         title="[brand.dim]checkpoint[/]",
         title_align="left",
         padding=(0, 2),
+        expand=False,
+    ))
+
+
+def render_pause_success(
+    console: Console,
+    session_id: str,
+    checkpoint_id: str,
+    next_action: str,
+) -> None:
+    if is_compact(console):
+        console.print(f"[warning]Session paused[/]  [brand]{checkpoint_id}[/]", highlight=False)
+        console.print(f"  [label]Session:[/]     [muted]{session_id}[/]", highlight=False)
+        console.print(f"  [label]Next action:[/] [value]{next_action or 'None recorded'}[/]", highlight=False)
+        return
+
+    content = Text()
+    content.append("Session paused\n\n", style="warning")
+    content.append("  Checkpoint  ", style="label")
+    content.append(checkpoint_id, style="brand")
+    content.append("\n")
+    content.append("  Session     ", style="label")
+    content.append(session_id, style="muted")
+    content.append("\n")
+    content.append("  Next action ", style="label")
+    content.append(next_action or "None recorded", style="value")
+
+    console.print(Panel(
+        content,
+        border_style="brand.dim",
+        title="[brand.dim]pause[/]",
+        title_align="left",
+        padding=(0, 2),
+        expand=False,
+    ))
+
+
+def render_prepare_success(
+    console: Console,
+    session_id: str,
+    checkpoint_id: str,
+    next_action: str,
+) -> None:
+    if is_compact(console):
+        console.print(f"[brand]Prepared for handoff[/]  [brand]{checkpoint_id}[/]", highlight=False)
+        console.print(f"  [label]Session:[/]     [muted]{session_id}[/]", highlight=False)
+        console.print(f"  [label]Next action:[/] [value]{next_action}[/]", highlight=False)
+        return
+
+    content = Text()
+    content.append("Prepared for handoff\n\n", style="heading")
+    content.append("  Checkpoint  ", style="label")
+    content.append(checkpoint_id, style="brand")
+    content.append("\n")
+    content.append("  Session     ", style="label")
+    content.append(session_id, style="muted")
+    content.append("\n")
+    content.append("  Next action ", style="label")
+    content.append(next_action, style="value")
+
+    console.print(Panel(
+        content,
+        border_style="brand",
+        title="[brand]prepare[/]",
+        title_align="left",
+        padding=(0, 2),
+        expand=False,
     ))
 
 
@@ -257,6 +323,7 @@ def render_failover_success(
         title="[brand]failover[/]",
         title_align="left",
         padding=(1, 2),
+        expand=False,
     ))
 
 
@@ -294,6 +361,7 @@ def render_launch_preview(
         title="[brand.dim]launch[/]",
         title_align="left",
         padding=(1, 2),
+        expand=False,
     ))
 
 
@@ -334,6 +402,7 @@ def render_inspect(console: Console, session_dict: dict[str, Any]) -> None:
         title="[brand]session[/]",
         title_align="left",
         padding=(0, 2),
+        expand=False,
     ))
 
     # Objective
@@ -346,8 +415,10 @@ def render_inspect(console: Console, session_dict: dict[str, Any]) -> None:
     # Decisions / Blockers
     decisions = session_dict.get("decisions", [])
     blockers = session_dict.get("blockers", [])
+    research_notes = session_dict.get("research_notes", [])
+    implementation_notes = session_dict.get("implementation_notes", [])
 
-    if decisions or blockers:
+    if decisions or blockers or research_notes or implementation_notes:
         console.print()
         console.print(Rule(style="brand.dim"))
 
@@ -360,6 +431,16 @@ def render_inspect(console: Console, session_dict: dict[str, Any]) -> None:
         console.print("\n  [heading]Blockers[/]")
         for b in blockers:
             console.print(f"    [error]▸[/] {b}")
+
+    if research_notes:
+        console.print("\n  [heading]Research Notes[/]")
+        for note in research_notes:
+            console.print(f"    [brand]▸[/] {note}")
+
+    if implementation_notes:
+        console.print("\n  [heading]Implementation Notes[/]")
+        for note in implementation_notes:
+            console.print(f"    [brand]▸[/] {note}")
 
     # Touched files
     touched = session_dict.get("touched_files", [])
@@ -416,6 +497,10 @@ def _render_inspect_compact(console: Console, session_dict: dict[str, Any]) -> N
         console.print(f"  [brand]▸[/] {d}", highlight=False)
     for b in session_dict.get("blockers", []):
         console.print(f"  [error]▸[/] {b}", highlight=False)
+    for note in session_dict.get("research_notes", []):
+        console.print(f"  [brand]▸[/] research: {note}", highlight=False)
+    for note in session_dict.get("implementation_notes", []):
+        console.print(f"  [brand]▸[/] implementation: {note}", highlight=False)
     for f in session_dict.get("touched_files", []):
         console.print(f"  [path]{f}[/]", highlight=False)
 
@@ -485,6 +570,8 @@ def render_help(console: Console) -> None:
         console.print()
         _help_row_compact(console, "start", "Create a new relay session", "--agent <name> --task <text>")
         _help_row_compact(console, "checkpoint", "Save a session checkpoint", "<session> [--decision ...] [--blocker ...]")
+        _help_row_compact(console, "pause", "Pause a session with a final checkpoint", "<session> [--next-action ...]")
+        _help_row_compact(console, "prepare", "Capture a clean pre-handoff checkpoint", "<session> --next-action <text>")
         _help_row_compact(console, "failover", "Prepare handoff to another agent", "<session> --to-agent <name> --reason <text>")
         _help_row_compact(console, "launch", "Preview or execute a handoff", "<session> [--execute] [--yes]")
         _help_row_compact(console, "inspect", "View session state", "<session>")
@@ -498,6 +585,8 @@ def render_help(console: Console) -> None:
         console.print()
         return
 
+    show_usage = console.width >= 110
+
     table = Table(
         show_header=False,
         box=None,
@@ -506,14 +595,21 @@ def render_help(console: Console) -> None:
     )
     table.add_column("Command", style="brand", no_wrap=True, min_width=12)
     table.add_column("Description", style="value")
-    table.add_column("Usage", style="muted")
+    if show_usage:
+        table.add_column("Usage", style="muted")
 
-    table.add_row("start", "Create a new relay session", "--agent <name> --task <text>")
-    table.add_row("checkpoint", "Save a session checkpoint", "<session> [--decision ...] [--blocker ...]")
-    table.add_row("failover", "Prepare handoff to another agent", "<session> --to-agent <name> --reason <text>")
-    table.add_row("launch", "Preview or execute a handoff", "<session> [--execute] [--yes]")
-    table.add_row("inspect", "View session state", "<session>")
-    table.add_row("dashboard", "List all sessions in this repo", "[--repo <path>]")
+    cmds = [
+        ("start", "Create a new relay session", "--agent <name> --task <text>"),
+        ("checkpoint", "Save a session checkpoint", "<session> [--decision ...] [--blocker ...]"),
+        ("pause", "Pause a session with a final checkpoint", "<session> [--next-action <text>]"),
+        ("prepare", "Capture a clean pre-handoff checkpoint", "<session> --next-action <text>"),
+        ("failover", "Prepare handoff to another agent", "<session> --to-agent <name> --reason <text>"),
+        ("launch", "Preview or execute a handoff", "<session> [--execute] [--yes]"),
+        ("inspect", "View session state", "<session>"),
+        ("dashboard", "List all sessions in this repo", "[--repo <path>]"),
+    ]
+    for cmd, desc, usage in cmds:
+        table.add_row(cmd, desc, usage) if show_usage else table.add_row(cmd, desc)
 
     console.print(Panel(
         table,
@@ -521,6 +617,7 @@ def render_help(console: Console) -> None:
         title="[heading]commands[/]",
         title_align="left",
         padding=(1, 2),
+        expand=False,
     ))
 
     console.print()
@@ -539,6 +636,7 @@ def render_help(console: Console) -> None:
         title="[heading]global options[/]",
         title_align="left",
         padding=(0, 2),
+        expand=False,
     ))
 
     console.print()
@@ -562,4 +660,5 @@ def render_error(console: Console, message: str) -> None:
         title="[error]error[/]",
         title_align="left",
         padding=(0, 2),
+        expand=False,
     ))
