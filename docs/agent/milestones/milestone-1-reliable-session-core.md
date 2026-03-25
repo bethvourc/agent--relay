@@ -284,4 +284,4 @@ Milestone 1 is complete only when all of the following are true:
 
 If a new agent is taking over implementation for this milestone, the prompt should be:
 
-Implement Milestone 1 from `docs/milestone-1-reliable-session-core.md`. Create typed models and centralized storage, make checkpoints append-only artifacts, generate `summary.md` from the latest checkpoint, refactor the CLI to use those modules, and update the tests. Do not implement launch execution yet.
+Implement Milestone 1 from `docs/agent/milestones/milestone-1-reliable-session-core.md`. Create typed models and centralized storage, make checkpoints append-only artifacts, generate `summary.md` from the latest checkpoint, refactor the CLI to use those modules, and update the tests. Do not implement launch execution yet.

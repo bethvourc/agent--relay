@@ -21,6 +21,7 @@ from agent_relay.models import (
     SessionState,
     ValidationState,
 )
+from agent_relay.resume import EVIDENCE_DEPTHS, ResumeRenderOptions, render_resume_packet
 from agent_relay.storage import (
     default_repo_root,
     load_checkpoint,
@@ -30,127 +31,6 @@ from agent_relay.storage import (
     write_text_atomic,
 )
 from agent_relay.summary import write_summary
-
-
-def render_resume_packet(
-    session: SessionState,
-    target_agent: str,
-    *,
-    handoff_reason: str,
-    prepared_at: str,
-) -> str:
-    if target_agent == "claude":
-        return render_claude_resume_packet(session, handoff_reason=handoff_reason, prepared_at=prepared_at)
-    if target_agent == "codex":
-        return render_codex_resume_packet(session, handoff_reason=handoff_reason, prepared_at=prepared_at)
-    raise SystemExit(f"Unsupported target agent: {target_agent}")
-
-
-def render_claude_resume_packet(
-    session: SessionState,
-    *,
-    handoff_reason: str,
-    prepared_at: str,
-) -> str:
-    source_profile = get_agent_profile(session.current_agent)
-    lines = [
-        "# Claude Code Resume Packet",
-        "",
-        "Resume this Agent Relay session from the structured state below.",
-        "",
-        "Priority for this turn:",
-        "- Reconstruct the current repo state from the listed files and notes.",
-        "- Continue from the recorded next action instead of re-planning from scratch.",
-        "- Write a new checkpoint before another handoff.",
-        "",
-        "Session snapshot:",
-        f"- Objective: {session.objective}",
-        f"- Repository root: {session.repo_root}",
-        f"- Current status: {session.current_status}",
-        f"- Latest checkpoint: {session.latest_checkpoint_id or 'Not recorded'}",
-        f"- Source agent: {source_profile.display_name}",
-        f"- Prepared at: {prepared_at}",
-        f"- Handoff reason: {handoff_reason}",
-        f"- Next action: {session.next_action or 'Not recorded'}",
-        "",
-        "Validation:",
-        f"- Status: {session.validation.status}",
-        f"- Summary: {session.validation.summary or 'None recorded'}",
-        "",
-    ]
-    append_bullet_section(lines, "Decisions:", session.decisions)
-    append_bullet_section(lines, "Blockers:", session.blockers)
-    append_bullet_section(lines, "Research notes:", session.research_notes)
-    append_bullet_section(lines, "Implementation notes:", session.implementation_notes)
-    append_bullet_section(lines, "Touched files:", session.touched_files)
-    append_bullet_section(lines, "Recent handoffs:", render_recent_handoffs(session))
-    return "\n".join(lines) + "\n"
-
-
-def render_codex_resume_packet(
-    session: SessionState,
-    *,
-    handoff_reason: str,
-    prepared_at: str,
-) -> str:
-    source_profile = get_agent_profile(session.current_agent)
-    lines = [
-        "# Codex Resume Packet",
-        "",
-        "You are taking over an in-progress Agent Relay session in this repository.",
-        "",
-        "Execution brief:",
-        f"- Objective: {session.objective}",
-        f"- Repository root: {session.repo_root}",
-        f"- Current status: {session.current_status}",
-        f"- Latest checkpoint: {session.latest_checkpoint_id or 'Not recorded'}",
-        f"- Source agent: {source_profile.display_name}",
-        f"- Prepared at: {prepared_at}",
-        f"- Handoff reason: {handoff_reason}",
-        f"- Immediate next step: {session.next_action or 'Not recorded'}",
-        "",
-        "Operational constraints:",
-        "- Work from the repository state on disk.",
-        "- Preserve repo-local session state under .agent-relay/.",
-        "- Update the session checkpoint before another failover.",
-        "",
-        "Validation:",
-        f"- Status: {session.validation.status}",
-        f"- Summary: {session.validation.summary or 'None recorded'}",
-        "",
-    ]
-    append_bullet_section(lines, "Decisions to preserve:", session.decisions)
-    append_bullet_section(lines, "Blockers to resolve:", session.blockers)
-    append_bullet_section(lines, "Research context:", session.research_notes)
-    append_bullet_section(lines, "Implementation context:", session.implementation_notes)
-    append_bullet_section(lines, "Files to inspect first:", session.touched_files)
-    append_bullet_section(lines, "Recent handoffs:", render_recent_handoffs(session))
-    return "\n".join(lines) + "\n"
-
-
-def append_bullet_section(lines: list[str], heading: str, items: list[str]) -> None:
-    lines.append(heading)
-    if items:
-        lines.extend([f"- {item}" for item in items])
-    else:
-        lines.append("- None recorded")
-    lines.append("")
-
-
-def render_recent_handoffs(session: SessionState) -> list[str]:
-    if not session.handoffs:
-        return []
-
-    rendered = []
-    for handoff in session.handoffs[-3:]:
-        source = describe_agent(handoff.from_agent)
-        target = describe_agent(handoff.to_agent)
-        rendered.append(f"{handoff.prepared_at}: {source} -> {target} ({handoff.reason})")
-    return rendered
-
-
-def describe_agent(agent: str) -> str:
-    return get_agent_profile(agent).display_name
 
 
 def build_handoff_record(
@@ -286,13 +166,18 @@ def cmd_checkpoint(args: argparse.Namespace) -> int:
 def cmd_failover(args: argparse.Namespace) -> int:
     repo_root = default_repo_root(args.repo)
     session = load_session(repo_root, args.session)
+    if not session.latest_checkpoint_id:
+        raise SystemExit("Session has no checkpoint to hand off")
     prepared_at = utc_now()
     resume_path = resume_dir(repo_root, session.session_id) / f"{args.to_agent}.md"
+    checkpoint = load_checkpoint(repo_root, session.session_id, session.latest_checkpoint_id)
     resume_packet = render_resume_packet(
         session,
+        checkpoint,
         args.to_agent,
         handoff_reason=args.reason,
         prepared_at=prepared_at,
+        options=ResumeRenderOptions(evidence_depth=args.resume_evidence_depth),
     )
     write_text_atomic(resume_path, resume_packet)
 
@@ -363,6 +248,12 @@ def build_parser() -> argparse.ArgumentParser:
     failover.add_argument("session")
     failover.add_argument("--to-agent", required=True, choices=AGENT_NAMES)
     failover.add_argument("--reason", required=True)
+    failover.add_argument(
+        "--resume-evidence-depth",
+        default="standard",
+        choices=sorted(EVIDENCE_DEPTHS),
+        help="How much latest-checkpoint evidence to include in the resume packet",
+    )
     failover.add_argument("--repo")
     failover.set_defaults(func=cmd_failover)
 

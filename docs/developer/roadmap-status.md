@@ -10,9 +10,9 @@ It answers three practical questions:
 
 ## Current Status
 
-- Current phase: `Phase 3 / Phase 4 transition`
-- Completed phases: `Phase 1`, `Phase 2`
-- In progress: `Phase 3`, `Phase 4`
+- Current phase: `Phase 4`
+- Completed phases: `Phase 1`, `Phase 2`, `Phase 3`
+- In progress: `Phase 4`
 - Not started: `Phase 5`, `Phase 6`, `Phase 7`
 
 ## V1 Goal
@@ -65,7 +65,7 @@ What is done:
 
 ### Phase 3: Stronger Resume Packets
 
-Status: `In Progress`
+Status: `Completed`
 
 What this phase covers:
 
@@ -77,11 +77,8 @@ What is done:
 
 - Claude Code and Codex resume packets are different
 - resume packets include checkpoint id, decisions, blockers, touched files, validation, and handoff history
-
-What is still open:
-
-- move resume rendering out of `cli.py` into `resume.py`
-- add configurable evidence depth such as optional transcript or command excerpts
+- resume rendering now lives in `resume.py`
+- resume rendering supports configurable evidence depth
 
 ### Phase 4: Launch Execution
 
@@ -154,8 +151,8 @@ That means the local-first skeleton is real and usable today, even though the re
 
 The next engineering step is:
 
-1. extract resume rendering into `resume.py`
-2. extract launch execution into `launcher.py`
-3. keep the CLI as a thin orchestration layer
+1. extract launch execution into `launcher.py`
+2. keep the CLI as a thin orchestration layer
+3. finalize the launch configuration boundary before Phase 5
 
-That closes out the current `Phase 3 / Phase 4` transition cleanly before moving on to adapter boundaries and capture hooks.
+That closes out Phase 4 cleanly before moving on to adapter boundaries and capture hooks.

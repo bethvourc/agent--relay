@@ -1,3 +1,11 @@
+Metadata-Version: 2.4
+Name: agent-relay
+Version: 0.1.0
+Summary: Local-first agent handoff CLI
+Author: Beth Vour
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+
 # Agent Relay
 
 Agent Relay is a local-first CLI for handing work from one coding agent to another without losing operational context.
