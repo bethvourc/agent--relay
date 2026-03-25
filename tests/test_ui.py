@@ -82,8 +82,8 @@ class BannerTests(TestCase):
         console, buf = make_console(width=120)
         render_banner(console)
         output = buf.getvalue()
-        self.assertIn("A G E N T", output)
-        self.assertIn("R E L A Y", output)
+        self.assertIn("Agent", output)
+        self.assertIn("Relay", output)
 
     def test_compact_banner_is_single_line(self) -> None:
         console, buf = make_console(width=60)

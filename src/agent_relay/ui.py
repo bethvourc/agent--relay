@@ -59,7 +59,7 @@ AGENT_SYMBOLS = {
     "codex": "◇",
 }
 
-BANNER_COMPACT = "[brand]▸ AGENT RELAY[/]  [dim]·  local-first agent handoff cli[/]"
+BANNER_COMPACT = "[brand]▸ Agent Relay[/]  [dim]·  local-first agent handoff cli[/]"
 
 
 def create_console(*, json_mode: bool = False, quiet: bool = False) -> Console:
@@ -91,9 +91,9 @@ def render_banner(console: Console) -> None:
         console.print(BANNER_COMPACT)
     else:
         title = Text()
-        title.append("A G E N T", style="bold white")
-        title.append("   ")
-        title.append("R E L A Y", style="brand")
+        title.append("Agent", style="bold white")
+        title.append(" ")
+        title.append("Relay", style="brand")
         title.append("\n")
         title.append("local-first agent handoff cli", style="dim")
         console.print(Panel(title, border_style="brand", padding=(0, 1), expand=False))
