@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
 
-from agent_relay.v2.errors import V2CorruptionError
-from agent_relay.v2.lifecycle import (
+from agent_relay.errors import V2CorruptionError
+from agent_relay.lifecycle import (
     LifecycleState,
     LifecycleViolation,
     normalize_checkpoint_status_directive,
@@ -17,7 +17,7 @@ from agent_relay.v2.lifecycle import (
     plan_resume_command,
     plan_session_started,
 )
-from agent_relay.v2.models import (
+from agent_relay.models import (
     CheckpointManifest,
     DerivedHandoffView,
     DerivedSessionView,

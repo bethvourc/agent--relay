@@ -14,9 +14,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 
-from agent_relay.v2.capture_support import CaptureOptions
-from agent_relay.v2.checkpoints import create_checkpoint_for_command
-from agent_relay.v2.tx import JournalCommitRequest, SessionTransaction
+from agent_relay.capture_support import CaptureOptions
+from agent_relay.checkpoints import create_checkpoint_for_command
+from agent_relay.tx import JournalCommitRequest, SessionTransaction
 from tests.v2_fixtures import build_sample_v2_session
 
 

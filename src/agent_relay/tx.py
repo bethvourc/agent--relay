@@ -9,9 +9,9 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
 
 from agent_relay.fs import write_json_atomic, write_text_atomic
-from agent_relay.v2.errors import TransactionError, V2Error
-from agent_relay.v2.hashing import sha256_path
-from agent_relay.v2.layout import (
+from agent_relay.errors import TransactionError, V2Error
+from agent_relay.hashing import sha256_path
+from agent_relay.layout import (
     object_dirname,
     pending_tx_dir,
     pending_tx_manifest_path,
@@ -20,14 +20,14 @@ from agent_relay.v2.layout import (
     quarantine_dir,
     session_root,
 )
-from agent_relay.v2.locks import LockHandle, acquire_session_lock, utc_now
-from agent_relay.v2.models import (
+from agent_relay.locks import LockHandle, acquire_session_lock, utc_now
+from agent_relay.models import (
     JOURNAL_EVENT_TYPES,
     JournalEvent,
     ObjectManifest,
     ObjectRef,
 )
-from agent_relay.v2.storage import load_journal_events, load_session_manifest, load_session_view
+from agent_relay.storage import load_journal_events, load_session_manifest, load_session_view
 
 TX_STATES = {"staging", "promoted", "committed"}
 

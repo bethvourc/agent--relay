@@ -10,7 +10,7 @@ from unittest import TestCase
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from agent_relay.v2.locks import acquire_repo_lock, acquire_session_lock
+from agent_relay.locks import acquire_repo_lock, acquire_session_lock
 
 
 class V2LockTests(TestCase):
@@ -30,8 +30,8 @@ class V2LockTests(TestCase):
             with acquire_repo_lock(repo_root, owner="parent", timeout_seconds=1.0):
                 code = f"""
 from pathlib import Path
-from agent_relay.v2.errors import LockTimeoutError
-from agent_relay.v2.locks import acquire_repo_lock
+from agent_relay.errors import LockTimeoutError
+from agent_relay.locks import acquire_repo_lock
 
 repo = Path({str(repo_root)!r})
 try:
@@ -59,8 +59,8 @@ else:
             with acquire_repo_lock(repo_root, owner="maintenance", timeout_seconds=1.0):
                 code = f"""
 from pathlib import Path
-from agent_relay.v2.errors import LockTimeoutError
-from agent_relay.v2.locks import acquire_session_lock
+from agent_relay.errors import LockTimeoutError
+from agent_relay.locks import acquire_session_lock
 
 repo = Path({str(repo_root)!r})
 try:
@@ -81,8 +81,8 @@ else:
             with acquire_session_lock(repo_root, "session-a", owner="worker", timeout_seconds=1.0):
                 code = f"""
 from pathlib import Path
-from agent_relay.v2.errors import LockTimeoutError
-from agent_relay.v2.locks import acquire_repo_lock
+from agent_relay.errors import LockTimeoutError
+from agent_relay.locks import acquire_repo_lock
 
 repo = Path({str(repo_root)!r})
 try:

@@ -5,7 +5,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from agent_relay.v2.layout import STATE_DIRNAME
+from agent_relay.layout import STATE_DIRNAME
 
 AUTOSAVE_GIT_TOUCHED_FILES_ENV = "AGENT_RELAY_AUTOSAVE_GIT_TOUCHED_FILES"
 AUTOSAVE_RESEARCH_NOTE_FILE_ENV = "AGENT_RELAY_AUTOSAVE_RESEARCH_NOTE_FILE"

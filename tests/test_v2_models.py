@@ -8,8 +8,8 @@ from unittest import TestCase
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from agent_relay.v2.errors import V2ValidationError
-from agent_relay.v2.models import (
+from agent_relay.errors import V2ValidationError
+from agent_relay.models import (
     CheckpointManifest,
     JournalEvent,
     ManifestFile,

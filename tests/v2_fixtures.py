@@ -8,8 +8,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from agent_relay.v2.hashing import sha256_path, sha256_text
-from agent_relay.v2.models import (
+from agent_relay.hashing import sha256_path, sha256_text
+from agent_relay.models import (
     CheckpointManifest,
     HandoffManifest,
     JournalEvent,
@@ -82,7 +82,7 @@ def build_sample_v2_session(repo_root: Path, *, session_id: str = "20260325-1800
         blockers=(),
         research_notes=("Mapped the v2 object model",),
         implementation_notes=("Started the replay engine",),
-        touched_files=("src/agent_relay/v2/models.py",),
+        touched_files=("src/agent_relay/models.py",),
         validation=ValidationState(status="partial", summary="Replay path still needs verification"),
         repo_state_file="repo-state.json",
         validation_file="validation.json",
@@ -258,7 +258,7 @@ def build_sample_v2_session(repo_root: Path, *, session_id: str = "20260325-1800
         blockers=(),
         research_notes=("Confirmed the journal replay order",),
         implementation_notes=("Codex resumed from the immutable packet",),
-        touched_files=("src/agent_relay/v2/replay.py",),
+        touched_files=("src/agent_relay/replay.py",),
         validation=ValidationState(status="passed", summary="Replay and cache rebuild verified"),
         repo_state_file="repo-state.json",
         validation_file="validation.json",
@@ -419,7 +419,7 @@ def build_checkpoint_object(
         blockers=(),
         research_notes=("Prepared in a staged object dir",),
         implementation_notes=("Promoted only before journal visibility",),
-        touched_files=("src/agent_relay/v2/tx.py",),
+        touched_files=("src/agent_relay/tx.py",),
         validation=ValidationState(status=validation_status, summary=validation_summary),
         repo_state_file="repo-state.json",
         validation_file="validation.json",

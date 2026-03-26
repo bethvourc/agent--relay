@@ -12,13 +12,13 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from agent_relay.v2.capture_support import CaptureOptions
-from agent_relay.v2.checkpoints import create_checkpoint_for_command
-from agent_relay.v2.errors import V2CorruptionError
-from agent_relay.v2.layout import pending_tx_dir
-from agent_relay.v2.models import CheckpointManifest
-from agent_relay.v2.storage import load_session_view
-from agent_relay.v2.tx import recover_session_transactions
+from agent_relay.capture_support import CaptureOptions
+from agent_relay.checkpoints import create_checkpoint_for_command
+from agent_relay.errors import V2CorruptionError
+from agent_relay.layout import pending_tx_dir
+from agent_relay.models import CheckpointManifest
+from agent_relay.storage import load_session_view
+from agent_relay.tx import recover_session_transactions
 from tests.v2_fixtures import build_sample_v2_session
 
 
@@ -184,7 +184,7 @@ class V2CheckpointingTests(TestCase):
             checkpoint_id = "cp-20260325T181500Z-888888"
             interrupted_path: Path | None = None
 
-            import agent_relay.v2.tx as tx_module
+            import agent_relay.tx as tx_module
 
             original_write_json_atomic = tx_module.write_json_atomic
 
@@ -195,8 +195,8 @@ class V2CheckpointingTests(TestCase):
                     raise KeyboardInterrupt("simulated interruption before checkpoint journal commit")
                 original_write_json_atomic(path, payload)
 
-            with patch("agent_relay.v2.checkpoints.checkpoint_id_now", return_value=checkpoint_id):
-                with patch("agent_relay.v2.tx.write_json_atomic", side_effect=interrupt_on_journal_write):
+            with patch("agent_relay.checkpoints.checkpoint_id_now", return_value=checkpoint_id):
+                with patch("agent_relay.tx.write_json_atomic", side_effect=interrupt_on_journal_write):
                     with self.assertRaises(KeyboardInterrupt):
                         create_checkpoint_for_command(
                             repo_root,

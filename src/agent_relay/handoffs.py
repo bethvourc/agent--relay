@@ -9,12 +9,12 @@ from pathlib import Path
 from typing import Any
 
 from agent_relay.agents import get_agent_adapter, get_agent_display_name
-from agent_relay.v2.resume_options import EVIDENCE_DEPTHS, ResumeRenderOptions
-from agent_relay.v2.errors import V2CorruptionError
-from agent_relay.v2.hashing import sha256_path, sha256_text
-from agent_relay.v2.integrity import require_session_mutable
-from agent_relay.v2.layout import object_dir
-from agent_relay.v2.lifecycle import (
+from agent_relay.resume_options import EVIDENCE_DEPTHS, ResumeRenderOptions
+from agent_relay.errors import V2CorruptionError
+from agent_relay.hashing import sha256_path, sha256_text
+from agent_relay.integrity import require_session_mutable
+from agent_relay.layout import object_dir
+from agent_relay.lifecycle import (
     LifecycleState,
     LifecycleViolation,
     plan_failover_command,
@@ -22,8 +22,8 @@ from agent_relay.v2.lifecycle import (
     plan_launch_started,
     plan_resume_command,
 )
-from agent_relay.v2.locks import acquire_session_lock
-from agent_relay.v2.models import (
+from agent_relay.locks import acquire_session_lock
+from agent_relay.models import (
     CheckpointManifest,
     DerivedHandoffView,
     DerivedSessionView,
@@ -32,12 +32,12 @@ from agent_relay.v2.models import (
     ManifestFile,
     SCHEMA_VERSION,
 )
-from agent_relay.v2.storage import (
+from agent_relay.storage import (
     load_latest_journal_event,
     load_referenced_object,
     load_session_view,
 )
-from agent_relay.v2.tx import JournalCommitRequest, SessionTransaction
+from agent_relay.tx import JournalCommitRequest, SessionTransaction
 
 
 @dataclass(frozen=True, slots=True)

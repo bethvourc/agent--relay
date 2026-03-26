@@ -4,16 +4,16 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from agent_relay.v2.errors import V2CorruptionError, V2ValidationError
-from agent_relay.v2.layout import (
+from agent_relay.errors import V2CorruptionError, V2ValidationError
+from agent_relay.layout import (
     journal_dir,
     pending_tx_dir,
     session_manifest_path,
     session_root,
 )
-from agent_relay.v2.models import JournalEvent, SessionManifest, build_session_manifest_hash
-from agent_relay.v2.replay import ReplayResult, replay_session
-from agent_relay.v2.storage import _load_object_from_ref, load_session_manifest
+from agent_relay.models import JournalEvent, SessionManifest, build_session_manifest_hash
+from agent_relay.replay import ReplayResult, replay_session
+from agent_relay.storage import _load_object_from_ref, load_session_manifest
 
 HEALTH_STATUSES = {"healthy", "degraded", "corrupt"}
 

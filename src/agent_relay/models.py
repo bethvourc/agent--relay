@@ -5,8 +5,8 @@ from pathlib import PurePosixPath
 from typing import Any, Mapping
 
 from agent_relay.agents import AGENT_NAMES, LAUNCH_EXECUTE_POLICIES, launch_template_uses_resume_packet
-from agent_relay.v2.errors import V2ValidationError
-from agent_relay.v2.hashing import canonical_json, sha256_text
+from agent_relay.errors import V2ValidationError
+from agent_relay.hashing import canonical_json, sha256_text
 
 SCHEMA_VERSION = 2
 VALIDATION_STATUSES = {"not_run", "passed", "failed", "partial"}

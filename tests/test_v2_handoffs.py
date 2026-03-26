@@ -12,18 +12,18 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from agent_relay.v2.capture_support import CaptureOptions
-from agent_relay.v2.checkpoints import create_checkpoint_for_command
-from agent_relay.v2.handoffs import (
+from agent_relay.capture_support import CaptureOptions
+from agent_relay.checkpoints import create_checkpoint_for_command
+from agent_relay.handoffs import (
     create_handoff_for_command,
     execute_launch_for_command,
     preview_launch_for_command,
     recover_interrupted_launches,
     resume_handoff_for_command,
 )
-from agent_relay.v2.layout import object_dir, pending_tx_dir
-from agent_relay.v2.storage import load_session_view
-from agent_relay.v2.tx import JournalCommitRequest, SessionTransaction, recover_session_transactions
+from agent_relay.layout import object_dir, pending_tx_dir
+from agent_relay.storage import load_session_view
+from agent_relay.tx import JournalCommitRequest, SessionTransaction, recover_session_transactions
 from tests.v2_fixtures import build_sample_v2_session
 
 
@@ -241,7 +241,7 @@ class V2HandoffTests(TestCase):
             handoff_id = "ho-20260325T181550Z-bbbbbb"
             interrupted_path: Path | None = None
 
-            import agent_relay.v2.tx as tx_module
+            import agent_relay.tx as tx_module
 
             original_write_json_atomic = tx_module.write_json_atomic
 
@@ -252,8 +252,8 @@ class V2HandoffTests(TestCase):
                     raise KeyboardInterrupt("simulated interruption before handoff journal commit")
                 original_write_json_atomic(path, payload)
 
-            with patch("agent_relay.v2.handoffs.handoff_id_now", return_value=handoff_id):
-                with patch("agent_relay.v2.tx.write_json_atomic", side_effect=interrupt_on_journal_write):
+            with patch("agent_relay.handoffs.handoff_id_now", return_value=handoff_id):
+                with patch("agent_relay.tx.write_json_atomic", side_effect=interrupt_on_journal_write):
                     with self.assertRaises(KeyboardInterrupt):
                         create_handoff_for_command(
                             repo_root,
@@ -437,7 +437,7 @@ class V2HandoffTests(TestCase):
             self.assertEqual(result.launch_status, "succeeded")
             interrupted_path: Path | None = None
 
-            import agent_relay.v2.tx as tx_module
+            import agent_relay.tx as tx_module
 
             original_write_json_atomic = tx_module.write_json_atomic
 
@@ -448,7 +448,7 @@ class V2HandoffTests(TestCase):
                     raise KeyboardInterrupt("simulated interruption before resume journal commit")
                 original_write_json_atomic(path, payload)
 
-            with patch("agent_relay.v2.tx.write_json_atomic", side_effect=interrupt_on_journal_write):
+            with patch("agent_relay.tx.write_json_atomic", side_effect=interrupt_on_journal_write):
                 with self.assertRaises(KeyboardInterrupt):
                     resume_handoff_for_command(
                         repo_root,

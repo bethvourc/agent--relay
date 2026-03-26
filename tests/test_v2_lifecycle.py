@@ -10,10 +10,10 @@ from unittest import TestCase
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from agent_relay.v2.capture_support import CaptureOptions
-from agent_relay.v2.checkpoints import create_checkpoint_for_command
-from agent_relay.v2.handoffs import create_handoff_for_command
-from agent_relay.v2.lifecycle import (
+from agent_relay.capture_support import CaptureOptions
+from agent_relay.checkpoints import create_checkpoint_for_command
+from agent_relay.handoffs import create_handoff_for_command
+from agent_relay.lifecycle import (
     LifecycleState,
     LifecycleViolation,
     plan_checkpoint_command,
@@ -26,7 +26,7 @@ from agent_relay.v2.lifecycle import (
     plan_resume_command,
     plan_session_started,
 )
-from agent_relay.v2.tx import JournalCommitRequest, SessionTransaction
+from agent_relay.tx import JournalCommitRequest, SessionTransaction
 from tests.v2_fixtures import build_sample_v2_session
 
 

@@ -7,23 +7,23 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
-from agent_relay.v2.capture_support import CaptureOptions
+from agent_relay.capture_support import CaptureOptions
 from agent_relay.fs import write_json_atomic, write_text_atomic
-from agent_relay.v2.checkpoints import (
+from agent_relay.checkpoints import (
     _build_checkpoint_draft,
     _capture_workspace,
 )
-from agent_relay.v2.hashing import sha256_path, sha256_text
-from agent_relay.v2.layout import (
+from agent_relay.hashing import sha256_path, sha256_text
+from agent_relay.layout import (
     LAYOUT_VERSION,
     relay_root,
     session_root,
     sessions_root,
     version_path,
 )
-from agent_relay.v2.lifecycle import LifecycleState, plan_checkpoint_command, plan_session_started
-from agent_relay.v2.locks import acquire_repo_lock
-from agent_relay.v2.models import (
+from agent_relay.lifecycle import LifecycleState, plan_checkpoint_command, plan_session_started
+from agent_relay.locks import acquire_repo_lock
+from agent_relay.models import (
     CheckpointManifest,
     DerivedSessionView,
     JournalEvent,
@@ -34,7 +34,7 @@ from agent_relay.v2.models import (
     SessionManifest,
     ValidationState,
 )
-from agent_relay.v2.replay import replay_session
+from agent_relay.replay import replay_session
 
 
 @dataclass(frozen=True, slots=True)
@@ -379,37 +379,37 @@ def _rebuild_and_validate(repo_root: Path, session_id: str) -> None:
         events=events,
         load_object=lambda ref: _load_object(repo_root, session_id, ref),
     )
-    from agent_relay.v2.storage import load_session_view
+    from agent_relay.storage import load_session_view
 
     load_session_view(repo_root, session_id)
 
 
 def _manifest_hash(manifest: SessionManifest) -> str:
-    from agent_relay.v2.models import build_session_manifest_hash
+    from agent_relay.models import build_session_manifest_hash
 
     return build_session_manifest_hash(manifest)
 
 
 def _load_manifest(repo_root: Path, session_id: str) -> SessionManifest:
-    from agent_relay.v2.storage import load_session_manifest
+    from agent_relay.storage import load_session_manifest
 
     return load_session_manifest(repo_root, session_id)
 
 
 def _load_events(repo_root: Path, session_id: str) -> list[JournalEvent]:
-    from agent_relay.v2.storage import load_journal_events
+    from agent_relay.storage import load_journal_events
 
     return load_journal_events(repo_root, session_id)
 
 
 def _load_object(repo_root: Path, session_id: str, ref: ObjectRef):
-    from agent_relay.v2.storage import _load_object_from_ref
+    from agent_relay.storage import _load_object_from_ref
 
     return _load_object_from_ref(session_root(repo_root, session_id), ref)
 
 
 def _utc_now() -> str:
-    from agent_relay.v2.locks import utc_now
+    from agent_relay.locks import utc_now
 
     return utc_now()
 

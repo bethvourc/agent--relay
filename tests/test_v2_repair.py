@@ -13,9 +13,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 
-from agent_relay.v2.repair import repair_session
-from agent_relay.v2.storage import load_session_view
-from agent_relay.v2.tx import recover_session_transactions
+from agent_relay.repair import repair_session
+from agent_relay.storage import load_session_view
+from agent_relay.tx import recover_session_transactions
 from tests.v2_fixtures import build_sample_v2_session
 
 
@@ -209,7 +209,7 @@ class AgentRelayV2RepairTests(TestCase):
             fixture = build_sample_v2_session(repo_root)
             interrupted_path: Path | None = None
 
-            import agent_relay.v2.tx as tx_module
+            import agent_relay.tx as tx_module
 
             original_write_json_atomic = tx_module.write_json_atomic
 
@@ -220,7 +220,7 @@ class AgentRelayV2RepairTests(TestCase):
                     raise KeyboardInterrupt("simulated interruption before repair journal commit")
                 original_write_json_atomic(path, payload)
 
-            with patch("agent_relay.v2.tx.write_json_atomic", side_effect=interrupt_on_journal_write):
+            with patch("agent_relay.tx.write_json_atomic", side_effect=interrupt_on_journal_write):
                 with self.assertRaises(KeyboardInterrupt):
                     repair_session(
                         repo_root,

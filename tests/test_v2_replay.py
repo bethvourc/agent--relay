@@ -10,10 +10,10 @@ from unittest import TestCase
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from agent_relay.v2.errors import V2CorruptionError
-from agent_relay.v2.layout import derived_view_path, head_ref_path
-from agent_relay.v2.models import JournalEvent
-from agent_relay.v2.storage import load_session_view
+from agent_relay.errors import V2CorruptionError
+from agent_relay.layout import derived_view_path, head_ref_path
+from agent_relay.models import JournalEvent
+from agent_relay.storage import load_session_view
 from tests.v2_fixtures import build_sample_v2_session
 
 

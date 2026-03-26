@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from agent_relay.v2.handoffs import recover_interrupted_launches
-from agent_relay.v2.integrity import inspect_session_integrity
-from agent_relay.v2.layout import session_root, sessions_root
-from agent_relay.v2.storage import is_v2_session, load_session_view
+from agent_relay.handoffs import recover_interrupted_launches
+from agent_relay.integrity import inspect_session_integrity
+from agent_relay.layout import session_root, sessions_root
+from agent_relay.storage import is_v2_session, load_session_view
 
 
 @dataclass(frozen=True, slots=True)

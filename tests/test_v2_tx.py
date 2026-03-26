@@ -10,9 +10,9 @@ from unittest import TestCase
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from agent_relay.v2.layout import derived_view_path, head_ref_path, pending_tx_dir
-from agent_relay.v2.storage import load_session_view
-from agent_relay.v2.tx import JournalCommitRequest, SessionTransaction, recover_session_transactions
+from agent_relay.layout import derived_view_path, head_ref_path, pending_tx_dir
+from agent_relay.storage import load_session_view
+from agent_relay.tx import JournalCommitRequest, SessionTransaction, recover_session_transactions
 from tests.v2_fixtures import build_checkpoint_object, build_sample_v2_session
 
 

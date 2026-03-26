@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterable
 
-from agent_relay.v2.capture_support import (
+from agent_relay.capture_support import (
     AUTOSAVE_GIT_TOUCHED_FILES_ENV,
     AUTOSAVE_IMPLEMENTATION_NOTE_FILE_ENV,
     AUTOSAVE_RESEARCH_NOTE_FILE_ENV,
@@ -18,17 +18,17 @@ from agent_relay.v2.capture_support import (
     capture_git_touched_files,
     load_capture_text,
 )
-from agent_relay.v2.hashing import sha256_bytes, sha256_text
-from agent_relay.v2.integrity import require_session_mutable
-from agent_relay.v2.lifecycle import (
+from agent_relay.hashing import sha256_bytes, sha256_text
+from agent_relay.integrity import require_session_mutable
+from agent_relay.lifecycle import (
     LifecycleState,
     LifecycleTransition,
     LifecycleViolation,
     plan_checkpoint_command,
 )
-from agent_relay.v2.models import CheckpointManifest, DerivedSessionView, ManifestFile, ValidationState
-from agent_relay.v2.storage import load_session_view
-from agent_relay.v2.tx import JournalCommitRequest, SessionTransaction
+from agent_relay.models import CheckpointManifest, DerivedSessionView, ManifestFile, ValidationState
+from agent_relay.storage import load_session_view
+from agent_relay.tx import JournalCommitRequest, SessionTransaction
 
 
 def checkpoint_id_now() -> str:

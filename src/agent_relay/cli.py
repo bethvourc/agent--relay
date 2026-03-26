@@ -10,11 +10,11 @@ from pathlib import Path
 
 from agent_relay.agents import AGENT_NAMES
 from agent_relay.read_views import list_sessions_for_dashboard, load_session_for_inspect
-from agent_relay.v2.capture_support import CaptureOptions
-from agent_relay.v2.errors import V2Error
-from agent_relay.v2.lifecycle import CHECKPOINT_STATUS_DIRECTIVES
-from agent_relay.v2.models import VALIDATION_STATUSES
-from agent_relay.v2.resume_options import EVIDENCE_DEPTHS
+from agent_relay.capture_support import CaptureOptions
+from agent_relay.errors import V2Error
+from agent_relay.lifecycle import CHECKPOINT_STATUS_DIRECTIVES
+from agent_relay.models import VALIDATION_STATUSES
+from agent_relay.resume_options import EVIDENCE_DEPTHS
 from agent_relay.ui import (
     create_console,
     emit_json,
@@ -32,15 +32,15 @@ from agent_relay.ui import (
     render_prepare_success,
     render_start_success,
 )
-from agent_relay.v2.checkpoints import create_checkpoint_for_command
-from agent_relay.v2.bootstrap import start_session
-from agent_relay.v2.handoffs import (
+from agent_relay.checkpoints import create_checkpoint_for_command
+from agent_relay.bootstrap import start_session
+from agent_relay.handoffs import (
     create_handoff_for_command,
     execute_launch_for_command,
     preview_launch_for_command,
     resume_handoff_for_command,
 )
-from agent_relay.v2.repair import repair_session
+from agent_relay.repair import repair_session
 
 
 def default_repo_root(repo: str | None) -> Path:

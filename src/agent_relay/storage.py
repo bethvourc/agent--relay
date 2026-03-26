@@ -4,9 +4,9 @@ import json
 from pathlib import Path
 
 from agent_relay.fs import write_json_atomic
-from agent_relay.v2.errors import V2CorruptionError, V2ValidationError
-from agent_relay.v2.hashing import sha256_path
-from agent_relay.v2.layout import (
+from agent_relay.errors import V2CorruptionError, V2ValidationError
+from agent_relay.hashing import sha256_path
+from agent_relay.layout import (
     LAYOUT_VERSION,
     derived_view_path,
     head_ref_path,
@@ -18,7 +18,7 @@ from agent_relay.v2.layout import (
     sessions_root,
     version_path,
 )
-from agent_relay.v2.models import (
+from agent_relay.models import (
     DerivedSessionView,
     HeadRef,
     JournalEvent,
@@ -28,7 +28,7 @@ from agent_relay.v2.models import (
     build_session_manifest_hash,
     object_manifest_from_dict,
 )
-from agent_relay.v2.replay import replay_session
+from agent_relay.replay import replay_session
 
 
 def is_v2_session(repo_root: Path, session_id: str) -> bool:

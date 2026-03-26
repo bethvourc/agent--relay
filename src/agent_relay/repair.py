@@ -5,17 +5,17 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from agent_relay.fs import write_json_atomic
-from agent_relay.v2.integrity import IntegrityScan, SessionIntegrityReport, inspect_session_integrity
-from agent_relay.v2.layout import (
+from agent_relay.integrity import IntegrityScan, SessionIntegrityReport, inspect_session_integrity
+from agent_relay.layout import (
     derived_view_path,
     head_ref_path,
     repair_reports_dir,
     quarantine_dir,
     session_root,
 )
-from agent_relay.v2.locks import acquire_session_lock, utc_now
-from agent_relay.v2.storage import load_session_view
-from agent_relay.v2.tx import JournalCommitRequest, SessionTransaction, recover_session_transactions
+from agent_relay.locks import acquire_session_lock, utc_now
+from agent_relay.storage import load_session_view
+from agent_relay.tx import JournalCommitRequest, SessionTransaction, recover_session_transactions
 
 REPAIR_ACTIONS = {"rebuild_view", "rollback_pending", "promote_last_good"}
 

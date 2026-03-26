@@ -10,8 +10,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol, TextIO
 
-from agent_relay.v2.errors import LockTimeoutError
-from agent_relay.v2.layout import repo_lock_path, session_lock_path
+from agent_relay.errors import LockTimeoutError
+from agent_relay.layout import repo_lock_path, session_lock_path
 
 
 def utc_now() -> str:

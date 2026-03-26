@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from agent_relay.v2.models import LAUNCH_RESULT_STATUSES, SESSION_PHASES, TASK_STATUSES
+from agent_relay.models import LAUNCH_RESULT_STATUSES, SESSION_PHASES, TASK_STATUSES
 
 CHECKPOINT_COMMANDS = {"checkpoint", "pause", "prepare"}
 CHECKPOINT_STATUS_DIRECTIVES = {"active", "paused", "blocked", "done"}
