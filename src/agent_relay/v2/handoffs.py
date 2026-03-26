@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_relay.agents import get_agent_adapter, get_agent_display_name
-from agent_relay.resume import EVIDENCE_DEPTHS, ResumeRenderOptions
+from agent_relay.v2.resume_options import EVIDENCE_DEPTHS, ResumeRenderOptions
 from agent_relay.v2.errors import V2CorruptionError
 from agent_relay.v2.hashing import sha256_path, sha256_text
 from agent_relay.v2.integrity import require_session_mutable

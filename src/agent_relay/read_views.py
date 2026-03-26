@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from agent_relay.models import ModelValidationError
-from agent_relay.storage import load_session, sessions_root
 from agent_relay.v2.handoffs import recover_interrupted_launches
 from agent_relay.v2.integrity import inspect_session_integrity
+from agent_relay.v2.layout import session_root, sessions_root
 from agent_relay.v2.storage import is_v2_session, load_session_view
 
 
@@ -36,20 +34,19 @@ class DashboardEntry:
 
 
 def load_session_for_inspect(repo_root: Path, session_id: str) -> dict:
-    if is_v2_session(repo_root, session_id):
+    if not is_v2_session(repo_root, session_id):
+        candidate = session_root(repo_root, session_id)
+        if candidate.exists():
+            raise SystemExit(f"corrupt or unsupported session directory: {session_id}")
+        raise SystemExit(f"Session not found: {session_id}")
+
+    report = inspect_session_integrity(repo_root, session_id).report
+    if report.health == "healthy":
+        load_session_view(repo_root, session_id)
+        if report.current_status == "launching":
+            recover_interrupted_launches(repo_root, session_id, owner="cli:inspect")
         report = inspect_session_integrity(repo_root, session_id).report
-        if report.health == "healthy":
-            load_session_view(repo_root, session_id)
-            if report.current_status == "launching":
-                recover_interrupted_launches(repo_root, session_id, owner="cli:inspect")
-            report = inspect_session_integrity(repo_root, session_id).report
-        return report.to_dict()
-    try:
-        return load_session(repo_root, session_id).to_dict()
-    except json.JSONDecodeError as exc:
-        raise SystemExit(f"Session {session_id} is corrupt: {exc}") from exc
-    except ModelValidationError as exc:
-        raise SystemExit(f"Session {session_id} is corrupt: {exc}") from exc
+    return report.to_dict()
 
 
 def list_sessions_for_dashboard(repo_root: Path) -> list[dict]:
@@ -83,62 +80,16 @@ def list_sessions_for_dashboard(repo_root: Path) -> list[dict]:
             )
             continue
 
-        state_path = session_dir / "state.json"
-        if not state_path.exists():
-            entries.append(
-                DashboardEntry(
-                    session_id=session_id,
-                    current_agent="?",
-                    current_status="corrupt",
-                    objective="Session directory is missing state.json or session.json",
-                    updated_at="",
-                    storage_model="unknown",
-                    health="corrupt",
-                    error="Session directory is missing state.json or session.json",
-                )
-            )
-            continue
-
-        try:
-            session = load_session(repo_root, session_id)
-        except json.JSONDecodeError as exc:
-            entries.append(
-                DashboardEntry(
-                    session_id=session_id,
-                    current_agent="?",
-                    current_status="corrupt",
-                    objective=f"Corrupt v1 session: {exc}",
-                    updated_at="",
-                    storage_model="state_v1",
-                    health="corrupt",
-                    error=str(exc),
-                )
-            )
-            continue
-        except ModelValidationError as exc:
-            entries.append(
-                DashboardEntry(
-                    session_id=session_id,
-                    current_agent="?",
-                    current_status="corrupt",
-                    objective=f"Corrupt v1 session: {exc}",
-                    updated_at="",
-                    storage_model="state_v1",
-                    health="corrupt",
-                    error=str(exc),
-                )
-            )
-            continue
-
         entries.append(
             DashboardEntry(
-                session_id=session.session_id,
-                current_agent=session.current_agent,
-                current_status=session.current_status,
-                objective=session.objective,
-                updated_at=session.updated_at,
-                storage_model="state_v1",
-                health="healthy",
+                session_id=session_id,
+                current_agent="?",
+                current_status="corrupt",
+                objective="corrupt or unsupported session directory",
+                updated_at="",
+                storage_model="unknown",
+                health="corrupt",
+                error="corrupt or unsupported session directory",
             )
         )
 

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
-from agent_relay.capture import CaptureOptions
+from agent_relay.v2.capture_support import CaptureOptions
 from agent_relay.fs import write_json_atomic, write_text_atomic
 from agent_relay.v2.checkpoints import (
     _build_checkpoint_draft,
@@ -27,7 +27,6 @@ from agent_relay.v2.models import (
     CheckpointManifest,
     DerivedSessionView,
     JournalEvent,
-    LegacyImportMetadata,
     ManifestFile,
     ObjectManifest,
     ObjectRef,

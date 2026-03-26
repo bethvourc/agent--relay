@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import secrets
 import subprocess
 from dataclasses import dataclass
@@ -9,12 +8,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterable
 
-from agent_relay.capture import (
+from agent_relay.v2.capture_support import (
     AUTOSAVE_GIT_TOUCHED_FILES_ENV,
     AUTOSAVE_IMPLEMENTATION_NOTE_FILE_ENV,
     AUTOSAVE_RESEARCH_NOTE_FILE_ENV,
     AUTOSAVE_VALIDATION_SUMMARY_FILE_ENV,
     CaptureOptions,
+    autosave_enabled,
     capture_git_touched_files,
     load_capture_text,
 )
@@ -29,8 +29,6 @@ from agent_relay.v2.lifecycle import (
 from agent_relay.v2.models import CheckpointManifest, DerivedSessionView, ManifestFile, ValidationState
 from agent_relay.v2.storage import load_session_view
 from agent_relay.v2.tx import JournalCommitRequest, SessionTransaction
-
-_TRUTHY_ENV_VALUES = {"1", "true", "yes", "on"}
 
 
 def checkpoint_id_now() -> str:
@@ -227,7 +225,7 @@ def _build_checkpoint_draft(
         if validation_text is not None:
             validation_summary = validation_text
 
-    if options.capture_git_changes or _autosave_enabled(AUTOSAVE_GIT_TOUCHED_FILES_ENV):
+    if options.capture_git_changes or autosave_enabled(AUTOSAVE_GIT_TOUCHED_FILES_ENV):
         _extend_unique(touched_files, capture_git_touched_files(Path(view.repo_root)))
 
     return CheckpointDraft(
@@ -554,11 +552,5 @@ def _append_unique(items: list[str], value: str) -> None:
 def _extend_unique(items: list[str], values: Iterable[str]) -> None:
     for value in values:
         _append_unique(items, value)
-
-
-def _autosave_enabled(env_var: str) -> bool:
-    return os.environ.get(env_var, "").strip().lower() in _TRUTHY_ENV_VALUES
-
-
 def utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")

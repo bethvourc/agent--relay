@@ -102,19 +102,6 @@ def derived_view_path(repo_root: Path, session_id: str) -> Path:
 def recovery_dir(repo_root: Path, session_id: str) -> Path:
     return session_root(repo_root, session_id) / "recovery"
 
-
-def repo_recovery_dir(repo_root: Path) -> Path:
-    return relay_root(repo_root) / "recovery"
-
-
-def legacy_migration_records_dir(repo_root: Path) -> Path:
-    return repo_recovery_dir(repo_root) / "legacy-migrations"
-
-
-def legacy_v1_dir(repo_root: Path, session_id: str) -> Path:
-    return session_root(repo_root, session_id) / "legacy-v1"
-
-
 def pending_tx_dir(repo_root: Path, session_id: str) -> Path:
     return recovery_dir(repo_root, session_id) / "pending-tx"
 
@@ -137,10 +124,6 @@ def quarantine_dir(repo_root: Path, session_id: str) -> Path:
 
 def repair_reports_dir(repo_root: Path, session_id: str) -> Path:
     return recovery_dir(repo_root, session_id) / "repair-reports"
-
-
-def legacy_import_ack_path(repo_root: Path, session_id: str) -> Path:
-    return recovery_dir(repo_root, session_id) / "legacy-import-ack.json"
 
 
 def is_v2_session_dir(path: Path) -> bool:

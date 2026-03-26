@@ -7,7 +7,6 @@ from pathlib import Path
 from agent_relay.v2.errors import V2CorruptionError, V2ValidationError
 from agent_relay.v2.layout import (
     journal_dir,
-    legacy_import_ack_path,
     pending_tx_dir,
     session_manifest_path,
     session_root,
@@ -268,7 +267,7 @@ def inspect_session_integrity(repo_root: Path, session_id: str) -> IntegrityScan
             break
 
     if failure_message is None and not pending_paths and last_good is not None:
-        report = _healthy_report_from_replay(repo_root, manifest, last_good)
+        report = _healthy_report_from_replay(manifest, last_good)
         return IntegrityScan(
             report=report,
             event_paths=event_paths,
@@ -388,39 +387,16 @@ def _report_from_replay(
 
 
 def _healthy_report_from_replay(
-    repo_root: Path,
     manifest: SessionManifest,
     replay_result: ReplayResult,
 ) -> SessionIntegrityReport:
-    legacy_import = manifest.legacy_import
-    if legacy_import is None or legacy_import.import_health != "degraded":
-        return _report_from_replay(
-            replay_result,
-            health="healthy",
-            error=None,
-            broken_paths=tuple(),
-            suggested_repair=tuple(),
-            alerts=tuple(),
-        )
-
-    ack_path = legacy_import_ack_path(repo_root, manifest.session_id)
-    if ack_path.exists():
-        return _report_from_replay(
-            replay_result,
-            health="healthy",
-            error=None,
-            broken_paths=tuple(legacy_import.broken_paths),
-            suggested_repair=tuple(),
-            alerts=legacy_import.alerts,
-        )
-
     return _report_from_replay(
         replay_result,
-        health="degraded",
-        error="legacy v1 import preserved raw data but requires explicit acknowledgement before mutation",
-        broken_paths=tuple(legacy_import.broken_paths),
-        suggested_repair=(f"agent-relay repair {manifest.session_id} --accept-legacy-import",),
-        alerts=legacy_import.alerts,
+        health="healthy",
+        error=None,
+        broken_paths=tuple(),
+        suggested_repair=tuple(),
+        alerts=tuple(),
     )
 
 

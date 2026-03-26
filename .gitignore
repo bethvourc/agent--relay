@@ -3,3 +3,4 @@ __pycache__/
 .pytest_cache/
 src/agent_relay/__pycache__/
 tests/__pycache__/
+docs/features/local-ideas.md
