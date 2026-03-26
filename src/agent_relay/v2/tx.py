@@ -9,7 +9,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
 
 from agent_relay.fs import write_json_atomic, write_text_atomic
-from agent_relay.v2.errors import TransactionError
+from agent_relay.v2.errors import TransactionError, V2Error
 from agent_relay.v2.hashing import sha256_path
 from agent_relay.v2.layout import (
     object_dirname,
@@ -261,7 +261,6 @@ class SessionTransaction:
         )
         try:
             load_session_manifest(repo_root, session_id)
-            recover_session_transactions(repo_root, session_id)
             return cls(
                 repo_root=repo_root,
                 session_id=session_id,
@@ -284,7 +283,6 @@ class SessionTransaction:
         lock: LockHandle,
     ) -> SessionTransaction:
         load_session_manifest(repo_root, session_id)
-        recover_session_transactions(repo_root, session_id)
         return cls(
             repo_root=repo_root,
             session_id=session_id,
@@ -523,7 +521,10 @@ def recover_session_transactions(repo_root: Path, session_id: str) -> RecoveryRe
 
     cleaned_committed = 0
     if rebuild_required:
-        load_session_view(repo_root, session_id)
+        try:
+            load_session_view(repo_root, session_id)
+        except V2Error:
+            rebuild_required = False
         for candidate in committed_dirs:
             shutil.rmtree(candidate, ignore_errors=True)
             cleaned_committed += 1

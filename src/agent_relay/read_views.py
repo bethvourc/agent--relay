@@ -6,8 +6,8 @@ from pathlib import Path
 
 from agent_relay.models import ModelValidationError
 from agent_relay.storage import load_session, sessions_root
-from agent_relay.v2.errors import V2Error
 from agent_relay.v2.handoffs import recover_interrupted_launches
+from agent_relay.v2.integrity import inspect_session_integrity
 from agent_relay.v2.storage import is_v2_session, load_session_view
 
 
@@ -37,11 +37,13 @@ class DashboardEntry:
 
 def load_session_for_inspect(repo_root: Path, session_id: str) -> dict:
     if is_v2_session(repo_root, session_id):
-        try:
-            recover_interrupted_launches(repo_root, session_id, owner="cli:inspect")
-            return load_session_view(repo_root, session_id).to_dict()
-        except V2Error as exc:
-            raise SystemExit(f"Session {session_id} is corrupt: {exc}") from exc
+        report = inspect_session_integrity(repo_root, session_id).report
+        if report.health == "healthy":
+            load_session_view(repo_root, session_id)
+            if report.current_status == "launching":
+                recover_interrupted_launches(repo_root, session_id, owner="cli:inspect")
+            report = inspect_session_integrity(repo_root, session_id).report
+        return report.to_dict()
     try:
         return load_session(repo_root, session_id).to_dict()
     except json.JSONDecodeError as exc:
@@ -61,32 +63,22 @@ def list_sessions_for_dashboard(repo_root: Path) -> list[dict]:
             continue
         session_id = session_dir.name
         if is_v2_session(repo_root, session_id):
-            try:
-                recover_interrupted_launches(repo_root, session_id, owner="cli:dashboard")
-                view = load_session_view(repo_root, session_id)
-            except V2Error as exc:
-                entries.append(
-                    DashboardEntry(
-                        session_id=session_id,
-                        current_agent="?",
-                        current_status="corrupt",
-                        objective=str(exc),
-                        updated_at="",
-                        storage_model="journal_v2",
-                        health="corrupt",
-                        error=str(exc),
-                    )
-                )
-                continue
+            report = inspect_session_integrity(repo_root, session_id).report
+            if report.health == "healthy":
+                load_session_view(repo_root, session_id)
+                if report.current_status == "launching":
+                    recover_interrupted_launches(repo_root, session_id, owner="cli:dashboard")
+                report = inspect_session_integrity(repo_root, session_id).report
             entries.append(
                 DashboardEntry(
-                    session_id=view.session_id,
-                    current_agent=view.current_agent,
-                    current_status=view.current_status,
-                    objective=view.objective,
-                    updated_at=view.updated_at,
-                    storage_model=view.storage_model,
-                    health=view.health,
+                    session_id=report.session_id,
+                    current_agent=report.current_agent,
+                    current_status=report.current_status,
+                    objective=report.objective,
+                    updated_at=report.updated_at,
+                    storage_model=report.storage_model,
+                    health=report.health,
+                    error=report.error,
                 )
             )
             continue

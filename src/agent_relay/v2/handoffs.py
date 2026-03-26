@@ -12,6 +12,7 @@ from agent_relay.agents import get_agent_adapter, get_agent_display_name
 from agent_relay.resume import EVIDENCE_DEPTHS, ResumeRenderOptions
 from agent_relay.v2.errors import V2CorruptionError
 from agent_relay.v2.hashing import sha256_path, sha256_text
+from agent_relay.v2.integrity import require_session_mutable
 from agent_relay.v2.layout import object_dir
 from agent_relay.v2.lifecycle import (
     LifecycleState,
@@ -36,7 +37,7 @@ from agent_relay.v2.storage import (
     load_referenced_object,
     load_session_view,
 )
-from agent_relay.v2.tx import JournalCommitRequest, SessionTransaction, recover_session_transactions
+from agent_relay.v2.tx import JournalCommitRequest, SessionTransaction
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +115,7 @@ def create_handoff_for_command(
     owner: str,
 ) -> HandoffCommandResult:
     _validate_evidence_depth(evidence_depth)
+    require_session_mutable(repo_root, session_id, command_name="failover")
     recover_interrupted_launches(repo_root, session_id, owner=f"{owner}:recover")
     view = load_session_view(repo_root, session_id)
     try:
@@ -220,6 +222,7 @@ def preview_launch_for_command(
     handoff_id: str | None,
     owner: str,
 ) -> LaunchPreviewResult:
+    require_session_mutable(repo_root, session_id, command_name="launch")
     recover_interrupted_launches(repo_root, session_id, owner=f"{owner}:recover")
     loaded = _load_prepared_handoff(repo_root, session_id, handoff_id=handoff_id, command_name="launch")
     try:
@@ -242,11 +245,9 @@ def execute_launch_for_command(
     handoff_id: str | None,
     owner: str,
 ) -> LaunchExecutionResult:
+    require_session_mutable(repo_root, session_id, command_name="launch")
     with acquire_session_lock(repo_root, session_id, owner=owner) as lock:
-        recover_session_transactions(repo_root, session_id)
         recovered = _recover_interrupted_launch_locked(repo_root, session_id, owner=owner, lock=lock)
-        if recovered:
-            recover_session_transactions(repo_root, session_id)
         loaded = _load_prepared_handoff(repo_root, session_id, handoff_id=handoff_id, command_name="launch")
         try:
             started_transition = plan_launch_started(
@@ -348,6 +349,7 @@ def resume_handoff_for_command(
     handoff_id: str | None,
     owner: str,
 ) -> ResumeCommandResult:
+    require_session_mutable(repo_root, session_id, command_name="resume")
     recover_interrupted_launches(repo_root, session_id, owner=f"{owner}:recover")
     loaded = _load_prepared_handoff(repo_root, session_id, handoff_id=handoff_id, command_name="resume")
     try:
@@ -381,8 +383,8 @@ def resume_handoff_for_command(
 
 
 def recover_interrupted_launches(repo_root: Path, session_id: str, *, owner: str) -> str | None:
+    require_session_mutable(repo_root, session_id, command_name="launch recovery")
     with acquire_session_lock(repo_root, session_id, owner=owner) as lock:
-        recover_session_transactions(repo_root, session_id)
         return _recover_interrupted_launch_locked(repo_root, session_id, owner=owner, lock=lock)
 
 

@@ -19,6 +19,7 @@ from agent_relay.capture import (
     load_capture_text,
 )
 from agent_relay.v2.hashing import sha256_bytes, sha256_text
+from agent_relay.v2.integrity import require_session_mutable
 from agent_relay.v2.lifecycle import (
     LifecycleState,
     LifecycleTransition,
@@ -83,6 +84,7 @@ def create_checkpoint_for_command(
     options: CaptureOptions,
     owner: str,
 ) -> CheckpointCommandResult:
+    require_session_mutable(repo_root, session_id, command_name=command_name)
     view = load_session_view(repo_root, session_id)
     try:
         transition = plan_checkpoint_command(

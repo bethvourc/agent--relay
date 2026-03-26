@@ -14,7 +14,6 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from agent_relay.capture import CaptureOptions
 from agent_relay.v2.checkpoints import create_checkpoint_for_command
-from agent_relay.v2.errors import V2CorruptionError
 from agent_relay.v2.handoffs import (
     create_handoff_for_command,
     execute_launch_for_command,
@@ -139,7 +138,7 @@ class V2HandoffTests(TestCase):
             )
             Path(handoff.resume_path).unlink()
 
-            with self.assertRaises(V2CorruptionError) as context:
+            with self.assertRaises(SystemExit) as context:
                 preview_launch_for_command(
                     repo_root,
                     fixture["session_id"],
@@ -147,7 +146,8 @@ class V2HandoffTests(TestCase):
                     owner="test:preview:corrupt",
                 )
 
-            self.assertIn("missing file", str(context.exception))
+            self.assertIn("launch is blocked while session health is degraded", str(context.exception))
+            self.assertIn("--promote-last-good", str(context.exception))
 
     def test_failed_launch_captures_immutable_stdout_and_stderr_logs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

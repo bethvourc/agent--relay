@@ -54,6 +54,7 @@ from agent_relay.v2.handoffs import (
     preview_launch_for_command,
     resume_handoff_for_command,
 )
+from agent_relay.v2.repair import repair_session
 from agent_relay.v2.storage import is_v2_session
 
 
@@ -489,6 +490,42 @@ def cmd_resume(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_repair(args: argparse.Namespace) -> int:
+    repo_root = default_repo_root(args.repo)
+    if not is_v2_session(repo_root, args.session):
+        raise SystemExit("repair is only supported for v2 sessions")
+
+    selected = [
+        ("rebuild_view", bool(getattr(args, "rebuild_view", False))),
+        ("rollback_pending", bool(getattr(args, "rollback_pending", False))),
+        ("promote_last_good", bool(getattr(args, "promote_last_good", False))),
+    ]
+    actions = [name for name, enabled in selected if enabled]
+    if len(actions) != 1:
+        raise SystemExit("repair requires exactly one action: --rebuild-view, --rollback-pending, or --promote-last-good")
+
+    result = repair_session(
+        repo_root,
+        args.session,
+        action=actions[0],
+        owner="cli:repair",
+    )
+    if args.json:
+        emit_json(result.to_dict())
+    elif args.quiet:
+        emit_quiet(result.repair_log_path)
+    else:
+        args.console.print(
+            f"[success]Repair complete[/]  [label]session:[/] [brand]{args.session}[/]  "
+            f"[label]action:[/] {actions[0]}  [label]health:[/] {result.health_before} -> {result.health_after}",
+            highlight=False,
+        )
+        args.console.print(f"  [label]Receipt:[/] [path]{result.repair_log_path}[/]", highlight=False)
+        if result.repair_event_id:
+            args.console.print(f"  [label]Event:[/] [muted]{result.repair_event_id}[/]", highlight=False)
+    return 0
+
+
 def cmd_inspect(args: argparse.Namespace) -> int:
     repo_root = default_repo_root(args.repo)
     session = load_session_for_inspect(repo_root, args.session)
@@ -597,6 +634,14 @@ def build_parser() -> argparse.ArgumentParser:
     resume.add_argument("--repo")
     resume.add_argument("--handoff-id", help="For v2 sessions, resume this prepared handoff id")
     resume.set_defaults(func=cmd_resume)
+
+    repair = subparsers.add_parser("repair", help="Repair v2 session integrity explicitly")
+    repair.add_argument("session")
+    repair.add_argument("--repo")
+    repair.add_argument("--rebuild-view", action="store_true", help="Rebuild refs/ and derived/ from a healthy journal")
+    repair.add_argument("--rollback-pending", action="store_true", help="Quarantine pending transaction residue")
+    repair.add_argument("--promote-last-good", action="store_true", help="Quarantine the corrupted journal tail and recover to the last verified event")
+    repair.set_defaults(func=cmd_repair)
 
     inspect = subparsers.add_parser("inspect", help="Print session state")
     inspect.add_argument("session")

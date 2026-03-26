@@ -32,6 +32,7 @@ RELAY_THEME = Theme(
         "status.launching": "bold magenta",
         "status.launch_failed": "bold red",
         "status.awaiting_resume": "bold #FFB000",
+        "status.degraded": "bold yellow",
         "status.corrupt": "bold red",
         "status.ready": "bold dim white",
         "status.succeeded": "bold green",
@@ -54,6 +55,7 @@ STATUS_SYMBOLS = {
     "launching": "◎",
     "launch_failed": "✖",
     "awaiting_resume": "◌",
+    "degraded": "◌",
     "corrupt": "✖",
     "ready": "◌",
     "succeeded": "✔",
@@ -118,6 +120,7 @@ STATUS_LABELS = {
     "launching": "launching",
     "launch_failed": "failed",
     "awaiting_resume": "awaiting",
+    "degraded": "degraded",
     "corrupt": "corrupt",
     "ready": "ready",
     "succeeded": "ok",
@@ -420,9 +423,15 @@ def render_inspect(console: Console, session_dict: dict[str, Any]) -> None:
     # Objective
     console.print(f"\n  [label]Objective[/]    [value]{objective}[/]")
     console.print(f"  [label]Workstream[/]   [value]{session_dict.get('workstream_kind', '?')}[/]")
+    console.print(f"  [label]Health[/]       {status_badge(session_dict.get('health', 'healthy'))}")
     console.print(f"  [label]Next action[/]  [value]{session_dict.get('next_action') or 'None'}[/]")
     console.print(f"  [label]Created[/]      [muted]{session_dict.get('created_at', '?')}[/]")
     console.print(f"  [label]Updated[/]      [muted]{session_dict.get('updated_at', '?')}[/]")
+    if session_dict.get("last_valid_event"):
+        last_valid = session_dict["last_valid_event"]
+        console.print(f"  [label]Last valid[/]   [muted]{last_valid.get('event_id', '?')}[/]")
+    if session_dict.get("error"):
+        console.print(f"  [label]Integrity[/]    [error]{session_dict['error']}[/]")
 
     # Decisions / Blockers
     decisions = session_dict.get("decisions", [])
@@ -465,6 +474,20 @@ def render_inspect(console: Console, session_dict: dict[str, Any]) -> None:
             tree.add(f"[path]{f}[/]")
         console.print(tree)
 
+    broken_paths = session_dict.get("broken_paths", [])
+    suggested_repair = session_dict.get("suggested_repair", [])
+    if broken_paths or suggested_repair:
+        console.print()
+        console.print(Rule(style="brand.dim"))
+    if broken_paths:
+        console.print("\n  [heading]Broken paths[/]")
+        for path in broken_paths:
+            console.print(f"    [error]▸[/] [path]{path}[/]")
+    if suggested_repair:
+        console.print("\n  [heading]Suggested repair[/]")
+        for command in suggested_repair:
+            console.print(f"    [brand]▸[/] [value]{command}[/]")
+
     # Handoffs
     handoffs = session_dict.get("handoffs", [])
     if handoffs:
@@ -504,6 +527,13 @@ def _render_inspect_compact(console: Console, session_dict: dict[str, Any]) -> N
 
     console.print(f"[brand]{sid}[/]  {agent_badge(agent)}  {status_badge(status)}", highlight=False)
     console.print(f"  [label]Objective:[/] [value]{session_dict.get('objective', '?')}[/]", highlight=False)
+    console.print(f"  [label]Health:[/] {status_badge(session_dict.get('health', 'healthy'))}", highlight=False)
+    if session_dict.get("error"):
+        console.print(f"  [error]{session_dict['error']}[/]", highlight=False)
+    for path in session_dict.get("broken_paths", []):
+        console.print(f"  [error]▸[/] [path]{path}[/]", highlight=False)
+    for command in session_dict.get("suggested_repair", []):
+        console.print(f"  [brand]▸[/] [value]{command}[/]", highlight=False)
 
     for d in session_dict.get("decisions", []):
         console.print(f"  [brand]▸[/] {d}", highlight=False)
@@ -530,7 +560,8 @@ def render_dashboard(console: Console, sessions: list[dict[str, Any]]) -> None:
         for s in sessions:
             sid = s.get("session_id", "?")
             agent = s.get("current_agent", "?")
-            status = s.get("current_status", "?")
+            health = s.get("health", "healthy")
+            status = health if health != "healthy" else s.get("current_status", "?")
             obj = s.get("objective", "")
             if len(obj) > 40:
                 obj = obj[:37] + "..."
@@ -560,10 +591,12 @@ def render_dashboard(console: Console, sessions: list[dict[str, Any]]) -> None:
             obj = obj[: max_obj - 3] + "..."
         updated = s.get("updated_at", "?")
         updated_short = updated[5:16].replace("T", " ") if len(updated) >= 16 else updated
+        health = s.get("health", "healthy")
+        status = health if health != "healthy" else s.get("current_status", "?")
         table.add_row(
             s.get("session_id", "?"),
             str(agent_badge(s.get("current_agent", "?"), short=True)),
-            str(status_badge(s.get("current_status", "?"))),
+            str(status_badge(status)),
             obj,
             updated_short,
         )
@@ -587,6 +620,7 @@ def render_help(console: Console) -> None:
         _help_row_compact(console, "failover", "Prepare handoff to another agent", "<session> --to-agent <name> --reason <text>")
         _help_row_compact(console, "launch", "Preview or execute a handoff", "<session> [--execute] [--yes]")
         _help_row_compact(console, "resume", "Accept a prepared v2 handoff", "<session> [--handoff-id <id>]")
+        _help_row_compact(console, "repair", "Repair v2 integrity explicitly", "<session> <--rebuild-view|--rollback-pending|--promote-last-good>")
         _help_row_compact(console, "inspect", "View session state", "<session>")
         _help_row_compact(console, "dashboard", "List all sessions in this repo", "[--repo <path>]")
         console.print()
@@ -619,6 +653,7 @@ def render_help(console: Console) -> None:
         ("failover", "Prepare handoff to another agent", "<session> --to-agent <name> --reason <text>"),
         ("launch", "Preview or execute a handoff", "<session> [--execute] [--yes]"),
         ("resume", "Accept a prepared v2 handoff", "<session> [--handoff-id <id>]"),
+        ("repair", "Repair v2 integrity explicitly", "<session> <--rebuild-view|--rollback-pending|--promote-last-good>"),
         ("inspect", "View session state", "<session>"),
         ("dashboard", "List all sessions in this repo", "[--repo <path>]"),
     ]

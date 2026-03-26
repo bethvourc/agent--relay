@@ -73,9 +73,11 @@ class AgentRelayV2CliTests(TestCase):
 
             result = self.run_cli("--json", "inspect", fixture["session_id"], "--repo", tmpdir)
 
-            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.returncode, 0, result.stderr)
             data = json.loads(result.stdout)
-            self.assertIn("corrupt", data["error"])
+            self.assertEqual(data["health"], "corrupt")
+            self.assertIn("session manifest", data["error"])
+            self.assertTrue(data["broken_paths"])
 
     def test_inspect_reports_corrupt_v1_session_cleanly(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
