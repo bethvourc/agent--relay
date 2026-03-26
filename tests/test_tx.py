@@ -13,14 +13,14 @@ sys.path.insert(0, str(ROOT / "src"))
 from agent_relay.layout import derived_view_path, head_ref_path, pending_tx_dir
 from agent_relay.storage import load_session_view
 from agent_relay.tx import JournalCommitRequest, SessionTransaction, recover_session_transactions
-from tests.v2_fixtures import build_checkpoint_object, build_sample_v2_session
+from tests.session_fixtures import build_checkpoint_object, build_sample_session
 
 
-class V2TransactionTests(TestCase):
+class TransactionTests(TestCase):
     def test_commit_promotes_objects_writes_journal_and_rebuilds_stale_caches(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir).resolve()
-            fixture = build_sample_v2_session(repo_root)
+            fixture = build_sample_session(repo_root)
             view_path = derived_view_path(repo_root, fixture["session_id"])
             head_path = head_ref_path(repo_root, fixture["session_id"])
             view_path.parent.mkdir(parents=True, exist_ok=True)
@@ -127,7 +127,7 @@ class V2TransactionTests(TestCase):
     def test_recovery_quarantines_promoted_uncommitted_transactions(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir).resolve()
-            fixture = build_sample_v2_session(repo_root)
+            fixture = build_sample_session(repo_root)
             checkpoint_id = "cp-20260325T181100Z-666666"
             manifest, file_contents = build_checkpoint_object(
                 session_id=fixture["session_id"],
@@ -162,7 +162,7 @@ class V2TransactionTests(TestCase):
     def test_recovery_rebuilds_caches_for_committed_pending_transaction(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir).resolve()
-            fixture = build_sample_v2_session(repo_root)
+            fixture = build_sample_session(repo_root)
             checkpoint_id = "cp-20260325T181200Z-777777"
             manifest, file_contents = build_checkpoint_object(
                 session_id=fixture["session_id"],

@@ -26,7 +26,7 @@ from agent_relay.models import (
 ZERO_DIGEST = "sha256:" + ("0" * 64)
 
 
-def build_sample_v2_session(repo_root: Path, *, session_id: str = "20260325-180000-abcd12") -> dict[str, str]:
+def build_sample_session(repo_root: Path, *, session_id: str = "20260325-180000-abcd12") -> dict[str, str]:
     relay_root = repo_root / ".agent-relay"
     (relay_root / "sessions" / session_id / "journal").mkdir(parents=True, exist_ok=True)
     (relay_root / "sessions" / session_id / "refs").mkdir(parents=True, exist_ok=True)

@@ -19,10 +19,10 @@ from agent_relay.layout import pending_tx_dir
 from agent_relay.models import CheckpointManifest
 from agent_relay.storage import load_session_view
 from agent_relay.tx import recover_session_transactions
-from tests.v2_fixtures import build_sample_v2_session
+from tests.session_fixtures import build_sample_session
 
 
-class V2CheckpointingTests(TestCase):
+class CheckpointingTests(TestCase):
     def init_git_repo(self, repo_root: Path) -> None:
         subprocess.run(["git", "init"], cwd=repo_root, check=True, capture_output=True, text=True)
         subprocess.run(["git", "config", "user.email", "relay@example.com"], cwd=repo_root, check=True, capture_output=True, text=True)
@@ -40,7 +40,7 @@ class V2CheckpointingTests(TestCase):
             repo_root = Path(tmpdir).resolve()
             self.init_git_repo(repo_root)
             self.commit_file(repo_root, "src/app.py", "print('hello')\n", "initial commit")
-            fixture = build_sample_v2_session(repo_root)
+            fixture = build_sample_session(repo_root)
 
             result = create_checkpoint_for_command(
                 repo_root,
@@ -73,7 +73,7 @@ class V2CheckpointingTests(TestCase):
             repo_root = Path(tmpdir).resolve()
             self.init_git_repo(repo_root)
             self.commit_file(repo_root, "src/app.py", "print('hello')\n", "initial commit")
-            fixture = build_sample_v2_session(repo_root)
+            fixture = build_sample_session(repo_root)
 
             (repo_root / "src" / "app.py").write_text("print('updated')\n", encoding="utf-8")
             (repo_root / "notes.txt").write_text("capture me\n", encoding="utf-8")
@@ -104,7 +104,7 @@ class V2CheckpointingTests(TestCase):
     def test_non_git_checkpoint_requires_explicit_snapshot_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir).resolve()
-            fixture = build_sample_v2_session(repo_root)
+            fixture = build_sample_session(repo_root)
 
             with self.assertRaises(SystemExit) as context:
                 create_checkpoint_for_command(
@@ -123,7 +123,7 @@ class V2CheckpointingTests(TestCase):
             (repo_root / "README.md").write_text("snapshot me\n", encoding="utf-8")
             (repo_root / "src").mkdir()
             (repo_root / "src" / "tool.py").write_text("print('snapshot')\n", encoding="utf-8")
-            fixture = build_sample_v2_session(repo_root)
+            fixture = build_sample_session(repo_root)
 
             result = create_checkpoint_for_command(
                 repo_root,
@@ -155,7 +155,7 @@ class V2CheckpointingTests(TestCase):
             repo_root = Path(tmpdir).resolve()
             self.init_git_repo(repo_root)
             self.commit_file(repo_root, "src/app.py", "print('hello')\n", "initial commit")
-            fixture = build_sample_v2_session(repo_root)
+            fixture = build_sample_session(repo_root)
 
             result = create_checkpoint_for_command(
                 repo_root,
@@ -180,7 +180,7 @@ class V2CheckpointingTests(TestCase):
             repo_root = Path(tmpdir).resolve()
             self.init_git_repo(repo_root)
             self.commit_file(repo_root, "src/app.py", "print('hello')\n", "initial commit")
-            fixture = build_sample_v2_session(repo_root)
+            fixture = build_sample_session(repo_root)
             checkpoint_id = "cp-20260325T181500Z-888888"
             interrupted_path: Path | None = None
 

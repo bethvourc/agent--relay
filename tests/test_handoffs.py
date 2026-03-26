@@ -24,10 +24,10 @@ from agent_relay.handoffs import (
 from agent_relay.layout import object_dir, pending_tx_dir
 from agent_relay.storage import load_session_view
 from agent_relay.tx import JournalCommitRequest, SessionTransaction, recover_session_transactions
-from tests.v2_fixtures import build_sample_v2_session
+from tests.session_fixtures import build_sample_session
 
 
-class V2HandoffTests(TestCase):
+class HandoffTests(TestCase):
     def init_git_repo(self, repo_root: Path) -> None:
         subprocess.run(["git", "init"], cwd=repo_root, check=True, capture_output=True, text=True)
         subprocess.run(["git", "config", "user.email", "relay@example.com"], cwd=repo_root, check=True, capture_output=True, text=True)
@@ -43,7 +43,7 @@ class V2HandoffTests(TestCase):
     def prepare_session(self, repo_root: Path) -> dict[str, str]:
         self.init_git_repo(repo_root)
         self.commit_file(repo_root, "src/app.py", "print('hello')\n", "initial commit")
-        fixture = build_sample_v2_session(repo_root)
+        fixture = build_sample_session(repo_root)
         create_checkpoint_for_command(
             repo_root,
             fixture["session_id"],

@@ -13,7 +13,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from agent_relay.locks import acquire_repo_lock, acquire_session_lock
 
 
-class V2LockTests(TestCase):
+class LockTests(TestCase):
     def run_child(self, code: str) -> subprocess.CompletedProcess[str]:
         env = {"PYTHONPATH": str(ROOT / "src")}
         return subprocess.run(

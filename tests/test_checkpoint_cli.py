@@ -11,10 +11,10 @@ from unittest import TestCase
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from tests.v2_fixtures import build_sample_v2_session
+from tests.session_fixtures import build_sample_session
 
 
-class AgentRelayV2CheckpointCliTests(TestCase):
+class AgentRelayCheckpointCliTests(TestCase):
     def run_cli(self, *args: str) -> subprocess.CompletedProcess[str]:
         env = {"PYTHONPATH": str(ROOT / "src")}
         return subprocess.run(
@@ -34,11 +34,11 @@ class AgentRelayV2CheckpointCliTests(TestCase):
         subprocess.run(["git", "add", "src/demo.py"], cwd=repo_root, check=True, capture_output=True, text=True)
         subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, check=True, capture_output=True, text=True)
 
-    def test_prepare_routes_v2_session_through_tx_checkpoint_flow(self) -> None:
+    def test_prepare_routes_session_through_tx_checkpoint_flow(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir).resolve()
             self.init_git_repo(repo_root)
-            fixture = build_sample_v2_session(repo_root)
+            fixture = build_sample_session(repo_root)
 
             result = self.run_cli(
                 "--json",

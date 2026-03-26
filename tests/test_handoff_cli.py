@@ -17,10 +17,10 @@ sys.path.insert(0, str(ROOT / "src"))
 from agent_relay.capture_support import CaptureOptions
 from agent_relay.checkpoints import create_checkpoint_for_command
 from agent_relay.tx import JournalCommitRequest, SessionTransaction
-from tests.v2_fixtures import build_sample_v2_session
+from tests.session_fixtures import build_sample_session
 
 
-class AgentRelayV2HandoffCliTests(TestCase):
+class AgentRelayHandoffCliTests(TestCase):
     def run_cli(self, *args: str, repo_root: Path, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
         env = {"PYTHONPATH": str(ROOT / "src"), **(extra_env or {})}
         return subprocess.run(
@@ -42,7 +42,7 @@ class AgentRelayV2HandoffCliTests(TestCase):
 
     def prepare_session(self, repo_root: Path) -> dict[str, str]:
         self.init_git_repo(repo_root)
-        fixture = build_sample_v2_session(repo_root)
+        fixture = build_sample_session(repo_root)
         create_checkpoint_for_command(
             repo_root,
             fixture["session_id"],

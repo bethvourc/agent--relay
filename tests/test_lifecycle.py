@@ -27,10 +27,10 @@ from agent_relay.lifecycle import (
     plan_session_started,
 )
 from agent_relay.tx import JournalCommitRequest, SessionTransaction
-from tests.v2_fixtures import build_sample_v2_session
+from tests.session_fixtures import build_sample_session
 
 
-class V2LifecycleTests(TestCase):
+class LifecycleTests(TestCase):
     def init_git_repo(self, repo_root: Path) -> None:
         subprocess.run(["git", "init"], cwd=repo_root, check=True, capture_output=True, text=True)
         subprocess.run(["git", "config", "user.email", "relay@example.com"], cwd=repo_root, check=True, capture_output=True, text=True)
@@ -135,7 +135,7 @@ class V2LifecycleTests(TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir).resolve()
             self.init_git_repo(repo_root)
-            fixture = build_sample_v2_session(repo_root)
+            fixture = build_sample_session(repo_root)
 
             with SessionTransaction.begin(
                 repo_root,

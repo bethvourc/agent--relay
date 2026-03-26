@@ -14,14 +14,14 @@ from agent_relay.errors import V2CorruptionError
 from agent_relay.layout import derived_view_path, head_ref_path
 from agent_relay.models import JournalEvent
 from agent_relay.storage import load_session_view
-from tests.v2_fixtures import build_sample_v2_session
+from tests.session_fixtures import build_sample_session
 
 
-class V2ReplayTests(TestCase):
+class ReplayTests(TestCase):
     def test_load_session_view_rebuilds_from_journal_and_objects(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir).resolve()
-            fixture = build_sample_v2_session(repo_root)
+            fixture = build_sample_session(repo_root)
 
             view = load_session_view(repo_root, fixture["session_id"])
 
@@ -38,7 +38,7 @@ class V2ReplayTests(TestCase):
     def test_load_session_view_rebuilds_stale_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir).resolve()
-            fixture = build_sample_v2_session(repo_root)
+            fixture = build_sample_session(repo_root)
             stale_view_path = derived_view_path(repo_root, fixture["session_id"])
             stale_head_path = head_ref_path(repo_root, fixture["session_id"])
             stale_view_path.parent.mkdir(parents=True, exist_ok=True)
@@ -114,7 +114,7 @@ class V2ReplayTests(TestCase):
     def test_load_session_view_rejects_hash_chain_break(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir).resolve()
-            fixture = build_sample_v2_session(repo_root)
+            fixture = build_sample_session(repo_root)
             event_path = (
                 repo_root
                 / ".agent-relay"
@@ -135,7 +135,7 @@ class V2ReplayTests(TestCase):
     def test_load_session_view_rejects_object_hash_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir).resolve()
-            fixture = build_sample_v2_session(repo_root)
+            fixture = build_sample_session(repo_root)
             packet_path = (
                 repo_root
                 / ".agent-relay"
@@ -156,7 +156,7 @@ class V2ReplayTests(TestCase):
     def test_load_session_view_rejects_checkpoint_transition_outside_state_machine(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir).resolve()
-            fixture = build_sample_v2_session(repo_root)
+            fixture = build_sample_session(repo_root)
             event_path = (
                 repo_root
                 / ".agent-relay"

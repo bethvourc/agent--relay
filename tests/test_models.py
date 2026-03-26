@@ -20,7 +20,7 @@ from agent_relay.models import (
 )
 
 
-class V2ModelTests(TestCase):
+class ModelTests(TestCase):
     def test_journal_event_hash_round_trip(self) -> None:
         event = JournalEvent(
             schema_version=SCHEMA_VERSION,

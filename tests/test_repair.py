@@ -16,10 +16,10 @@ sys.path.insert(0, str(ROOT / "src"))
 from agent_relay.repair import repair_session
 from agent_relay.storage import load_session_view
 from agent_relay.tx import recover_session_transactions
-from tests.v2_fixtures import build_sample_v2_session
+from tests.session_fixtures import build_sample_session
 
 
-class AgentRelayV2RepairTests(TestCase):
+class AgentRelayRepairTests(TestCase):
     def run_cli(self, *args: str) -> subprocess.CompletedProcess[str]:
         env = {"PYTHONPATH": str(ROOT / "src")}
         return subprocess.run(
@@ -33,7 +33,7 @@ class AgentRelayV2RepairTests(TestCase):
     def test_inspect_surfaces_degraded_session_with_last_valid_event_and_repair_suggestion(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir).resolve()
-            fixture = build_sample_v2_session(repo_root)
+            fixture = build_sample_session(repo_root)
             packet_path = (
                 repo_root
                 / ".agent-relay"
@@ -55,10 +55,10 @@ class AgentRelayV2RepairTests(TestCase):
             self.assertIn(str(packet_path), data["broken_paths"])
             self.assertTrue(any("--promote-last-good" in item for item in data["suggested_repair"]))
 
-    def test_mutating_v2_command_is_blocked_while_repair_is_required(self) -> None:
+    def test_mutating_command_is_blocked_while_repair_is_required(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir).resolve()
-            fixture = build_sample_v2_session(repo_root)
+            fixture = build_sample_session(repo_root)
             packet_path = (
                 repo_root
                 / ".agent-relay"
@@ -91,7 +91,7 @@ class AgentRelayV2RepairTests(TestCase):
     def test_repair_promote_last_good_quarantines_tail_and_restores_healthy_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir).resolve()
-            fixture = build_sample_v2_session(repo_root)
+            fixture = build_sample_session(repo_root)
             packet_path = (
                 repo_root
                 / ".agent-relay"
@@ -132,7 +132,7 @@ class AgentRelayV2RepairTests(TestCase):
     def test_repair_rollback_pending_quarantines_residue_and_restores_health(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir).resolve()
-            fixture = build_sample_v2_session(repo_root)
+            fixture = build_sample_session(repo_root)
             pending_root = (
                 repo_root
                 / ".agent-relay"
@@ -180,7 +180,7 @@ class AgentRelayV2RepairTests(TestCase):
     def test_repair_rebuild_view_restores_missing_caches_for_healthy_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir).resolve()
-            fixture = build_sample_v2_session(repo_root)
+            fixture = build_sample_session(repo_root)
             view_path = repo_root / ".agent-relay" / "sessions" / fixture["session_id"] / "derived" / "view.json"
             head_path = repo_root / ".agent-relay" / "sessions" / fixture["session_id"] / "refs" / "head.json"
             view_path.unlink(missing_ok=True)
@@ -206,7 +206,7 @@ class AgentRelayV2RepairTests(TestCase):
     def test_interrupted_repair_rebuild_view_is_recoverable(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir).resolve()
-            fixture = build_sample_v2_session(repo_root)
+            fixture = build_sample_session(repo_root)
             interrupted_path: Path | None = None
 
             import agent_relay.tx as tx_module
