@@ -42,11 +42,11 @@ class AgentRelayIntegrationFlowTests(TestCase):
             safe_launch_env = {
                 "AGENT_RELAY_CODEX_LAUNCH_TEMPLATE": (
                     f"cd {{repo_root}} && {shlex.quote(sys.executable)} -c "
-                    "'from pathlib import Path; Path(\"codex-launch.txt\").write_text(\"ok\")'"
+                    "'from pathlib import Path; Path(\"codex-launch.txt\").write_text(\"ok\")' {resume_path}"
                 ),
                 "AGENT_RELAY_CLAUDE_LAUNCH_TEMPLATE": (
                     f"cd {{repo_root}} && {shlex.quote(sys.executable)} -c "
-                    "'from pathlib import Path; Path(\"claude-launch.txt\").write_text(\"ok\")'"
+                    "'from pathlib import Path; Path(\"claude-launch.txt\").write_text(\"ok\")' {resume_path}"
                 ),
             }
 

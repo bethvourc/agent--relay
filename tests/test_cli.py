@@ -378,7 +378,7 @@ class AgentRelayCliTests(TestCase):
 
             launch_template = (
                 f"cd {{repo_root}} && {shlex.quote(sys.executable)} -c "
-                "'from pathlib import Path; Path(\"launch-marker.txt\").write_text(\"ok\")'"
+                "'from pathlib import Path; Path(\"launch-marker.txt\").write_text(\"ok\")' {resume_path}"
             )
             self.run_cli_json(
                 "failover",

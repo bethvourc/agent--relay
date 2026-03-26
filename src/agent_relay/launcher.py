@@ -38,6 +38,9 @@ def build_handoff_record(
         launch_template=launch_spec.template,
         launch_template_source=launch_spec.template_source,
         launch_instructions=launch_spec.instructions,
+        launch_packet_aware=launch_spec.packet_aware,
+        launch_execute_policy=launch_spec.execute_policy,
+        launch_warning=launch_spec.warning,
     )
 
 
@@ -48,15 +51,26 @@ def latest_handoff(session: SessionState) -> HandoffRecord:
 
 
 def launch_preview_lines(handoff: HandoffRecord) -> list[str]:
-    return [
+    lines = [
         f"Launch target: {handoff.to_agent}",
         handoff.resume_packet_path,
         handoff.launch_command,
         handoff.launch_instructions,
     ]
+    if handoff.launch_warning:
+        lines.append(handoff.launch_warning)
+    return lines
+
+
+def ensure_handoff_launch_safe(handoff: HandoffRecord) -> None:
+    if handoff.launch_execute_policy == "allow":
+        return
+    warning = handoff.launch_warning or "Launch template does not pass the resume packet."
+    raise SystemExit(warning)
 
 
 def launch_handoff(repo_root: Path, session: SessionState, handoff: HandoffRecord) -> int:
+    ensure_handoff_launch_safe(handoff)
     launched_at = utc_now()
     handoff.launch_status = "launching"
     handoff.launched_at = launched_at

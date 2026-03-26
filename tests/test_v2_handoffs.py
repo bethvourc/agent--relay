@@ -156,7 +156,8 @@ class V2HandoffTests(TestCase):
             env = {
                 "AGENT_RELAY_CLAUDE_LAUNCH_TEMPLATE": (
                     f"{shlex_quote(sys.executable)} -c "
-                    "\"import sys; print('phase4 stdout'); print('phase4 stderr', file=sys.stderr); sys.exit(7)\""
+                    "\"import sys; print('phase4 stdout'); print('phase4 stderr', file=sys.stderr); sys.exit(7)\" "
+                    "{resume_path}"
                 )
             }
 
@@ -284,7 +285,8 @@ class V2HandoffTests(TestCase):
             env = {
                 "AGENT_RELAY_CLAUDE_LAUNCH_TEMPLATE": (
                     f"{shlex_quote(sys.executable)} -c "
-                    "\"print('launch once')\""
+                    "\"print('launch once')\" "
+                    "{resume_path}"
                 )
             }
 
@@ -315,6 +317,47 @@ class V2HandoffTests(TestCase):
                 )
 
             self.assertIn("launch is not allowed while session phase is awaiting_resume", str(context.exception))
+
+    def test_unsafe_launch_template_is_preview_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir).resolve()
+            fixture = self.prepare_session(repo_root)
+            env = {
+                "AGENT_RELAY_CLAUDE_LAUNCH_TEMPLATE": (
+                    f"{shlex_quote(sys.executable)} -c "
+                    "\"print('unsafe template')\""
+                )
+            }
+
+            with patch.dict(os.environ, env, clear=False):
+                handoff = create_handoff_for_command(
+                    repo_root,
+                    fixture["session_id"],
+                    to_agent="claude",
+                    reason="Unsafe template preview",
+                    evidence_depth="standard",
+                    owner="test:handoff:unsafe-template",
+                )
+                preview = preview_launch_for_command(
+                    repo_root,
+                    fixture["session_id"],
+                    handoff_id=handoff.handoff_id,
+                    owner="test:launch:unsafe-template:preview",
+                )
+
+                self.assertFalse(preview.packet_aware)
+                self.assertEqual(preview.execute_policy, "refuse")
+                self.assertIn("does not pass the resume packet", preview.warning or "")
+
+                with self.assertRaises(SystemExit) as context:
+                    execute_launch_for_command(
+                        repo_root,
+                        fixture["session_id"],
+                        handoff_id=handoff.handoff_id,
+                        owner="test:launch:unsafe-template:execute",
+                    )
+
+            self.assertIn("does not pass the resume packet", str(context.exception))
 
 
 def shlex_quote(value: str) -> str:

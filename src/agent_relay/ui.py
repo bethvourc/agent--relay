@@ -348,12 +348,16 @@ def render_launch_preview(
     resume_path: str,
     launch_command: str,
     launch_instructions: str,
+    *,
+    warning: str | None = None,
 ) -> None:
     if is_compact(console):
         console.print(f"[brand]Launch preview[/]  [label]target:[/] {agent_badge(to_agent)}", highlight=False)
         console.print(f"  [label]Resume:[/]       [path]{resume_path}[/]", highlight=False)
         console.print(f"  [label]Command:[/]      [muted]{launch_command}[/]", highlight=False)
         console.print(f"  [label]Instructions:[/] [value]{launch_instructions}[/]", highlight=False)
+        if warning:
+            console.print(f"  [warning]Warning:[/]     [value]{warning}[/]", highlight=False)
         return
 
     content = Text()
@@ -369,6 +373,10 @@ def render_launch_preview(
     content.append("\n")
     content.append("  Instructions  ", style="label")
     content.append(launch_instructions, style="value")
+    if warning:
+        content.append("\n")
+        content.append("  Warning       ", style="label")
+        content.append(warning, style="warning")
 
     console.print(Panel(
         content,
@@ -618,7 +626,7 @@ def render_help(console: Console) -> None:
         _help_row_compact(console, "pause", "Pause a session with a final checkpoint", "<session> [--next-action ...]")
         _help_row_compact(console, "prepare", "Capture a clean pre-handoff checkpoint", "<session> --next-action <text>")
         _help_row_compact(console, "failover", "Prepare handoff to another agent", "<session> --to-agent <name> --reason <text>")
-        _help_row_compact(console, "launch", "Preview or execute a handoff", "<session> [--execute] [--yes]")
+        _help_row_compact(console, "launch", "Preview or dispatch a handoff", "<session> [--execute] [--yes]")
         _help_row_compact(console, "resume", "Accept a prepared v2 handoff", "<session> [--handoff-id <id>]")
         _help_row_compact(console, "repair", "Repair v2 integrity explicitly", "<session> <--rebuild-view|--rollback-pending|--promote-last-good>")
         _help_row_compact(console, "inspect", "View session state", "<session>")
@@ -651,7 +659,7 @@ def render_help(console: Console) -> None:
         ("pause", "Pause a session with a final checkpoint", "<session> [--next-action <text>]"),
         ("prepare", "Capture a clean pre-handoff checkpoint", "<session> --next-action <text>"),
         ("failover", "Prepare handoff to another agent", "<session> --to-agent <name> --reason <text>"),
-        ("launch", "Preview or execute a handoff", "<session> [--execute] [--yes]"),
+        ("launch", "Preview or dispatch a handoff", "<session> [--execute] [--yes]"),
         ("resume", "Accept a prepared v2 handoff", "<session> [--handoff-id <id>]"),
         ("repair", "Repair v2 integrity explicitly", "<session> <--rebuild-view|--rollback-pending|--promote-last-good>"),
         ("inspect", "View session state", "<session>"),

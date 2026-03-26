@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-from agent_relay.agents import AGENT_NAMES
+from agent_relay.agents import AGENT_NAMES, LAUNCH_EXECUTE_POLICIES, launch_template_uses_resume_packet
 
 SCHEMA_VERSION = 1
 VALIDATION_STATUSES = {"not_run", "passed", "failed", "partial"}
@@ -126,6 +126,9 @@ class HandoffRecord:
     launch_template: str
     launch_template_source: str
     launch_instructions: str
+    launch_packet_aware: bool = True
+    launch_execute_policy: str = "allow"
+    launch_warning: str | None = None
     launched_at: str | None = None
     finished_at: str | None = None
     exit_code: int | None = None
@@ -147,6 +150,16 @@ class HandoffRecord:
             "handoff.launch_template_source",
         )
         self.launch_instructions = _require_str(self.launch_instructions, "handoff.launch_instructions")
+        if not isinstance(self.launch_packet_aware, bool):
+            raise ModelValidationError("handoff.launch_packet_aware must be a boolean")
+        self.launch_execute_policy = _require_choice(
+            self.launch_execute_policy,
+            "handoff.launch_execute_policy",
+            LAUNCH_EXECUTE_POLICIES,
+        )
+        self.launch_warning = _optional_str(self.launch_warning, "handoff.launch_warning")
+        if self.launch_execute_policy == "allow" and not self.launch_packet_aware:
+            raise ModelValidationError("handoff.launch_execute_policy cannot be allow when launch_packet_aware is false")
         self.launched_at = _optional_str(self.launched_at, "handoff.launched_at")
         self.finished_at = _optional_str(self.finished_at, "handoff.finished_at")
         if self.exit_code is not None and not isinstance(self.exit_code, int):
@@ -187,6 +200,15 @@ class HandoffRecord:
             launch_template=mapping["launch_template"],
             launch_template_source=mapping["launch_template_source"],
             launch_instructions=mapping["launch_instructions"],
+            launch_packet_aware=mapping.get(
+                "launch_packet_aware",
+                launch_template_uses_resume_packet(mapping["launch_template"]),
+            ),
+            launch_execute_policy=mapping.get(
+                "launch_execute_policy",
+                "allow" if launch_template_uses_resume_packet(mapping["launch_template"]) else "refuse",
+            ),
+            launch_warning=mapping.get("launch_warning"),
             launched_at=mapping.get("launched_at"),
             finished_at=mapping.get("finished_at"),
             exit_code=mapping.get("exit_code"),
@@ -207,7 +229,11 @@ class HandoffRecord:
             "launch_template": self.launch_template,
             "launch_template_source": self.launch_template_source,
             "launch_instructions": self.launch_instructions,
+            "launch_packet_aware": self.launch_packet_aware,
+            "launch_execute_policy": self.launch_execute_policy,
         }
+        if self.launch_warning is not None:
+            data["launch_warning"] = self.launch_warning
         if self.launched_at is not None:
             data["launched_at"] = self.launched_at
         if self.finished_at is not None:

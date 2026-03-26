@@ -106,7 +106,7 @@ class LauncherTests(TestCase):
 
             launch_template = (
                 f"cd {{repo_root}} && {shlex.quote(sys.executable)} -c "
-                "'from pathlib import Path; Path(\"launch-success.txt\").write_text(\"ok\")'"
+                "'from pathlib import Path; Path(\"launch-success.txt\").write_text(\"ok\")' {resume_path}"
             )
             with patch.dict("os.environ", {"AGENT_RELAY_CODEX_LAUNCH_TEMPLATE": launch_template}, clear=False):
                 handoff = build_handoff_record(
@@ -135,7 +135,10 @@ class LauncherTests(TestCase):
             save_checkpoint(repo_root, checkpoint)
             save_session(repo_root, session)
 
-            launch_template = f"{shlex.quote(sys.executable)} -c 'import sys; sys.exit(7)'"
+            launch_template = (
+                f"{shlex.quote(sys.executable)} -c 'import sys; sys.exit(7)' "
+                "{resume_path}"
+            )
             with patch.dict("os.environ", {"AGENT_RELAY_CODEX_LAUNCH_TEMPLATE": launch_template}, clear=False):
                 handoff = build_handoff_record(
                     session,

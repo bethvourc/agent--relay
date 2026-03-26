@@ -59,7 +59,8 @@ class AgentRelayV2HandoffCliTests(TestCase):
             env = {
                 "AGENT_RELAY_CLAUDE_LAUNCH_TEMPLATE": (
                     f"{shlex_quote(sys.executable)} -c "
-                    "\"from pathlib import Path; Path('claude-launch.txt').write_text('ok')\""
+                    "\"from pathlib import Path; Path('claude-launch.txt').write_text('ok')\" "
+                    "{resume_path}"
                 )
             }
 
@@ -141,6 +142,66 @@ class AgentRelayV2HandoffCliTests(TestCase):
             self.assertEqual(inspect_resume_data["current_status"], "active")
             self.assertEqual(inspect_resume_data["current_agent"], "claude")
             self.assertEqual(inspect_resume_data["last_resume_handoff_id"], failover_data["handoff_id"])
+
+    def test_cli_launch_preview_warns_and_execute_refuses_when_template_ignores_packet(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir).resolve()
+            fixture = self.prepare_session(repo_root)
+            env = {
+                "AGENT_RELAY_CLAUDE_LAUNCH_TEMPLATE": (
+                    f"{shlex_quote(sys.executable)} -c "
+                    "\"print('unsafe launch template')\""
+                )
+            }
+
+            failover = self.run_cli(
+                "--json",
+                "failover",
+                fixture["session_id"],
+                "--to-agent",
+                "claude",
+                "--reason",
+                "Unsafe launch template check",
+                "--repo",
+                tmpdir,
+                repo_root=repo_root,
+                extra_env=env,
+            )
+            self.assertEqual(failover.returncode, 0, failover.stderr)
+            handoff_id = json.loads(failover.stdout)["handoff_id"]
+
+            preview = self.run_cli(
+                "--json",
+                "launch",
+                fixture["session_id"],
+                "--handoff-id",
+                handoff_id,
+                "--repo",
+                tmpdir,
+                repo_root=repo_root,
+                extra_env=env,
+            )
+            self.assertEqual(preview.returncode, 0, preview.stderr)
+            preview_data = json.loads(preview.stdout)
+            self.assertFalse(preview_data["packet_aware"])
+            self.assertEqual(preview_data["execute_policy"], "refuse")
+            self.assertIn("does not pass the resume packet", preview_data["warning"])
+
+            execute = self.run_cli(
+                "--json",
+                "launch",
+                fixture["session_id"],
+                "--handoff-id",
+                handoff_id,
+                "--execute",
+                "--repo",
+                tmpdir,
+                repo_root=repo_root,
+                extra_env=env,
+            )
+            self.assertNotEqual(execute.returncode, 0)
+            execute_data = json.loads(execute.stdout)
+            self.assertIn("does not pass the resume packet", execute_data["error"])
 
     def test_cli_inspect_recovers_interrupted_launch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

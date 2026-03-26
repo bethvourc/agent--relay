@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any, Mapping
 
-from agent_relay.agents import AGENT_NAMES
+from agent_relay.agents import AGENT_NAMES, LAUNCH_EXECUTE_POLICIES, launch_template_uses_resume_packet
 from agent_relay.v2.errors import V2ValidationError
 from agent_relay.v2.hashing import canonical_json, sha256_text
 
@@ -50,6 +50,12 @@ def _require_str(value: Any, field_name: str) -> str:
 def _require_int(value: Any, field_name: str) -> int:
     if not isinstance(value, int):
         raise V2ValidationError(f"{field_name} must be an integer")
+    return value
+
+
+def _require_bool(value: Any, field_name: str) -> bool:
+    if not isinstance(value, bool):
+        raise V2ValidationError(f"{field_name} must be a boolean")
     return value
 
 
@@ -518,6 +524,9 @@ class HandoffManifest:
     launch_template: str
     launch_template_source: str
     launch_instructions: str
+    launch_packet_aware: bool
+    launch_execute_policy: str
+    launch_warning: str | None
     packet_file: str
     packet_sha256_file: str
     launch_spec_file: str
@@ -542,6 +551,17 @@ class HandoffManifest:
         _require_str(self.launch_template, "handoff_manifest.launch_template")
         _require_str(self.launch_template_source, "handoff_manifest.launch_template_source")
         _require_str(self.launch_instructions, "handoff_manifest.launch_instructions")
+        _require_bool(self.launch_packet_aware, "handoff_manifest.launch_packet_aware")
+        _require_choice(
+            self.launch_execute_policy,
+            "handoff_manifest.launch_execute_policy",
+            LAUNCH_EXECUTE_POLICIES,
+        )
+        _optional_str(self.launch_warning, "handoff_manifest.launch_warning")
+        if self.launch_execute_policy == "allow" and not self.launch_packet_aware:
+            raise V2ValidationError(
+                "handoff_manifest.launch_execute_policy cannot be allow when launch_packet_aware is false"
+            )
         _validate_manifest_files(self.files, "handoff_manifest.files")
         _require_file_reference(self.packet_file, self.files, "handoff_manifest.packet_file")
         _require_file_reference(self.packet_sha256_file, self.files, "handoff_manifest.packet_sha256_file")
@@ -567,6 +587,15 @@ class HandoffManifest:
             launch_template=mapping["launch_template"],
             launch_template_source=mapping["launch_template_source"],
             launch_instructions=mapping["launch_instructions"],
+            launch_packet_aware=mapping.get(
+                "launch_packet_aware",
+                launch_template_uses_resume_packet(mapping["launch_template"]),
+            ),
+            launch_execute_policy=mapping.get(
+                "launch_execute_policy",
+                "allow" if launch_template_uses_resume_packet(mapping["launch_template"]) else "refuse",
+            ),
+            launch_warning=mapping.get("launch_warning"),
             packet_file=mapping["packet_file"],
             packet_sha256_file=mapping["packet_sha256_file"],
             launch_spec_file=mapping["launch_spec_file"],
@@ -591,6 +620,9 @@ class HandoffManifest:
             "launch_template": self.launch_template,
             "launch_template_source": self.launch_template_source,
             "launch_instructions": self.launch_instructions,
+            "launch_packet_aware": self.launch_packet_aware,
+            "launch_execute_policy": self.launch_execute_policy,
+            "launch_warning": self.launch_warning,
             "packet_file": self.packet_file,
             "packet_sha256_file": self.packet_sha256_file,
             "launch_spec_file": self.launch_spec_file,

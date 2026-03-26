@@ -5,6 +5,13 @@ import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
+LAUNCH_EXECUTE_POLICIES = {"allow", "refuse"}
+RESUME_PACKET_PLACEHOLDERS = ("{resume_path}", "{resume_path_path}")
+
+
+def launch_template_uses_resume_packet(template: str) -> bool:
+    return any(placeholder in template for placeholder in RESUME_PACKET_PLACEHOLDERS)
+
 
 @dataclass(frozen=True)
 class LaunchSpec:
@@ -13,6 +20,14 @@ class LaunchSpec:
     template_source: str
     cwd: str
     instructions: str
+    packet_aware: bool
+    execute_policy: str
+    warning: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.execute_policy not in LAUNCH_EXECUTE_POLICIES:
+            allowed = ", ".join(sorted(LAUNCH_EXECUTE_POLICIES))
+            raise ValueError(f"execute_policy must be one of: {allowed}")
 
 
 @dataclass(frozen=True)
@@ -34,20 +49,42 @@ class AgentAdapter:
 
     def render_launch_spec(self, repo_root: Path, resume_path: Path) -> LaunchSpec:
         template, source = self.resolve_launch_template()
+        packet_aware = launch_template_uses_resume_packet(template)
+        if source == "default" and not packet_aware:
+            placeholders = " or ".join(RESUME_PACKET_PLACEHOLDERS)
+            raise SystemExit(
+                f"Built-in launch template for {self.key} must include {placeholders}"
+            )
         values = self._template_values(repo_root, resume_path)
         try:
             command = template.format(**values)
-            instructions = self.launch_instructions_template.format(**values)
         except KeyError as exc:
             raise SystemExit(
                 f"Launch template for {self.key} references unknown placeholder: {exc.args[0]}"
             ) from exc
+        warning: str | None = None
+        execute_policy = "allow"
+        if packet_aware:
+            instructions = self.launch_instructions_template.format(**values)
+        else:
+            execute_policy = "refuse"
+            placeholders = " or ".join(RESUME_PACKET_PLACEHOLDERS)
+            warning = (
+                f"{self.display_name} launch template does not pass the resume packet. "
+                f"`launch --execute` will refuse until the template includes {placeholders}."
+            )
+            instructions = (
+                f"{warning} Resume packet: {resume_path}."
+            )
         return LaunchSpec(
             command=command,
             template=template,
             template_source=source,
             cwd=str(repo_root),
             instructions=instructions,
+            packet_aware=packet_aware,
+            execute_policy=execute_policy,
+            warning=warning,
         )
 
     def _template_values(self, repo_root: Path, resume_path: Path) -> dict[str, str]:
@@ -70,10 +107,10 @@ class ClaudeCodeAdapter(AgentAdapter):
             display_name="Claude Code",
             cli_command="claude",
             launch_template_env="AGENT_RELAY_CLAUDE_LAUNCH_TEMPLATE",
-            default_launch_template="cd {repo_root} && {agent_cli}",
+            default_launch_template="cd {repo_root} && {agent_cli} --resume {resume_path}",
             launch_instructions_template=(
-                "Start {agent_name} in {repo_root_path} and use {resume_path_path} "
-                "as the first resume packet you provide."
+                "Start {agent_name} in {repo_root_path} with {resume_path_path} as the "
+                "resume packet input."
             ),
             resume_packet_target="claude",
             event_capture_hook_name=None,
@@ -87,10 +124,10 @@ class CodexAdapter(AgentAdapter):
             display_name="Codex",
             cli_command="codex",
             launch_template_env="AGENT_RELAY_CODEX_LAUNCH_TEMPLATE",
-            default_launch_template="cd {repo_root} && {agent_cli}",
+            default_launch_template="cd {repo_root} && {agent_cli} --resume {resume_path}",
             launch_instructions_template=(
-                "Start {agent_name} in {repo_root_path} and use {resume_path_path} "
-                "as the opening prompt for the handoff."
+                "Start {agent_name} in {repo_root_path} with {resume_path_path} as the "
+                "resume packet input."
             ),
             resume_packet_target="codex",
             event_capture_hook_name=None,

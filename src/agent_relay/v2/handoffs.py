@@ -47,6 +47,9 @@ class HandoffCommandResult:
     resume_path: str
     launch_command: str
     launch_instructions: str
+    packet_aware: bool
+    execute_policy: str
+    warning: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +59,9 @@ class LaunchPreviewResult:
     resume_path: str
     launch_command: str
     launch_instructions: str
+    packet_aware: bool
+    execute_policy: str
+    warning: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +90,9 @@ class StoredLaunchSpec:
     template: str
     template_source: str
     instructions: str
+    packet_aware: bool
+    execute_policy: str
+    warning: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,6 +158,9 @@ def create_handoff_for_command(
             "template": launch_spec.template,
             "template_source": launch_spec.template_source,
             "instructions": launch_spec.instructions,
+            "packet_aware": launch_spec.packet_aware,
+            "execute_policy": launch_spec.execute_policy,
+            "warning": launch_spec.warning,
         },
         indent=2,
         sort_keys=True,
@@ -176,6 +188,9 @@ def create_handoff_for_command(
         launch_template=launch_spec.template,
         launch_template_source=launch_spec.template_source,
         launch_instructions=launch_spec.instructions,
+        launch_packet_aware=launch_spec.packet_aware,
+        launch_execute_policy=launch_spec.execute_policy,
+        launch_warning=launch_spec.warning,
         packet_file="packet.md",
         packet_sha256_file="packet.sha256",
         launch_spec_file="launch-spec.json",
@@ -212,6 +227,9 @@ def create_handoff_for_command(
         resume_path=str(packet_path),
         launch_command=launch_spec.command,
         launch_instructions=launch_spec.instructions,
+        packet_aware=launch_spec.packet_aware,
+        execute_policy=launch_spec.execute_policy,
+        warning=launch_spec.warning,
     )
 
 
@@ -235,6 +253,9 @@ def preview_launch_for_command(
         resume_path=str(loaded.packet_path),
         launch_command=loaded.launch_spec.command,
         launch_instructions=loaded.launch_spec.instructions,
+        packet_aware=loaded.launch_spec.packet_aware,
+        execute_policy=loaded.launch_spec.execute_policy,
+        warning=loaded.launch_spec.warning,
     )
 
 
@@ -249,6 +270,7 @@ def execute_launch_for_command(
     with acquire_session_lock(repo_root, session_id, owner=owner) as lock:
         recovered = _recover_interrupted_launch_locked(repo_root, session_id, owner=owner, lock=lock)
         loaded = _load_prepared_handoff(repo_root, session_id, handoff_id=handoff_id, command_name="launch")
+        _require_launch_spec_safe(loaded.launch_spec)
         try:
             started_transition = plan_launch_started(
                 LifecycleState(phase=loaded.view.phase, task_status=loaded.view.task_status)
@@ -495,6 +517,9 @@ def _load_prepared_handoff(
             template=manifest.launch_template,
             template_source=manifest.launch_template_source,
             instructions=manifest.launch_instructions,
+            packet_aware=manifest.launch_packet_aware,
+            execute_policy=manifest.launch_execute_policy,
+            warning=manifest.launch_warning,
         ),
         session_id=session_id,
     )
@@ -522,8 +547,16 @@ def _load_launch_spec_file(path: Path, *, expected: StoredLaunchSpec, session_id
     except json.JSONDecodeError as exc:
         raise V2CorruptionError(f"launch-spec.json is not valid JSON: {exc}", session_id=session_id, path=path) from exc
     required = {"profile", "cwd", "command", "template", "template_source", "instructions"}
-    if not isinstance(data, dict) or set(data) != required:
+    optional = {"packet_aware", "execute_policy", "warning"}
+    if not isinstance(data, dict) or not required.issubset(data) or not set(data).issubset(required | optional):
         raise V2CorruptionError("launch-spec.json has an unexpected shape", session_id=session_id, path=path)
+    packet_aware = data.get("packet_aware")
+    if packet_aware is None:
+        packet_aware = expected.packet_aware
+    execute_policy = data.get("execute_policy")
+    if execute_policy is None:
+        execute_policy = expected.execute_policy
+    warning = data.get("warning", expected.warning)
     spec = StoredLaunchSpec(
         profile=_require_non_empty_str(data["profile"], "launch_spec.profile"),
         cwd=_require_non_empty_str(data["cwd"], "launch_spec.cwd"),
@@ -531,6 +564,9 @@ def _load_launch_spec_file(path: Path, *, expected: StoredLaunchSpec, session_id
         template=_require_non_empty_str(data["template"], "launch_spec.template"),
         template_source=_require_non_empty_str(data["template_source"], "launch_spec.template_source"),
         instructions=_require_non_empty_str(data["instructions"], "launch_spec.instructions"),
+        packet_aware=_require_bool(packet_aware, "launch_spec.packet_aware"),
+        execute_policy=_require_execute_policy(execute_policy, "launch_spec.execute_policy"),
+        warning=_optional_warning(warning, "launch_spec.warning"),
     )
     if spec != expected:
         raise V2CorruptionError("launch-spec.json does not match the handoff manifest", session_id=session_id, path=path)
@@ -694,6 +730,34 @@ def _require_non_empty_str(value: Any, field_name: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise V2CorruptionError(f"{field_name} must be a non-empty string")
     return value
+
+
+def _require_bool(value: Any, field_name: str) -> bool:
+    if not isinstance(value, bool):
+        raise V2CorruptionError(f"{field_name} must be a boolean")
+    return value
+
+
+def _require_execute_policy(value: Any, field_name: str) -> str:
+    text = _require_non_empty_str(value, field_name)
+    if text not in {"allow", "refuse"}:
+        raise V2CorruptionError(f"{field_name} must be one of: allow, refuse")
+    return text
+
+
+def _optional_warning(value: Any, field_name: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise V2CorruptionError(f"{field_name} must be a string when provided")
+    return value
+
+
+def _require_launch_spec_safe(launch_spec: StoredLaunchSpec) -> None:
+    if launch_spec.execute_policy == "allow":
+        return
+    warning = launch_spec.warning or "Launch template does not pass the resume packet."
+    raise SystemExit(warning)
 
 
 def _validate_evidence_depth(value: str) -> None:

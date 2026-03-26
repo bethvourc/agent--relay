@@ -55,12 +55,18 @@ Optional autosave helpers are available through environment variables:
 - `AGENT_RELAY_AUTOSAVE_IMPLEMENTATION_NOTE_FILE=<path>`
 - `AGENT_RELAY_AUTOSAVE_VALIDATION_SUMMARY_FILE=<path>`
 
-Failover now records a rendered launch command for the target agent profile. The built-in defaults are intentionally shallow:
+Failover now records a rendered launch command for the target agent profile. The built-in defaults are packet-aware:
 
-- `claude` launches with `cd {repo_root} && claude`
-- `codex` launches with `cd {repo_root} && codex`
+- `claude` launches with `cd {repo_root} && claude --resume {resume_path}`
+- `codex` launches with `cd {repo_root} && codex --resume {resume_path}`
 
-`agent-relay launch <session>` prints the latest prepared resume path, launch command, and launch instructions without mutating session state. Add `--execute` to actually run the command and record whether launch succeeded or failed.
+`agent-relay launch <session>` prints the latest prepared resume path, launch command, and launch instructions without mutating session state. Add `--execute` to dispatch the prepared command.
+
+Safe launch policy:
+
+- custom launch templates must include `{resume_path}` or `{resume_path_path}` to pass the immutable packet to the target agent
+- if a custom template omits packet input, launch preview shows a warning and `launch --execute` refuses to run it
+- for v2 sessions, subprocess dispatch does not transfer ownership; ownership transfers only after `agent-relay resume`
 
 If your local agent CLI supports a richer invocation flow, override the launch template with environment variables:
 

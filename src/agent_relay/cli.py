@@ -341,6 +341,9 @@ def cmd_launch(args: argparse.Namespace) -> int:
                     "resume_path": preview.resume_path,
                     "launch_command": preview.launch_command,
                     "launch_instructions": preview.launch_instructions,
+                    "packet_aware": preview.packet_aware,
+                    "execute_policy": preview.execute_policy,
+                    "warning": preview.warning,
                 })
             elif args.quiet:
                 emit_quiet(preview.launch_command)
@@ -351,6 +354,7 @@ def cmd_launch(args: argparse.Namespace) -> int:
                     preview.resume_path,
                     preview.launch_command,
                     preview.launch_instructions,
+                    warning=preview.warning,
                 )
             return 0
 
@@ -363,6 +367,7 @@ def cmd_launch(args: argparse.Namespace) -> int:
                 preview.resume_path,
                 preview.launch_command,
                 preview.launch_instructions,
+                warning=preview.warning,
             )
             if not Confirm.ask("\n  [brand]Execute launch?[/]", console=args.console, default=True):
                 args.console.print("  [muted]Launch cancelled.[/]")
@@ -397,7 +402,14 @@ def cmd_launch(args: argparse.Namespace) -> int:
                 "launch_status": result.launch_status,
                 "stdout_path": result.stdout_path,
                 "stderr_path": result.stderr_path,
+                "ownership_transferred": False,
             })
+        elif not args.quiet:
+            args.console.print(
+                "  [muted]Process dispatch does not transfer ownership. "
+                "Run `agent-relay resume` after the target agent adopts the packet.[/]",
+                highlight=False,
+            )
 
         return result.exit_code
 
@@ -413,6 +425,9 @@ def cmd_launch(args: argparse.Namespace) -> int:
                 "resume_path": handoff.resume_packet_path,
                 "launch_command": handoff.launch_command,
                 "launch_instructions": handoff.launch_instructions,
+                "packet_aware": handoff.launch_packet_aware,
+                "execute_policy": handoff.launch_execute_policy,
+                "warning": handoff.launch_warning,
             })
         elif args.quiet:
             emit_quiet(handoff.launch_command)
@@ -423,6 +438,7 @@ def cmd_launch(args: argparse.Namespace) -> int:
                 handoff.resume_packet_path,
                 handoff.launch_command,
                 handoff.launch_instructions,
+                warning=handoff.launch_warning,
             )
         return 0
 
@@ -436,6 +452,7 @@ def cmd_launch(args: argparse.Namespace) -> int:
             handoff.resume_packet_path,
             handoff.launch_command,
             handoff.launch_instructions,
+            warning=handoff.launch_warning,
         )
         if not Confirm.ask("\n  [brand]Execute launch?[/]", console=args.console, default=True):
             args.console.print("  [muted]Launch cancelled.[/]")

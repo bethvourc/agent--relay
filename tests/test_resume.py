@@ -48,10 +48,10 @@ class ResumeTests(TestCase):
                     launch_status="ready",
                     launch_profile="Codex",
                     launch_cwd="/tmp/project",
-                    launch_command="cd /tmp/project && codex",
-                    launch_template="cd {repo_root} && {agent_cli}",
+                    launch_command="cd /tmp/project && codex --resume /tmp/project/.agent-relay/sessions/s1/resume/codex.md",
+                    launch_template="cd {repo_root} && {agent_cli} --resume {resume_path}",
                     launch_template_source="default",
-                    launch_instructions="Start Codex in /tmp/project",
+                    launch_instructions="Start Codex in /tmp/project with /tmp/project/.agent-relay/sessions/s1/resume/codex.md as the resume packet input.",
                 )
             ],
             latest_checkpoint_id="20260324-120400-def456",

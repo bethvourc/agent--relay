@@ -28,9 +28,14 @@ class AgentAdapterTests(TestCase):
 
             launch_spec = adapter.render_launch_spec(repo_root, resume_path)
 
-            self.assertEqual(launch_spec.command, f"cd {shlex.quote(str(repo_root))} && codex")
+            self.assertEqual(
+                launch_spec.command,
+                f"cd {shlex.quote(str(repo_root))} && codex --resume {shlex.quote(str(resume_path))}",
+            )
             self.assertEqual(launch_spec.template_source, "default")
             self.assertEqual(launch_spec.cwd, str(repo_root))
+            self.assertTrue(launch_spec.packet_aware)
+            self.assertEqual(launch_spec.execute_policy, "allow")
             self.assertIn(str(resume_path), launch_spec.instructions)
 
     def test_adapter_renders_env_override_launch_spec(self) -> None:
@@ -51,5 +56,24 @@ class AgentAdapterTests(TestCase):
                 f"cd {shlex.quote(str(repo_root))} && claude --resume {shlex.quote(str(resume_path))}",
             )
             self.assertEqual(launch_spec.template_source, "env")
+            self.assertTrue(launch_spec.packet_aware)
+            self.assertEqual(launch_spec.execute_policy, "allow")
             self.assertEqual(adapter.resume_packet_target, "claude")
             self.assertIsNone(adapter.event_capture_hook_name)
+
+    def test_adapter_marks_unsafe_env_override_as_preview_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir).resolve()
+            resume_path = repo_root / ".agent-relay" / "sessions" / "s1" / "resume" / "codex.md"
+            adapter = get_agent_adapter("codex")
+
+            with patch.dict(
+                "os.environ",
+                {"AGENT_RELAY_CODEX_LAUNCH_TEMPLATE": "cd {repo_root} && {agent_cli}"},
+                clear=False,
+            ):
+                launch_spec = adapter.render_launch_spec(repo_root, resume_path)
+
+        self.assertFalse(launch_spec.packet_aware)
+        self.assertEqual(launch_spec.execute_policy, "refuse")
+        self.assertIn("does not pass the resume packet", launch_spec.warning or "")
