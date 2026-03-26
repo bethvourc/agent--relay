@@ -48,12 +48,14 @@ from agent_relay.ui import (
     render_start_success,
 )
 from agent_relay.v2.checkpoints import create_checkpoint_for_command
+from agent_relay.v2.bootstrap import start_session
 from agent_relay.v2.handoffs import (
     create_handoff_for_command,
     execute_launch_for_command,
     preview_launch_for_command,
     resume_handoff_for_command,
 )
+from agent_relay.v2.migrate import is_legacy_v1_session, migrate_legacy_session, recover_legacy_migrations
 from agent_relay.v2.repair import repair_session
 from agent_relay.v2.storage import is_v2_session
 
@@ -63,6 +65,10 @@ def write_latest_summary(repo_root: Path, session: SessionState) -> None:
         return
     checkpoint = load_checkpoint(repo_root, session.session_id, session.latest_checkpoint_id)
     write_summary(repo_root, session, checkpoint)
+
+
+def prepare_repo(repo_root: Path, *, owner: str) -> None:
+    recover_legacy_migrations(repo_root, owner=owner)
 
 
 def build_capture_options(
@@ -102,6 +108,7 @@ def run_capture_command(
     require_next_action: bool = False,
 ) -> int:
     repo_root = default_repo_root(args.repo)
+    prepare_repo(repo_root, owner=f"cli:{command_name}:repo")
 
     if is_v2_session(repo_root, args.session):
         options = build_capture_options(args, default_status=None)
@@ -132,6 +139,12 @@ def run_capture_command(
         else:
             render_checkpoint_success(args.console, args.session, result.checkpoint_id)
         return 0
+
+    if is_legacy_v1_session(repo_root, args.session):
+        raise SystemExit(
+            f"{command_name} requires migrating the legacy v1 session first; "
+            f"run: agent-relay migrate {args.session} --repo {repo_root}"
+        )
 
     options = build_capture_options(args, default_status=default_status)
 
@@ -169,32 +182,19 @@ def run_capture_command(
 
 def cmd_start(args: argparse.Namespace) -> int:
     repo_root = default_repo_root(args.repo)
+    prepare_repo(repo_root, owner="cli:start:repo")
     session_id = datetime.now(UTC).strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(3)
-    now = utc_now()
-    session = SessionState(
-        schema_version=SCHEMA_VERSION,
+    result = start_session(
+        repo_root,
         session_id=session_id,
-        repo_root=str(repo_root),
         objective=args.task,
         workstream_kind=args.workstream_kind,
-        current_agent=args.agent,
-        current_status="active",
-        created_at=now,
-        updated_at=now,
+        initial_agent=args.agent,
         next_action=args.next_action or "",
-        decisions=[],
-        blockers=[],
-        research_notes=[],
-        implementation_notes=[],
-        touched_files=[],
-        validation=ValidationState(status="not_run", summary=""),
-        handoffs=[],
-        latest_checkpoint_id=None,
+        snapshot_mode=getattr(args, "snapshot_mode", None),
+        owner="cli:start",
     )
-    checkpoint = create_checkpoint(repo_root, session, created_at=now)
-    save_session(repo_root, session)
-    write_summary(repo_root, session, checkpoint)
-    state_path = str(Path(session.repo_root) / ".agent-relay" / "sessions" / session_id / "state.json")
+    state_path = result.session_path
 
     if args.json:
         emit_json({
@@ -203,7 +203,9 @@ def cmd_start(args: argparse.Namespace) -> int:
             "state_path": state_path,
             "agent": args.agent,
             "objective": args.task,
-            "status": "active",
+            "status": result.phase,
+            "checkpoint_id": result.checkpoint_id,
+            "storage_model": "journal_v2",
         })
     elif args.quiet:
         emit_quiet(session_id)
@@ -231,6 +233,7 @@ def cmd_prepare(args: argparse.Namespace) -> int:
 
 def cmd_failover(args: argparse.Namespace) -> int:
     repo_root = default_repo_root(args.repo)
+    prepare_repo(repo_root, owner="cli:failover:repo")
     if is_v2_session(repo_root, args.session):
         result = create_handoff_for_command(
             repo_root,
@@ -264,6 +267,12 @@ def cmd_failover(args: argparse.Namespace) -> int:
                 result.launch_command,
             )
         return 0
+
+    if is_legacy_v1_session(repo_root, args.session):
+        raise SystemExit(
+            f"failover requires migrating the legacy v1 session first; "
+            f"run: agent-relay migrate {args.session} --repo {repo_root}"
+        )
 
     session = load_session(repo_root, args.session)
     if not session.latest_checkpoint_id:
@@ -322,6 +331,7 @@ def cmd_failover(args: argparse.Namespace) -> int:
 
 def cmd_launch(args: argparse.Namespace) -> int:
     repo_root = default_repo_root(args.repo)
+    prepare_repo(repo_root, owner="cli:launch:repo")
     if is_v2_session(repo_root, args.session):
         preview = preview_launch_for_command(
             repo_root,
@@ -413,6 +423,12 @@ def cmd_launch(args: argparse.Namespace) -> int:
 
         return result.exit_code
 
+    if is_legacy_v1_session(repo_root, args.session):
+        raise SystemExit(
+            f"launch requires migrating the legacy v1 session first; "
+            f"run: agent-relay migrate {args.session} --repo {repo_root}"
+        )
+
     session = load_session(repo_root, args.session)
     handoff = latest_handoff(session)
 
@@ -480,6 +496,7 @@ def cmd_launch(args: argparse.Namespace) -> int:
 
 def cmd_resume(args: argparse.Namespace) -> int:
     repo_root = default_repo_root(args.repo)
+    prepare_repo(repo_root, owner="cli:resume:repo")
     if not is_v2_session(repo_root, args.session):
         raise SystemExit("resume is only supported for v2 sessions")
     result = resume_handoff_for_command(
@@ -507,8 +524,31 @@ def cmd_resume(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_migrate(args: argparse.Namespace) -> int:
+    repo_root = default_repo_root(args.repo)
+    prepare_repo(repo_root, owner="cli:migrate:repo")
+    result = migrate_legacy_session(
+        repo_root,
+        args.session,
+        owner="cli:migrate",
+    )
+    if args.json:
+        emit_json(result.to_dict())
+    elif args.quiet:
+        emit_quiet(result.session_id)
+    else:
+        args.console.print(
+            f"[success]Migration complete[/]  [label]session:[/] [brand]{result.session_id}[/]  "
+            f"[label]health:[/] {result.health}",
+            highlight=False,
+        )
+        args.console.print(f"  [label]Legacy archive:[/] [path]{result.legacy_archive_path}[/]", highlight=False)
+    return 0
+
+
 def cmd_repair(args: argparse.Namespace) -> int:
     repo_root = default_repo_root(args.repo)
+    prepare_repo(repo_root, owner="cli:repair:repo")
     if not is_v2_session(repo_root, args.session):
         raise SystemExit("repair is only supported for v2 sessions")
 
@@ -516,10 +556,14 @@ def cmd_repair(args: argparse.Namespace) -> int:
         ("rebuild_view", bool(getattr(args, "rebuild_view", False))),
         ("rollback_pending", bool(getattr(args, "rollback_pending", False))),
         ("promote_last_good", bool(getattr(args, "promote_last_good", False))),
+        ("accept_legacy_import", bool(getattr(args, "accept_legacy_import", False))),
     ]
     actions = [name for name, enabled in selected if enabled]
     if len(actions) != 1:
-        raise SystemExit("repair requires exactly one action: --rebuild-view, --rollback-pending, or --promote-last-good")
+        raise SystemExit(
+            "repair requires exactly one action: --rebuild-view, --rollback-pending, "
+            "--promote-last-good, or --accept-legacy-import"
+        )
 
     result = repair_session(
         repo_root,
@@ -545,6 +589,7 @@ def cmd_repair(args: argparse.Namespace) -> int:
 
 def cmd_inspect(args: argparse.Namespace) -> int:
     repo_root = default_repo_root(args.repo)
+    prepare_repo(repo_root, owner="cli:inspect:repo")
     session = load_session_for_inspect(repo_root, args.session)
     if args.json:
         emit_json(session)
@@ -557,6 +602,7 @@ def cmd_inspect(args: argparse.Namespace) -> int:
 
 def cmd_dashboard(args: argparse.Namespace) -> int:
     repo_root = default_repo_root(args.repo)
+    prepare_repo(repo_root, owner="cli:dashboard:repo")
     sessions = list_sessions_for_dashboard(repo_root)
 
     if args.json:
@@ -596,6 +642,11 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--task", required=True)
     start.add_argument("--workstream-kind", default="mixed", choices=["research", "implementation", "mixed"])
     start.add_argument("--next-action")
+    start.add_argument(
+        "--snapshot-mode",
+        choices=["full"],
+        help="For non-Git repos, require an explicit full workspace snapshot for the initial v2 checkpoint",
+    )
     start.add_argument("--repo")
     start.set_defaults(func=cmd_start)
 
@@ -630,6 +681,11 @@ def build_parser() -> argparse.ArgumentParser:
     failover.add_argument("--repo")
     failover.set_defaults(func=cmd_failover)
 
+    migrate = subparsers.add_parser("migrate", help="Import a legacy v1 session into immutable v2 storage")
+    migrate.add_argument("session")
+    migrate.add_argument("--repo")
+    migrate.set_defaults(func=cmd_migrate)
+
     launch = subparsers.add_parser("launch", help="Launch the latest prepared handoff")
     launch.add_argument("session")
     launch.add_argument("--repo")
@@ -658,6 +714,7 @@ def build_parser() -> argparse.ArgumentParser:
     repair.add_argument("--rebuild-view", action="store_true", help="Rebuild refs/ and derived/ from a healthy journal")
     repair.add_argument("--rollback-pending", action="store_true", help="Quarantine pending transaction residue")
     repair.add_argument("--promote-last-good", action="store_true", help="Quarantine the corrupted journal tail and recover to the last verified event")
+    repair.add_argument("--accept-legacy-import", action="store_true", help="Acknowledge a degraded legacy import and allow future mutations")
     repair.set_defaults(func=cmd_repair)
 
     inspect = subparsers.add_parser("inspect", help="Print session state")

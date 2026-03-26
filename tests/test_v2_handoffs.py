@@ -21,9 +21,9 @@ from agent_relay.v2.handoffs import (
     recover_interrupted_launches,
     resume_handoff_for_command,
 )
-from agent_relay.v2.layout import object_dir
+from agent_relay.v2.layout import object_dir, pending_tx_dir
 from agent_relay.v2.storage import load_session_view
-from agent_relay.v2.tx import JournalCommitRequest, SessionTransaction
+from agent_relay.v2.tx import JournalCommitRequest, SessionTransaction, recover_session_transactions
 from tests.v2_fixtures import build_sample_v2_session
 
 
@@ -234,6 +234,52 @@ class V2HandoffTests(TestCase):
             self.assertEqual(view.handoffs[-1].launch_status, "interrupted")
             self.assertIn("recovered by Agent Relay", stderr_path.read_text(encoding="utf-8"))
 
+    def test_interrupted_failover_is_not_visible_until_transaction_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir).resolve()
+            fixture = self.prepare_session(repo_root)
+            handoff_id = "ho-20260325T181550Z-bbbbbb"
+            interrupted_path: Path | None = None
+
+            import agent_relay.v2.tx as tx_module
+
+            original_write_json_atomic = tx_module.write_json_atomic
+
+            def interrupt_on_journal_write(path: Path, payload) -> None:
+                nonlocal interrupted_path
+                if path.parent.name == "journal" and isinstance(payload, dict) and payload.get("kind") == "journal_event":
+                    interrupted_path = path
+                    raise KeyboardInterrupt("simulated interruption before handoff journal commit")
+                original_write_json_atomic(path, payload)
+
+            with patch("agent_relay.v2.handoffs.handoff_id_now", return_value=handoff_id):
+                with patch("agent_relay.v2.tx.write_json_atomic", side_effect=interrupt_on_journal_write):
+                    with self.assertRaises(KeyboardInterrupt):
+                        create_handoff_for_command(
+                            repo_root,
+                            fixture["session_id"],
+                            to_agent="claude",
+                            reason="Interrupt failover",
+                            evidence_depth="standard",
+                            owner="test:handoff:interrupt",
+                        )
+
+            view = load_session_view(repo_root, fixture["session_id"])
+            handoff_dir = object_dir(repo_root, fixture["session_id"], "handoff", handoff_id)
+
+            self.assertIsNotNone(interrupted_path)
+            self.assertFalse(interrupted_path.exists())
+            self.assertIsNone(view.prepared_handoff_id)
+            self.assertTrue(handoff_dir.exists())
+            self.assertTrue(any(path.is_dir() for path in pending_tx_dir(repo_root, fixture["session_id"]).iterdir()))
+
+            report = recover_session_transactions(repo_root, fixture["session_id"])
+            view = load_session_view(repo_root, fixture["session_id"])
+
+            self.assertEqual(report.quarantined_transactions, 1)
+            self.assertFalse(handoff_dir.exists())
+            self.assertIsNone(view.prepared_handoff_id)
+
     def test_resume_rejects_superseded_handoff_and_accepts_current_one(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir).resolve()
@@ -358,6 +404,75 @@ class V2HandoffTests(TestCase):
                     )
 
             self.assertIn("does not pass the resume packet", str(context.exception))
+
+    def test_interrupted_resume_does_not_transfer_ownership_until_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir).resolve()
+            fixture = self.prepare_session(repo_root)
+            before_resume = load_session_view(repo_root, fixture["session_id"])
+            env = {
+                "AGENT_RELAY_CLAUDE_LAUNCH_TEMPLATE": (
+                    f"{shlex_quote(sys.executable)} -c "
+                    "\"print('launch once')\" "
+                    "{resume_path}"
+                )
+            }
+
+            with patch.dict(os.environ, env, clear=False):
+                handoff = create_handoff_for_command(
+                    repo_root,
+                    fixture["session_id"],
+                    to_agent="claude",
+                    reason="Interrupt resume",
+                    evidence_depth="standard",
+                    owner="test:handoff:interrupt-resume",
+                )
+                result = execute_launch_for_command(
+                    repo_root,
+                    fixture["session_id"],
+                    handoff_id=handoff.handoff_id,
+                    owner="test:launch:interrupt-resume",
+                )
+
+            self.assertEqual(result.launch_status, "succeeded")
+            interrupted_path: Path | None = None
+
+            import agent_relay.v2.tx as tx_module
+
+            original_write_json_atomic = tx_module.write_json_atomic
+
+            def interrupt_on_journal_write(path: Path, payload) -> None:
+                nonlocal interrupted_path
+                if path.parent.name == "journal" and isinstance(payload, dict) and payload.get("kind") == "journal_event":
+                    interrupted_path = path
+                    raise KeyboardInterrupt("simulated interruption before resume journal commit")
+                original_write_json_atomic(path, payload)
+
+            with patch("agent_relay.v2.tx.write_json_atomic", side_effect=interrupt_on_journal_write):
+                with self.assertRaises(KeyboardInterrupt):
+                    resume_handoff_for_command(
+                        repo_root,
+                        fixture["session_id"],
+                        handoff_id=handoff.handoff_id,
+                        owner="test:resume:interrupt",
+                    )
+
+            view = load_session_view(repo_root, fixture["session_id"])
+
+            self.assertIsNotNone(interrupted_path)
+            self.assertFalse(interrupted_path.exists())
+            self.assertEqual(view.current_agent, "codex")
+            self.assertEqual(view.phase, "awaiting_resume")
+            self.assertEqual(view.last_resume_handoff_id, before_resume.last_resume_handoff_id)
+            self.assertTrue(any(path.is_dir() for path in pending_tx_dir(repo_root, fixture["session_id"]).iterdir()))
+
+            report = recover_session_transactions(repo_root, fixture["session_id"])
+            view = load_session_view(repo_root, fixture["session_id"])
+
+            self.assertEqual(report.quarantined_transactions, 1)
+            self.assertEqual(view.current_agent, "codex")
+            self.assertEqual(view.phase, "awaiting_resume")
+            self.assertEqual(view.last_resume_handoff_id, before_resume.last_resume_handoff_id)
 
 
 def shlex_quote(value: str) -> str:

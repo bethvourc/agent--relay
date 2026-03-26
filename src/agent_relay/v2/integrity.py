@@ -5,7 +5,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from agent_relay.v2.errors import V2CorruptionError, V2ValidationError
-from agent_relay.v2.layout import journal_dir, pending_tx_dir, session_manifest_path, session_root
+from agent_relay.v2.layout import (
+    journal_dir,
+    legacy_import_ack_path,
+    pending_tx_dir,
+    session_manifest_path,
+    session_root,
+)
 from agent_relay.v2.models import JournalEvent, SessionManifest, build_session_manifest_hash
 from agent_relay.v2.replay import ReplayResult, replay_session
 from agent_relay.v2.storage import _load_object_from_ref, load_session_manifest
@@ -262,14 +268,7 @@ def inspect_session_integrity(repo_root: Path, session_id: str) -> IntegrityScan
             break
 
     if failure_message is None and not pending_paths and last_good is not None:
-        report = _report_from_replay(
-            last_good,
-            health="healthy",
-            error=None,
-            broken_paths=tuple(),
-            suggested_repair=tuple(),
-            alerts=tuple(),
-        )
+        report = _healthy_report_from_replay(repo_root, manifest, last_good)
         return IntegrityScan(
             report=report,
             event_paths=event_paths,
@@ -385,6 +384,43 @@ def _report_from_replay(
         broken_paths=broken_paths,
         suggested_repair=suggested_repair,
         alerts=alerts,
+    )
+
+
+def _healthy_report_from_replay(
+    repo_root: Path,
+    manifest: SessionManifest,
+    replay_result: ReplayResult,
+) -> SessionIntegrityReport:
+    legacy_import = manifest.legacy_import
+    if legacy_import is None or legacy_import.import_health != "degraded":
+        return _report_from_replay(
+            replay_result,
+            health="healthy",
+            error=None,
+            broken_paths=tuple(),
+            suggested_repair=tuple(),
+            alerts=tuple(),
+        )
+
+    ack_path = legacy_import_ack_path(repo_root, manifest.session_id)
+    if ack_path.exists():
+        return _report_from_replay(
+            replay_result,
+            health="healthy",
+            error=None,
+            broken_paths=tuple(legacy_import.broken_paths),
+            suggested_repair=tuple(),
+            alerts=legacy_import.alerts,
+        )
+
+    return _report_from_replay(
+        replay_result,
+        health="degraded",
+        error="legacy v1 import preserved raw data but requires explicit acknowledgement before mutation",
+        broken_paths=tuple(legacy_import.broken_paths),
+        suggested_repair=(f"agent-relay repair {manifest.session_id} --accept-legacy-import",),
+        alerts=legacy_import.alerts,
     )
 
 

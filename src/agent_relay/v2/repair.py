@@ -9,6 +9,7 @@ from agent_relay.v2.integrity import IntegrityScan, SessionIntegrityReport, insp
 from agent_relay.v2.layout import (
     derived_view_path,
     head_ref_path,
+    legacy_import_ack_path,
     repair_reports_dir,
     quarantine_dir,
     session_root,
@@ -17,7 +18,7 @@ from agent_relay.v2.locks import acquire_session_lock, utc_now
 from agent_relay.v2.storage import load_session_view
 from agent_relay.v2.tx import JournalCommitRequest, SessionTransaction, recover_session_transactions
 
-REPAIR_ACTIONS = {"rebuild_view", "rollback_pending", "promote_last_good"}
+REPAIR_ACTIONS = {"rebuild_view", "rollback_pending", "promote_last_good", "accept_legacy_import"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +83,23 @@ def repair_session(
             recovery = recover_session_transactions(repo_root, session_id)
             cleaned_pending_transactions = (
                 recovery.cleaned_committed_transactions + recovery.quarantined_transactions
+            )
+        elif action == "accept_legacy_import":
+            legacy_import = load_session_view(repo_root, session_id)  # force canonical replay before acknowledgement
+            if before_scan.report.health != "degraded":
+                raise SystemExit("repair --accept-legacy-import requires a degraded imported legacy session")
+            ack_path = legacy_import_ack_path(repo_root, session_id)
+            if ack_path.exists():
+                raise SystemExit("repair --accept-legacy-import has already been recorded for this session")
+            write_json_atomic(
+                ack_path,
+                {
+                    "schema_version": 2,
+                    "kind": "legacy_import_ack",
+                    "session_id": session_id,
+                    "requested_by": owner,
+                    "recorded_at": utc_now(),
+                },
             )
         else:
             promoted = _promote_last_good(repo_root, session_id, before_scan)

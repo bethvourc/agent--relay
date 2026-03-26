@@ -36,8 +36,12 @@ class AgentRelayIntegrationFlowTests(TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir).resolve()
             subprocess.run(["git", "init"], cwd=repo_root, text=True, capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.email", "tests@example.com"], cwd=repo_root, text=True, capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "Agent Relay Tests"], cwd=repo_root, text=True, capture_output=True, check=True)
             (repo_root / "src").mkdir()
             (repo_root / "src" / "demo.py").write_text("print('agent relay demo')\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=repo_root, text=True, capture_output=True, check=True)
+            subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, text=True, capture_output=True, check=True)
 
             safe_launch_env = {
                 "AGENT_RELAY_CODEX_LAUNCH_TEMPLATE": (
@@ -114,8 +118,9 @@ class AgentRelayIntegrationFlowTests(TestCase):
             )
             self.assertEqual(first_launch.returncode, 0)
             self.assertTrue((repo_root / "codex-launch.txt").exists())
-            self.assertTrue((session_root / "resume" / "codex.md").exists())
-            self.assertIn("# Codex Resume Packet", (session_root / "resume" / "codex.md").read_text())
+            self.assertTrue(Path(first_failover["resume_path"]).exists())
+            self.assertIn("# Codex Resume Packet", Path(first_failover["resume_path"]).read_text())
+            self.run_cli_json("resume", session_id, "--repo", tmpdir, extra_env=safe_launch_env)
 
             self.run_cli_json(
                 "checkpoint",
@@ -167,8 +172,9 @@ class AgentRelayIntegrationFlowTests(TestCase):
             )
             self.assertEqual(second_launch.returncode, 0)
             self.assertTrue((repo_root / "claude-launch.txt").exists())
-            self.assertTrue((session_root / "resume" / "claude.md").exists())
-            self.assertIn("# Claude Code Resume Packet", (session_root / "resume" / "claude.md").read_text())
+            self.assertTrue(Path(second_failover["resume_path"]).exists())
+            self.assertIn("# Claude Code Resume Packet", Path(second_failover["resume_path"]).read_text())
+            self.run_cli_json("resume", session_id, "--repo", tmpdir, extra_env=safe_launch_env)
 
             final_checkpoint = self.run_cli_json(
                 "checkpoint",
@@ -186,17 +192,25 @@ class AgentRelayIntegrationFlowTests(TestCase):
                 extra_env=safe_launch_env,
             )
             state = self.run_cli_json("inspect", session_id, "--repo", tmpdir, extra_env=safe_launch_env)
-            summary = (session_root / "summary.md").read_text()
+            summary = (
+                session_root
+                / "objects"
+                / "checkpoints"
+                / final_checkpoint["checkpoint_id"]
+                / "summary.md"
+            ).read_text()
 
-            self.assertEqual(first_failover["from_agent"], "claude")
             self.assertEqual(first_failover["to_agent"], "codex")
-            self.assertEqual(second_failover["from_agent"], "codex")
             self.assertEqual(second_failover["to_agent"], "claude")
             self.assertEqual(state["current_agent"], "claude")
             self.assertEqual(state["current_status"], "active")
             self.assertEqual(state["validation"]["status"], "passed")
             self.assertEqual(state["latest_checkpoint_id"], final_checkpoint["checkpoint_id"])
             self.assertEqual(len(state["handoffs"]), 2)
+            self.assertEqual(state["handoffs"][0]["from_agent"], "claude")
+            self.assertEqual(state["handoffs"][0]["to_agent"], "codex")
+            self.assertEqual(state["handoffs"][1]["from_agent"], "codex")
+            self.assertEqual(state["handoffs"][1]["to_agent"], "claude")
             self.assertEqual(state["handoffs"][0]["launch_status"], "succeeded")
             self.assertEqual(state["handoffs"][1]["launch_status"], "succeeded")
             self.assertNotEqual(state["handoffs"][0]["checkpoint_id"], state["handoffs"][1]["checkpoint_id"])

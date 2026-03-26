@@ -33,6 +33,7 @@ JOURNAL_EVENT_TYPES = {
 OBJECT_KINDS = {"checkpoint", "handoff", "launch"}
 LAUNCH_RESULT_STATUSES = {"succeeded", "failed", "interrupted"}
 WORKSPACE_CAPTURE_MODES = {"git", "snapshot"}
+LEGACY_IMPORT_HEALTH = {"healthy", "degraded"}
 
 
 def _expect_mapping(value: Any, field_name: str) -> Mapping[str, Any]:
@@ -193,6 +194,52 @@ class ObjectRef:
 
 
 @dataclass(frozen=True, slots=True)
+class LegacyImportMetadata:
+    source_schema_version: int
+    imported_at: str
+    raw_archive_dir: str
+    import_health: str
+    alerts: tuple[str, ...]
+    broken_paths: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if self.source_schema_version != 1:
+            raise V2ValidationError("legacy_import.source_schema_version must be 1")
+        _require_str(self.imported_at, "legacy_import.imported_at")
+        _require_relative_path(self.raw_archive_dir, "legacy_import.raw_archive_dir")
+        _require_choice(self.import_health, "legacy_import.import_health", LEGACY_IMPORT_HEALTH)
+        for index, item in enumerate(self.alerts):
+            _require_str(item, f"legacy_import.alerts[{index}]")
+        for index, item in enumerate(self.broken_paths):
+            _require_str(item, f"legacy_import.broken_paths[{index}]")
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> LegacyImportMetadata:
+        mapping = _expect_mapping(data, "legacy_import")
+        return cls(
+            source_schema_version=_require_int(
+                mapping["source_schema_version"],
+                "legacy_import.source_schema_version",
+            ),
+            imported_at=mapping["imported_at"],
+            raw_archive_dir=mapping["raw_archive_dir"],
+            import_health=mapping["import_health"],
+            alerts=_require_string_tuple(mapping.get("alerts", []), "legacy_import.alerts"),
+            broken_paths=_require_string_tuple(mapping.get("broken_paths", []), "legacy_import.broken_paths"),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source_schema_version": self.source_schema_version,
+            "imported_at": self.imported_at,
+            "raw_archive_dir": self.raw_archive_dir,
+            "import_health": self.import_health,
+            "alerts": list(self.alerts),
+            "broken_paths": list(self.broken_paths),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class SessionManifest:
     schema_version: int
     kind: str
@@ -203,6 +250,7 @@ class SessionManifest:
     initial_agent: str
     created_at: str
     storage_model: str = "journal_v2"
+    legacy_import: LegacyImportMetadata | None = None
 
     def __post_init__(self) -> None:
         if self.schema_version != SCHEMA_VERSION:
@@ -217,6 +265,8 @@ class SessionManifest:
         _require_str(self.created_at, "session_manifest.created_at")
         if self.storage_model != "journal_v2":
             raise V2ValidationError("session_manifest.storage_model must be journal_v2")
+        if self.legacy_import is not None and not isinstance(self.legacy_import, LegacyImportMetadata):
+            raise V2ValidationError("session_manifest.legacy_import must be a LegacyImportMetadata when provided")
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> SessionManifest:
@@ -231,6 +281,11 @@ class SessionManifest:
             initial_agent=mapping["initial_agent"],
             created_at=mapping["created_at"],
             storage_model=mapping.get("storage_model", "journal_v2"),
+            legacy_import=(
+                LegacyImportMetadata.from_dict(mapping["legacy_import"])
+                if mapping.get("legacy_import") is not None
+                else None
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -244,6 +299,7 @@ class SessionManifest:
             "initial_agent": self.initial_agent,
             "created_at": self.created_at,
             "storage_model": self.storage_model,
+            "legacy_import": self.legacy_import.to_dict() if self.legacy_import is not None else None,
         }
 
 
