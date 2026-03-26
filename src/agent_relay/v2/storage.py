@@ -60,20 +60,6 @@ def load_session_view(repo_root: Path, session_id: str) -> DerivedSessionView:
     manifest = load_session_manifest(repo_root, session_id)
     events = load_journal_events(repo_root, session_id)
     session_path = session_root(repo_root, session_id)
-    current_head = HeadRef(
-        schema_version=manifest.schema_version,
-        kind="session_head_ref",
-        session_id=session_id,
-        last_event_id=events[-1].event_id,
-        last_sequence=events[-1].sequence,
-        last_event_hash=events[-1].event_hash,
-        updated_at=events[-1].timestamp,
-    )
-
-    cached_view = _load_cached_view(repo_root, session_id)
-    cached_head = _load_cached_head(repo_root, session_id)
-    if cached_view and cached_head and _cache_matches_head(cached_view, cached_head, current_head):
-        return cached_view
 
     manifest_hash = build_session_manifest_hash(manifest)
     replay_result = replay_session(
@@ -199,33 +185,3 @@ def _load_object_from_ref(session_root_path: Path, ref: ObjectRef):
             )
     return manifest
 
-
-def _load_cached_view(repo_root: Path, session_id: str) -> DerivedSessionView | None:
-    path = derived_view_path(repo_root, session_id)
-    if not path.exists():
-        return None
-    try:
-        return DerivedSessionView.from_dict(json.loads(path.read_text(encoding="utf-8")))
-    except (json.JSONDecodeError, V2ValidationError):
-        return None
-
-
-def _load_cached_head(repo_root: Path, session_id: str) -> HeadRef | None:
-    path = head_ref_path(repo_root, session_id)
-    if not path.exists():
-        return None
-    try:
-        return HeadRef.from_dict(json.loads(path.read_text(encoding="utf-8")))
-    except (json.JSONDecodeError, V2ValidationError):
-        return None
-
-
-def _cache_matches_head(cached_view: DerivedSessionView, cached_head: HeadRef, current_head: HeadRef) -> bool:
-    return (
-        cached_view.session_id == current_head.session_id
-        and cached_head.session_id == current_head.session_id
-        and cached_head.last_sequence == current_head.last_sequence
-        and cached_head.last_event_hash == current_head.last_event_hash
-        and cached_view.built_from_sequence == current_head.last_sequence
-        and cached_view.built_from_event_hash == current_head.last_event_hash
-    )

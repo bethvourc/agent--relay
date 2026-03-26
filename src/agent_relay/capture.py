@@ -21,6 +21,7 @@ _TRUTHY_ENV_VALUES = {"1", "true", "yes", "on"}
 @dataclass
 class CaptureOptions:
     status: str | None = None
+    snapshot_mode: str | None = None
     next_action: str | None = None
     decisions: list[str] = field(default_factory=list)
     blockers: list[str] = field(default_factory=list)
@@ -85,7 +86,7 @@ def apply_capture_options(
         if captured_touched_files:
             artifacts["touched_files_source"] = "git status --short --untracked-files=all"
 
-    research_note, research_path = _load_capture_text(
+    research_note, research_path = load_capture_text(
         repo_root,
         explicit_path=options.research_note_file,
         env_var=AUTOSAVE_RESEARCH_NOTE_FILE_ENV,
@@ -95,7 +96,7 @@ def apply_capture_options(
     if research_path is not None:
         artifacts["research_note_source"] = str(research_path)
 
-    implementation_note, implementation_path = _load_capture_text(
+    implementation_note, implementation_path = load_capture_text(
         repo_root,
         explicit_path=options.implementation_note_file,
         env_var=AUTOSAVE_IMPLEMENTATION_NOTE_FILE_ENV,
@@ -106,7 +107,7 @@ def apply_capture_options(
         artifacts["implementation_note_source"] = str(implementation_path)
 
     if options.validation_summary is None:
-        validation_summary, validation_path = _load_capture_text(
+        validation_summary, validation_path = load_capture_text(
             repo_root,
             explicit_path=options.validation_summary_file,
             env_var=AUTOSAVE_VALIDATION_SUMMARY_FILE_ENV,
@@ -152,7 +153,7 @@ def _autosave_enabled(env_var: str) -> bool:
     return value.strip().lower() in _TRUTHY_ENV_VALUES
 
 
-def _load_capture_text(
+def load_capture_text(
     repo_root: Path,
     *,
     explicit_path: str | None,

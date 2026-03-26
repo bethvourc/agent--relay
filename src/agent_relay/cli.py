@@ -46,6 +46,8 @@ from agent_relay.ui import (
     render_prepare_success,
     render_start_success,
 )
+from agent_relay.v2.checkpoints import create_checkpoint_for_command
+from agent_relay.v2.storage import is_v2_session
 
 
 def write_latest_summary(repo_root: Path, session: SessionState) -> None:
@@ -68,6 +70,7 @@ def build_capture_options(
         next_action = next_action.strip()
     return CaptureOptions(
         status=status,
+        snapshot_mode=getattr(args, "snapshot_mode", None),
         next_action=next_action,
         decisions=list(getattr(args, "decision", None) or []),
         blockers=list(getattr(args, "blocker", None) or []),
@@ -91,6 +94,39 @@ def run_capture_command(
     require_next_action: bool = False,
 ) -> int:
     repo_root = default_repo_root(args.repo)
+
+    if is_v2_session(repo_root, args.session):
+        options = build_capture_options(args, default_status=None)
+        result = create_checkpoint_for_command(
+            repo_root,
+            args.session,
+            command_name=command_name,
+            options=options,
+            owner=f"cli:{command_name}",
+        )
+
+        if args.json:
+            emit_json({
+                "command": command_name,
+                "session_id": args.session,
+                "checkpoint_id": result.checkpoint_id,
+                "status": result.phase,
+                "next_action": result.next_action,
+                "validation_status": result.validation_status,
+                "capture_mode": result.capture_mode,
+            })
+        elif args.quiet:
+            emit_quiet(result.checkpoint_id)
+        elif command_name == "pause":
+            render_pause_success(args.console, args.session, result.checkpoint_id, result.next_action)
+        elif command_name == "prepare":
+            render_prepare_success(args.console, args.session, result.checkpoint_id, result.next_action)
+        else:
+            render_checkpoint_success(args.console, args.session, result.checkpoint_id)
+        return 0
+
+    options = build_capture_options(args, default_status=default_status)
+
     session = load_session(repo_root, args.session)
     requested_next_action = (getattr(args, "next_action", None) or "").strip()
     existing_next_action = session.next_action.strip()
@@ -100,7 +136,7 @@ def run_capture_command(
     checkpoint = capture_session(
         repo_root,
         session,
-        options=build_capture_options(args, default_status=default_status),
+        options=options,
     )
 
     if args.json:
@@ -425,6 +461,11 @@ def build_parser() -> argparse.ArgumentParser:
 def add_capture_arguments(parser: argparse.ArgumentParser, *, allow_status: bool) -> None:
     if allow_status:
         parser.add_argument("--status", choices=sorted(SESSION_STATUSES))
+    parser.add_argument(
+        "--snapshot-mode",
+        choices=["full"],
+        help="For v2 sessions, require explicit full workspace snapshot capture instead of Git-backed capture",
+    )
     parser.add_argument("--next-action", "-n")
     parser.add_argument("--decision", "-d", action="append")
     parser.add_argument("--blocker", "-b", action="append")

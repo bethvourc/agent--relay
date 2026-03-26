@@ -32,6 +32,7 @@ JOURNAL_EVENT_TYPES = {
 }
 OBJECT_KINDS = {"checkpoint", "handoff", "launch"}
 LAUNCH_RESULT_STATUSES = {"succeeded", "failed", "interrupted"}
+WORKSPACE_CAPTURE_MODES = {"git", "snapshot"}
 
 
 def _expect_mapping(value: Any, field_name: str) -> Mapping[str, Any]:
@@ -368,6 +369,7 @@ class CheckpointManifest:
     current_agent: str
     phase_hint: str
     task_status: str
+    capture_mode: str
     next_action: str
     decisions: tuple[str, ...]
     blockers: tuple[str, ...]
@@ -375,7 +377,13 @@ class CheckpointManifest:
     implementation_notes: tuple[str, ...]
     touched_files: tuple[str, ...]
     validation: ValidationState
+    repo_state_file: str
+    validation_file: str
     summary_file: str | None
+    git_head_file: str | None
+    workspace_patch_file: str | None
+    untracked_manifest_file: str | None
+    snapshot_manifest_file: str | None
     files: tuple[ManifestFile, ...]
 
     def __post_init__(self) -> None:
@@ -389,10 +397,43 @@ class CheckpointManifest:
         _require_choice(self.current_agent, "checkpoint_manifest.current_agent", set(AGENT_NAMES))
         _require_choice(self.phase_hint, "checkpoint_manifest.phase_hint", SESSION_PHASES)
         _require_choice(self.task_status, "checkpoint_manifest.task_status", TASK_STATUSES)
+        _require_choice(self.capture_mode, "checkpoint_manifest.capture_mode", WORKSPACE_CAPTURE_MODES)
         if not isinstance(self.next_action, str):
             raise V2ValidationError("checkpoint_manifest.next_action must be a string")
         _validate_manifest_files(self.files, "checkpoint_manifest.files")
+        _require_file_reference(self.repo_state_file, self.files, "checkpoint_manifest.repo_state_file")
+        _require_file_reference(self.validation_file, self.files, "checkpoint_manifest.validation_file")
         _require_file_reference(self.summary_file, self.files, "checkpoint_manifest.summary_file")
+        _require_file_reference(self.git_head_file, self.files, "checkpoint_manifest.git_head_file")
+        _require_file_reference(
+            self.workspace_patch_file,
+            self.files,
+            "checkpoint_manifest.workspace_patch_file",
+        )
+        _require_file_reference(
+            self.untracked_manifest_file,
+            self.files,
+            "checkpoint_manifest.untracked_manifest_file",
+        )
+        _require_file_reference(
+            self.snapshot_manifest_file,
+            self.files,
+            "checkpoint_manifest.snapshot_manifest_file",
+        )
+        if self.capture_mode == "git":
+            if self.git_head_file is None or self.workspace_patch_file is None or self.untracked_manifest_file is None:
+                raise V2ValidationError(
+                    "checkpoint_manifest git capture requires git_head_file, workspace_patch_file, and untracked_manifest_file",
+                )
+            if self.snapshot_manifest_file is not None:
+                raise V2ValidationError("checkpoint_manifest git capture must not set snapshot_manifest_file")
+        if self.capture_mode == "snapshot":
+            if self.snapshot_manifest_file is None:
+                raise V2ValidationError("checkpoint_manifest snapshot capture requires snapshot_manifest_file")
+            if self.git_head_file is not None or self.workspace_patch_file is not None:
+                raise V2ValidationError(
+                    "checkpoint_manifest snapshot capture must not set git_head_file or workspace_patch_file",
+                )
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> CheckpointManifest:
@@ -406,6 +447,7 @@ class CheckpointManifest:
             current_agent=mapping["current_agent"],
             phase_hint=mapping["phase_hint"],
             task_status=mapping["task_status"],
+            capture_mode=mapping["capture_mode"],
             next_action=mapping["next_action"],
             decisions=_require_string_tuple(mapping["decisions"], "checkpoint_manifest.decisions"),
             blockers=_require_string_tuple(mapping["blockers"], "checkpoint_manifest.blockers"),
@@ -419,7 +461,13 @@ class CheckpointManifest:
             ),
             touched_files=_require_string_tuple(mapping["touched_files"], "checkpoint_manifest.touched_files"),
             validation=ValidationState.from_dict(mapping["validation"]),
+            repo_state_file=mapping["repo_state_file"],
+            validation_file=mapping["validation_file"],
             summary_file=mapping.get("summary_file"),
+            git_head_file=mapping.get("git_head_file"),
+            workspace_patch_file=mapping.get("workspace_patch_file"),
+            untracked_manifest_file=mapping.get("untracked_manifest_file"),
+            snapshot_manifest_file=mapping.get("snapshot_manifest_file"),
             files=_load_manifest_files(mapping.get("files", []), "checkpoint_manifest.files"),
         )
 
@@ -433,6 +481,7 @@ class CheckpointManifest:
             "current_agent": self.current_agent,
             "phase_hint": self.phase_hint,
             "task_status": self.task_status,
+            "capture_mode": self.capture_mode,
             "next_action": self.next_action,
             "decisions": list(self.decisions),
             "blockers": list(self.blockers),
@@ -440,7 +489,13 @@ class CheckpointManifest:
             "implementation_notes": list(self.implementation_notes),
             "touched_files": list(self.touched_files),
             "validation": self.validation.to_dict(),
+            "repo_state_file": self.repo_state_file,
+            "validation_file": self.validation_file,
             "summary_file": self.summary_file,
+            "git_head_file": self.git_head_file,
+            "workspace_patch_file": self.workspace_patch_file,
+            "untracked_manifest_file": self.untracked_manifest_file,
+            "snapshot_manifest_file": self.snapshot_manifest_file,
             "files": [item.to_dict() for item in self.files],
         }
 

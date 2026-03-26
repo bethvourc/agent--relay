@@ -52,10 +52,20 @@ def build_sample_v2_session(repo_root: Path, *, session_id: str = "20260325-1800
     checkpoint_one_id = "cp-20260325T180500Z-111111"
     checkpoint_one_dir = relay_root / "sessions" / session_id / "objects" / "checkpoints" / checkpoint_one_id
     checkpoint_one_summary = checkpoint_one_dir / "summary.md"
+    checkpoint_one_repo_state = checkpoint_one_dir / "repo-state.json"
+    checkpoint_one_validation = checkpoint_one_dir / "validation.json"
+    checkpoint_one_git_head = checkpoint_one_dir / "git-head.txt"
+    checkpoint_one_patch = checkpoint_one_dir / "workspace.patch"
+    checkpoint_one_untracked = checkpoint_one_dir / "untracked-manifest.json"
     checkpoint_one_artifact = checkpoint_one_dir / "artifacts" / "repo-state.json"
     checkpoint_one_summary.parent.mkdir(parents=True, exist_ok=True)
     checkpoint_one_artifact.parent.mkdir(parents=True, exist_ok=True)
     checkpoint_one_summary.write_text("# Checkpoint One\n", encoding="utf-8")
+    checkpoint_one_repo_state.write_text("{\"capture_mode\":\"git\"}\n", encoding="utf-8")
+    checkpoint_one_validation.write_text("{\"status\":\"partial\"}\n", encoding="utf-8")
+    checkpoint_one_git_head.write_text("abc123\nbranch=main\n", encoding="utf-8")
+    checkpoint_one_patch.write_text("", encoding="utf-8")
+    checkpoint_one_untracked.write_text("{\"files\":[]}\n", encoding="utf-8")
     checkpoint_one_artifact.write_text("{\"branch\":\"main\"}\n", encoding="utf-8")
     checkpoint_one = CheckpointManifest(
         schema_version=SCHEMA_VERSION,
@@ -66,6 +76,7 @@ def build_sample_v2_session(repo_root: Path, *, session_id: str = "20260325-1800
         current_agent="claude",
         phase_hint="active",
         task_status="working",
+        capture_mode="git",
         next_action="Prepare the first Codex handoff",
         decisions=("Keep journal state canonical",),
         blockers=(),
@@ -73,9 +84,20 @@ def build_sample_v2_session(repo_root: Path, *, session_id: str = "20260325-1800
         implementation_notes=("Started the replay engine",),
         touched_files=("src/agent_relay/v2/models.py",),
         validation=ValidationState(status="partial", summary="Replay path still needs verification"),
+        repo_state_file="repo-state.json",
+        validation_file="validation.json",
         summary_file="summary.md",
+        git_head_file="git-head.txt",
+        workspace_patch_file="workspace.patch",
+        untracked_manifest_file="untracked-manifest.json",
+        snapshot_manifest_file=None,
         files=(
+            _file_entry(checkpoint_one_repo_state),
+            _file_entry(checkpoint_one_validation),
             _file_entry(checkpoint_one_summary),
+            _file_entry(checkpoint_one_git_head),
+            _file_entry(checkpoint_one_patch),
+            _file_entry(checkpoint_one_untracked),
             _file_entry(checkpoint_one_artifact),
         ),
     )
@@ -143,8 +165,18 @@ def build_sample_v2_session(repo_root: Path, *, session_id: str = "20260325-1800
     checkpoint_two_id = "cp-20260325T180900Z-444444"
     checkpoint_two_dir = relay_root / "sessions" / session_id / "objects" / "checkpoints" / checkpoint_two_id
     checkpoint_two_summary = checkpoint_two_dir / "summary.md"
+    checkpoint_two_repo_state = checkpoint_two_dir / "repo-state.json"
+    checkpoint_two_validation = checkpoint_two_dir / "validation.json"
+    checkpoint_two_git_head = checkpoint_two_dir / "git-head.txt"
+    checkpoint_two_patch = checkpoint_two_dir / "workspace.patch"
+    checkpoint_two_untracked = checkpoint_two_dir / "untracked-manifest.json"
     checkpoint_two_summary.parent.mkdir(parents=True, exist_ok=True)
     checkpoint_two_summary.write_text("# Checkpoint Two\n", encoding="utf-8")
+    checkpoint_two_repo_state.write_text("{\"capture_mode\":\"git\"}\n", encoding="utf-8")
+    checkpoint_two_validation.write_text("{\"status\":\"passed\"}\n", encoding="utf-8")
+    checkpoint_two_git_head.write_text("def456\nbranch=main\n", encoding="utf-8")
+    checkpoint_two_patch.write_text("", encoding="utf-8")
+    checkpoint_two_untracked.write_text("{\"files\":[]}\n", encoding="utf-8")
     checkpoint_two = CheckpointManifest(
         schema_version=SCHEMA_VERSION,
         kind="checkpoint_manifest",
@@ -154,6 +186,7 @@ def build_sample_v2_session(repo_root: Path, *, session_id: str = "20260325-1800
         current_agent="codex",
         phase_hint="active",
         task_status="working",
+        capture_mode="git",
         next_action="Validate the rebuilt inspect path",
         decisions=("Ownership transfers only on resume",),
         blockers=(),
@@ -161,8 +194,21 @@ def build_sample_v2_session(repo_root: Path, *, session_id: str = "20260325-1800
         implementation_notes=("Codex resumed from the immutable packet",),
         touched_files=("src/agent_relay/v2/replay.py",),
         validation=ValidationState(status="passed", summary="Replay and cache rebuild verified"),
+        repo_state_file="repo-state.json",
+        validation_file="validation.json",
         summary_file="summary.md",
-        files=(_file_entry(checkpoint_two_summary),),
+        git_head_file="git-head.txt",
+        workspace_patch_file="workspace.patch",
+        untracked_manifest_file="untracked-manifest.json",
+        snapshot_manifest_file=None,
+        files=(
+            _file_entry(checkpoint_two_repo_state),
+            _file_entry(checkpoint_two_validation),
+            _file_entry(checkpoint_two_summary),
+            _file_entry(checkpoint_two_git_head),
+            _file_entry(checkpoint_two_patch),
+            _file_entry(checkpoint_two_untracked),
+        ),
     )
     checkpoint_two_manifest_path = checkpoint_two_dir / "manifest.json"
     _write_json(checkpoint_two_manifest_path, checkpoint_two.to_dict())
@@ -334,6 +380,7 @@ def build_checkpoint_object(
         current_agent=current_agent,
         phase_hint=phase_hint,
         task_status=task_status,
+        capture_mode="git",
         next_action=next_action,
         decisions=("Committed through the tx engine",),
         blockers=(),
@@ -341,16 +388,62 @@ def build_checkpoint_object(
         implementation_notes=("Promoted only before journal visibility",),
         touched_files=("src/agent_relay/v2/tx.py",),
         validation=ValidationState(status=validation_status, summary=validation_summary),
+        repo_state_file="repo-state.json",
+        validation_file="validation.json",
         summary_file="summary.md",
+        git_head_file="git-head.txt",
+        workspace_patch_file="workspace.patch",
+        untracked_manifest_file="untracked-manifest.json",
+        snapshot_manifest_file=None,
         files=(
+            ManifestFile(
+                relative_path="repo-state.json",
+                sha256=sha256_text(
+                    json.dumps({"checkpoint_id": object_id, "capture_mode": "git"}, indent=2, sort_keys=True) + "\n"
+                ),
+                size_bytes=len(
+                    (json.dumps({"checkpoint_id": object_id, "capture_mode": "git"}, indent=2, sort_keys=True) + "\n").encode("utf-8")
+                ),
+            ),
+            ManifestFile(
+                relative_path="validation.json",
+                sha256=sha256_text(
+                    json.dumps({"status": validation_status, "summary": validation_summary}, indent=2, sort_keys=True) + "\n"
+                ),
+                size_bytes=len(
+                    (json.dumps({"status": validation_status, "summary": validation_summary}, indent=2, sort_keys=True) + "\n").encode("utf-8")
+                ),
+            ),
             ManifestFile(
                 relative_path="summary.md",
                 sha256=sha256_text(summary_text),
                 size_bytes=len(summary_bytes),
             ),
+            ManifestFile(
+                relative_path="git-head.txt",
+                sha256=sha256_text("abc123\nbranch=main\n"),
+                size_bytes=len("abc123\nbranch=main\n".encode("utf-8")),
+            ),
+            ManifestFile(
+                relative_path="workspace.patch",
+                sha256=sha256_text(""),
+                size_bytes=0,
+            ),
+            ManifestFile(
+                relative_path="untracked-manifest.json",
+                sha256=sha256_text("{\n  \"files\": []\n}\n"),
+                size_bytes=len("{\n  \"files\": []\n}\n".encode("utf-8")),
+            ),
         ),
     )
-    return manifest, {"summary.md": summary_text}
+    return manifest, {
+        "repo-state.json": json.dumps({"checkpoint_id": object_id, "capture_mode": "git"}, indent=2, sort_keys=True) + "\n",
+        "validation.json": json.dumps({"status": validation_status, "summary": validation_summary}, indent=2, sort_keys=True) + "\n",
+        "summary.md": summary_text,
+        "git-head.txt": "abc123\nbranch=main\n",
+        "workspace.patch": "",
+        "untracked-manifest.json": "{\n  \"files\": []\n}\n",
+    }
 
 
 def _build_event(
