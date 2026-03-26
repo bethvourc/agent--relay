@@ -5,6 +5,11 @@ from pathlib import Path
 
 STATE_DIRNAME = ".agent-relay"
 LAYOUT_VERSION = "2"
+OBJECT_DIRNAMES = {
+    "checkpoint": "checkpoints",
+    "handoff": "handoffs",
+    "launch": "launches",
+}
 
 
 def relay_root(repo_root: Path) -> Path:
@@ -13,6 +18,14 @@ def relay_root(repo_root: Path) -> Path:
 
 def version_path(repo_root: Path) -> Path:
     return relay_root(repo_root) / "VERSION"
+
+
+def locks_dir(repo_root: Path) -> Path:
+    return relay_root(repo_root) / "locks"
+
+
+def repo_lock_path(repo_root: Path) -> Path:
+    return locks_dir(repo_root) / "repo.lock"
 
 
 def sessions_root(repo_root: Path) -> Path:
@@ -25,6 +38,14 @@ def session_root(repo_root: Path, session_id: str) -> Path:
 
 def session_manifest_path(repo_root: Path, session_id: str) -> Path:
     return session_root(repo_root, session_id) / "session.json"
+
+
+def session_lock_dir(repo_root: Path, session_id: str) -> Path:
+    return session_root(repo_root, session_id) / "lock"
+
+
+def session_lock_path(repo_root: Path, session_id: str) -> Path:
+    return session_lock_dir(repo_root, session_id) / "session.lock"
 
 
 def journal_dir(repo_root: Path, session_id: str) -> Path:
@@ -45,6 +66,21 @@ def handoffs_dir(repo_root: Path, session_id: str) -> Path:
 
 def launches_dir(repo_root: Path, session_id: str) -> Path:
     return objects_dir(repo_root, session_id) / "launches"
+
+
+def object_dirname(object_kind: str) -> str:
+    try:
+        return OBJECT_DIRNAMES[object_kind]
+    except KeyError as exc:
+        raise ValueError(f"Unknown object kind: {object_kind}") from exc
+
+
+def object_dir(repo_root: Path, session_id: str, object_kind: str, object_id: str) -> Path:
+    return objects_dir(repo_root, session_id) / object_dirname(object_kind) / object_id
+
+
+def object_manifest_path(repo_root: Path, session_id: str, object_kind: str, object_id: str) -> Path:
+    return object_dir(repo_root, session_id, object_kind, object_id) / "manifest.json"
 
 
 def refs_dir(repo_root: Path, session_id: str) -> Path:
@@ -69,6 +105,18 @@ def recovery_dir(repo_root: Path, session_id: str) -> Path:
 
 def pending_tx_dir(repo_root: Path, session_id: str) -> Path:
     return recovery_dir(repo_root, session_id) / "pending-tx"
+
+
+def pending_tx_root(repo_root: Path, session_id: str, tx_id: str) -> Path:
+    return pending_tx_dir(repo_root, session_id) / tx_id
+
+
+def pending_tx_manifest_path(repo_root: Path, session_id: str, tx_id: str) -> Path:
+    return pending_tx_root(repo_root, session_id, tx_id) / "transaction.json"
+
+
+def pending_tx_staging_dir(repo_root: Path, session_id: str, tx_id: str) -> Path:
+    return pending_tx_root(repo_root, session_id, tx_id) / "staging"
 
 
 def quarantine_dir(repo_root: Path, session_id: str) -> Path:

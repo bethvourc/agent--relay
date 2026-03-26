@@ -11,6 +11,14 @@ class V2ValidationError(V2Error):
     """Raised when a v2 record fails schema validation."""
 
 
+class LockTimeoutError(V2Error):
+    """Raised when a repo or session lock cannot be acquired in time."""
+
+
+class TransactionError(V2Error):
+    """Raised when a transaction cannot be committed safely."""
+
+
 class V2CorruptionError(V2Error):
     """Raised when canonical v2 state cannot be trusted."""
 

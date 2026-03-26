@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from agent_relay.v2.hashing import sha256_path
+from agent_relay.v2.hashing import sha256_path, sha256_text
 from agent_relay.v2.models import (
     CheckpointManifest,
     HandoffManifest,
@@ -309,6 +309,48 @@ def build_sample_v2_session(repo_root: Path, *, session_id: str = "20260325-1800
         "handoff_manifest_path": str(handoff_manifest_path),
         "launch_manifest_path": str(launch_manifest_path),
     }
+
+
+def build_checkpoint_object(
+    *,
+    session_id: str,
+    object_id: str,
+    created_at: str,
+    current_agent: str,
+    next_action: str,
+    phase_hint: str = "active",
+    task_status: str = "working",
+    validation_status: str = "passed",
+    validation_summary: str = "Verified in transaction test",
+) -> tuple[CheckpointManifest, dict[str, str]]:
+    summary_text = f"# {object_id}\n\n{next_action}\n"
+    summary_bytes = summary_text.encode("utf-8")
+    manifest = CheckpointManifest(
+        schema_version=SCHEMA_VERSION,
+        kind="checkpoint_manifest",
+        object_id=object_id,
+        session_id=session_id,
+        created_at=created_at,
+        current_agent=current_agent,
+        phase_hint=phase_hint,
+        task_status=task_status,
+        next_action=next_action,
+        decisions=("Committed through the tx engine",),
+        blockers=(),
+        research_notes=("Prepared in a staged object dir",),
+        implementation_notes=("Promoted only before journal visibility",),
+        touched_files=("src/agent_relay/v2/tx.py",),
+        validation=ValidationState(status=validation_status, summary=validation_summary),
+        summary_file="summary.md",
+        files=(
+            ManifestFile(
+                relative_path="summary.md",
+                sha256=sha256_text(summary_text),
+                size_bytes=len(summary_bytes),
+            ),
+        ),
+    )
+    return manifest, {"summary.md": summary_text}
 
 
 def _build_event(
