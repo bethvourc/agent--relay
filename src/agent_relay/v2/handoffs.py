@@ -8,11 +8,19 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from agent_relay.agents import LaunchSpec, get_agent_adapter, get_agent_display_name
+from agent_relay.agents import get_agent_adapter, get_agent_display_name
 from agent_relay.resume import EVIDENCE_DEPTHS, ResumeRenderOptions
 from agent_relay.v2.errors import V2CorruptionError
-from agent_relay.v2.hashing import sha256_bytes, sha256_path, sha256_text
+from agent_relay.v2.hashing import sha256_path, sha256_text
 from agent_relay.v2.layout import object_dir
+from agent_relay.v2.lifecycle import (
+    LifecycleState,
+    LifecycleViolation,
+    plan_failover_command,
+    plan_launch_finished,
+    plan_launch_started,
+    plan_resume_command,
+)
 from agent_relay.v2.locks import acquire_session_lock
 from agent_relay.v2.models import (
     CheckpointManifest,
@@ -24,7 +32,6 @@ from agent_relay.v2.models import (
     SCHEMA_VERSION,
 )
 from agent_relay.v2.storage import (
-    load_journal_events,
     load_latest_journal_event,
     load_referenced_object,
     load_session_view,
@@ -109,8 +116,10 @@ def create_handoff_for_command(
     _validate_evidence_depth(evidence_depth)
     recover_interrupted_launches(repo_root, session_id, owner=f"{owner}:recover")
     view = load_session_view(repo_root, session_id)
-    if view.phase != "ready_for_handoff":
-        raise SystemExit(f"failover is not allowed while session phase is {view.phase}")
+    try:
+        transition = plan_failover_command(LifecycleState(phase=view.phase, task_status=view.task_status))
+    except LifecycleViolation as exc:
+        raise SystemExit(str(exc)) from exc
     if not view.latest_checkpoint_id:
         raise SystemExit("Session has no checkpoint to hand off")
 
@@ -188,8 +197,8 @@ def create_handoff_for_command(
         tx.commit(
             JournalCommitRequest(
                 event_type="handoff.prepared",
-                phase_before=view.phase,
-                phase_after="ready_for_handoff",
+                phase_before=transition.phase_before,
+                phase_after=transition.phase_after,
                 payload={"handoff_id": handoff_id, "to_agent": to_agent},
                 timestamp=prepared_at,
             )
@@ -213,8 +222,10 @@ def preview_launch_for_command(
 ) -> LaunchPreviewResult:
     recover_interrupted_launches(repo_root, session_id, owner=f"{owner}:recover")
     loaded = _load_prepared_handoff(repo_root, session_id, handoff_id=handoff_id, command_name="launch")
-    if loaded.view.phase != "ready_for_handoff":
-        raise SystemExit(f"launch is not allowed while session phase is {loaded.view.phase}")
+    try:
+        plan_launch_started(LifecycleState(phase=loaded.view.phase, task_status=loaded.view.task_status))
+    except LifecycleViolation as exc:
+        raise SystemExit(str(exc)) from exc
     return LaunchPreviewResult(
         handoff_id=loaded.manifest.object_id,
         to_agent=loaded.manifest.to_agent,
@@ -237,8 +248,12 @@ def execute_launch_for_command(
         if recovered:
             recover_session_transactions(repo_root, session_id)
         loaded = _load_prepared_handoff(repo_root, session_id, handoff_id=handoff_id, command_name="launch")
-        if loaded.view.phase != "ready_for_handoff":
-            raise SystemExit(f"launch is not allowed while session phase is {loaded.view.phase}")
+        try:
+            started_transition = plan_launch_started(
+                LifecycleState(phase=loaded.view.phase, task_status=loaded.view.task_status)
+            )
+        except LifecycleViolation as exc:
+            raise SystemExit(str(exc)) from exc
 
         launch_id = launch_id_now()
         started_at = utc_now()
@@ -252,8 +267,8 @@ def execute_launch_for_command(
             tx.commit(
                 JournalCommitRequest(
                     event_type="launch.started",
-                    phase_before=loaded.view.phase,
-                    phase_after="launching",
+                    phase_before=started_transition.phase_before,
+                    phase_after=started_transition.phase_after,
                     payload={"handoff_id": loaded.manifest.object_id, "launch_id": launch_id},
                     timestamp=started_at,
                 )
@@ -291,6 +306,10 @@ def execute_launch_for_command(
             stdout_text=stdout_text,
             stderr_text=stderr_text,
         )
+        finished_transition = plan_launch_finished(
+            LifecycleState(phase="launching", task_status=loaded.view.task_status),
+            launch_status=status,
+        )
 
         with SessionTransaction.begin_with_lock(
             repo_root,
@@ -303,8 +322,8 @@ def execute_launch_for_command(
             tx.commit(
                 JournalCommitRequest(
                     event_type="launch.finished",
-                    phase_before="launching",
-                    phase_after="awaiting_resume" if status == "succeeded" else "ready_for_handoff",
+                    phase_before=finished_transition.phase_before,
+                    phase_after=finished_transition.phase_after,
                     payload={"handoff_id": loaded.manifest.object_id, "launch_id": launch_id},
                     timestamp=finished_at,
                 )
@@ -331,8 +350,10 @@ def resume_handoff_for_command(
 ) -> ResumeCommandResult:
     recover_interrupted_launches(repo_root, session_id, owner=f"{owner}:recover")
     loaded = _load_prepared_handoff(repo_root, session_id, handoff_id=handoff_id, command_name="resume")
-    if loaded.view.phase not in {"ready_for_handoff", "awaiting_resume"}:
-        raise SystemExit(f"resume is not allowed while session phase is {loaded.view.phase}")
+    try:
+        transition = plan_resume_command(LifecycleState(phase=loaded.view.phase, task_status=loaded.view.task_status))
+    except LifecycleViolation as exc:
+        raise SystemExit(str(exc)) from exc
     resumed_at = utc_now()
     with SessionTransaction.begin(
         repo_root,
@@ -343,8 +364,8 @@ def resume_handoff_for_command(
         tx.commit(
             JournalCommitRequest(
                 event_type="resume.accepted",
-                phase_before=loaded.view.phase,
-                phase_after="active",
+                phase_before=transition.phase_before,
+                phase_after=transition.phase_after,
                 payload={
                     "handoff_id": loaded.manifest.object_id,
                     "accepted_by_agent": loaded.manifest.to_agent,
@@ -355,7 +376,7 @@ def resume_handoff_for_command(
     return ResumeCommandResult(
         handoff_id=loaded.manifest.object_id,
         current_agent=loaded.manifest.to_agent,
-        phase="active",
+        phase=transition.phase_after,
     )
 
 
@@ -400,11 +421,15 @@ def _recover_interrupted_launch_locked(repo_root: Path, session_id: str, *, owne
         if current_latest.event_id != latest_event.event_id or current_latest.type != "launch.started":
             return None
         tx.stage_manifest_object(launch_manifest, file_contents=file_contents)
+        finished_transition = plan_launch_finished(
+            LifecycleState(phase="launching", task_status=load_session_view(repo_root, session_id).task_status),
+            launch_status="interrupted",
+        )
         tx.commit(
             JournalCommitRequest(
                 event_type="launch.finished",
-                phase_before="launching",
-                phase_after="ready_for_handoff",
+                phase_before=finished_transition.phase_before,
+                phase_after=finished_transition.phase_after,
                 payload={"handoff_id": handoff_id, "launch_id": launch_id},
                 timestamp=finished_at,
             )

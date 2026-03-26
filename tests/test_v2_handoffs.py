@@ -277,6 +277,45 @@ class V2HandoffTests(TestCase):
             self.assertEqual(view.phase, "active")
             self.assertEqual(view.last_resume_handoff_id, second.handoff_id)
 
+    def test_launch_is_rejected_while_awaiting_resume(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir).resolve()
+            fixture = self.prepare_session(repo_root)
+            env = {
+                "AGENT_RELAY_CLAUDE_LAUNCH_TEMPLATE": (
+                    f"{shlex_quote(sys.executable)} -c "
+                    "\"print('launch once')\""
+                )
+            }
+
+            with patch.dict(os.environ, env, clear=False):
+                handoff = create_handoff_for_command(
+                    repo_root,
+                    fixture["session_id"],
+                    to_agent="claude",
+                    reason="Reach awaiting_resume",
+                    evidence_depth="standard",
+                    owner="test:handoff:awaiting-resume",
+                )
+                result = execute_launch_for_command(
+                    repo_root,
+                    fixture["session_id"],
+                    handoff_id=handoff.handoff_id,
+                    owner="test:launch:awaiting-resume",
+                )
+
+            self.assertEqual(result.launch_status, "succeeded")
+
+            with self.assertRaises(SystemExit) as context:
+                preview_launch_for_command(
+                    repo_root,
+                    fixture["session_id"],
+                    handoff_id=handoff.handoff_id,
+                    owner="test:launch:awaiting-resume:preview",
+                )
+
+            self.assertIn("launch is not allowed while session phase is awaiting_resume", str(context.exception))
+
 
 def shlex_quote(value: str) -> str:
     import shlex

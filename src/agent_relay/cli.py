@@ -647,13 +647,20 @@ def main() -> int:
 
     try:
         return args.func(args)
-    except (SystemExit, V2Error) as exc:
+    except SystemExit as exc:
         message = str(exc) if str(exc) else "Unknown error"
         if args.json:
             emit_json({"error": message})
         elif not args.quiet:
             render_error(args.console, message)
         return exc.code if isinstance(exc.code, int) else 1
+    except V2Error as exc:
+        message = str(exc) if str(exc) else "Unknown error"
+        if args.json:
+            emit_json({"error": message})
+        elif not args.quiet:
+            render_error(args.console, message)
+        return 1
 
 
 if __name__ == "__main__":

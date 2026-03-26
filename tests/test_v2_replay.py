@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from agent_relay.v2.errors import V2CorruptionError
 from agent_relay.v2.layout import derived_view_path, head_ref_path
+from agent_relay.v2.models import JournalEvent
 from agent_relay.v2.storage import load_session_view
 from tests.v2_fixtures import build_sample_v2_session
 
@@ -151,3 +152,26 @@ class V2ReplayTests(TestCase):
                 load_session_view(repo_root, fixture["session_id"])
 
             self.assertIn("object file hash mismatch", str(context.exception))
+
+    def test_load_session_view_rejects_checkpoint_transition_outside_state_machine(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir).resolve()
+            fixture = build_sample_v2_session(repo_root)
+            event_path = (
+                repo_root
+                / ".agent-relay"
+                / "sessions"
+                / fixture["session_id"]
+                / "journal"
+                / "000007-checkpoint.recorded.json"
+            )
+            event = json.loads(event_path.read_text(encoding="utf-8"))
+            event["phase_after"] = "paused"
+            updated = JournalEvent.from_dict({**event, "event_hash": "sha256:" + ("0" * 64)})
+            event["event_hash"] = updated.expected_event_hash()
+            event_path.write_text(json.dumps(event, indent=2) + "\n", encoding="utf-8")
+
+            with self.assertRaises(V2CorruptionError) as context:
+                load_session_view(repo_root, fixture["session_id"])
+
+            self.assertIn("lifecycle state machine", str(context.exception))

@@ -19,6 +19,12 @@ from agent_relay.capture import (
     load_capture_text,
 )
 from agent_relay.v2.hashing import sha256_bytes, sha256_text
+from agent_relay.v2.lifecycle import (
+    LifecycleState,
+    LifecycleTransition,
+    LifecycleViolation,
+    plan_checkpoint_command,
+)
 from agent_relay.v2.models import CheckpointManifest, DerivedSessionView, ManifestFile, ValidationState
 from agent_relay.v2.storage import load_session_view
 from agent_relay.v2.tx import JournalCommitRequest, SessionTransaction
@@ -78,8 +84,20 @@ def create_checkpoint_for_command(
     owner: str,
 ) -> CheckpointCommandResult:
     view = load_session_view(repo_root, session_id)
-    _validate_command_phase(command_name, view.phase)
-    draft = _build_checkpoint_draft(view, options=options, command_name=command_name)
+    try:
+        transition = plan_checkpoint_command(
+            LifecycleState(phase=view.phase, task_status=view.task_status),
+            command_name=command_name,
+            status_directive=options.status,
+        )
+    except LifecycleViolation as exc:
+        raise SystemExit(str(exc)) from exc
+    draft = _build_checkpoint_draft(
+        view,
+        options=options,
+        command_name=command_name,
+        transition=transition,
+    )
     capture = _capture_workspace(
         repo_root,
         view=view,
@@ -125,12 +143,13 @@ def create_checkpoint_for_command(
         tx.commit(
             JournalCommitRequest(
                 event_type="checkpoint.recorded",
-                phase_before=view.phase,
-                phase_after=draft.phase_after,
+                phase_before=transition.phase_before,
+                phase_after=transition.phase_after,
                 payload={
                     "checkpoint_id": draft.checkpoint_id,
                     "command_name": command_name,
                     "capture_mode": capture.capture_mode,
+                    "status_directive": transition.status_directive,
                 },
                 timestamp=draft.created_at,
             )
@@ -150,10 +169,12 @@ def _build_checkpoint_draft(
     *,
     options: CaptureOptions,
     command_name: str,
+    transition: LifecycleTransition,
 ) -> CheckpointDraft:
     checkpoint_id = checkpoint_id_now()
     created_at = utc_now()
-    phase_after, task_status = _resolve_phase_and_task(view, options=options, command_name=command_name)
+    phase_after = transition.phase_after
+    task_status = transition.task_status_after or "working"
 
     next_action = view.next_action
     if options.next_action is not None:
@@ -221,49 +242,6 @@ def _build_checkpoint_draft(
         touched_files=tuple(touched_files),
         validation=ValidationState(status=validation_status, summary=validation_summary),
     )
-
-
-def _validate_command_phase(command_name: str, phase: str) -> None:
-    allowed = {
-        "checkpoint": {"active", "paused", "ready_for_handoff"},
-        "pause": {"active", "paused"},
-        "prepare": {"active", "paused", "ready_for_handoff"},
-    }
-    command_allowed = allowed.get(command_name, {"active"})
-    if phase not in command_allowed:
-        raise SystemExit(f"{command_name} is not allowed while session phase is {phase}")
-
-
-def _resolve_phase_and_task(
-    view: DerivedSessionView,
-    *,
-    options: CaptureOptions,
-    command_name: str,
-) -> tuple[str, str]:
-    phase_after = view.phase
-    task_status = view.task_status or "working"
-
-    if command_name == "pause":
-        phase_after = "paused"
-    elif command_name == "prepare":
-        phase_after = "ready_for_handoff"
-
-    status_override = options.status
-    if status_override:
-        if status_override == "active":
-            phase_after = "active"
-            task_status = "working"
-        elif status_override == "paused":
-            phase_after = "paused"
-        elif status_override == "blocked":
-            phase_after = "active"
-            task_status = "blocked"
-        else:
-            raise SystemExit(f"v2 checkpoint does not support --status {status_override!r}")
-
-    return phase_after, task_status
-
-
 def _capture_workspace(
     repo_root: Path,
     *,
