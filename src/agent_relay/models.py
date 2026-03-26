@@ -5,7 +5,7 @@ from pathlib import PurePosixPath
 from typing import Any, Mapping
 
 from agent_relay.agents import AGENT_NAMES, LAUNCH_EXECUTE_POLICIES, launch_template_uses_resume_packet
-from agent_relay.errors import V2ValidationError
+from agent_relay.errors import ValidationError
 from agent_relay.hashing import canonical_json, sha256_text
 
 SCHEMA_VERSION = 2
@@ -37,25 +37,25 @@ WORKSPACE_CAPTURE_MODES = {"git", "snapshot"}
 
 def _expect_mapping(value: Any, field_name: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
-        raise V2ValidationError(f"{field_name} must be an object")
+        raise ValidationError(f"{field_name} must be an object")
     return value
 
 
 def _require_str(value: Any, field_name: str) -> str:
     if not isinstance(value, str) or not value.strip():
-        raise V2ValidationError(f"{field_name} must be a non-empty string")
+        raise ValidationError(f"{field_name} must be a non-empty string")
     return value
 
 
 def _require_int(value: Any, field_name: str) -> int:
     if not isinstance(value, int):
-        raise V2ValidationError(f"{field_name} must be an integer")
+        raise ValidationError(f"{field_name} must be an integer")
     return value
 
 
 def _require_bool(value: Any, field_name: str) -> bool:
     if not isinstance(value, bool):
-        raise V2ValidationError(f"{field_name} must be a boolean")
+        raise ValidationError(f"{field_name} must be a boolean")
     return value
 
 
@@ -63,7 +63,7 @@ def _require_choice(value: Any, field_name: str, choices: set[str]) -> str:
     text = _require_str(value, field_name)
     if text not in choices:
         allowed = ", ".join(sorted(choices))
-        raise V2ValidationError(f"{field_name} must be one of: {allowed}")
+        raise ValidationError(f"{field_name} must be one of: {allowed}")
     return text
 
 
@@ -77,13 +77,13 @@ def _optional_str(value: Any, field_name: str) -> str | None:
     if value is None:
         return None
     if not isinstance(value, str):
-        raise V2ValidationError(f"{field_name} must be a string when provided")
+        raise ValidationError(f"{field_name} must be a string when provided")
     return value
 
 
 def _require_string_tuple(value: Any, field_name: str) -> tuple[str, ...]:
     if not isinstance(value, list):
-        raise V2ValidationError(f"{field_name} must be a list of strings")
+        raise ValidationError(f"{field_name} must be a list of strings")
     items: list[str] = []
     for index, item in enumerate(value):
         items.append(_require_str(item, f"{field_name}[{index}]"))
@@ -93,7 +93,7 @@ def _require_string_tuple(value: Any, field_name: str) -> tuple[str, ...]:
 def _require_sha256(value: Any, field_name: str) -> str:
     text = _require_str(value, field_name)
     if not text.startswith("sha256:") or len(text) != 71:
-        raise V2ValidationError(f"{field_name} must be a sha256:<64-hex> digest")
+        raise ValidationError(f"{field_name} must be a sha256:<64-hex> digest")
     return text
 
 
@@ -101,11 +101,11 @@ def _require_relative_path(value: Any, field_name: str) -> str:
     text = _require_str(value, field_name)
     path = PurePosixPath(text)
     if path.is_absolute():
-        raise V2ValidationError(f"{field_name} must be relative")
+        raise ValidationError(f"{field_name} must be relative")
     if any(part == ".." for part in path.parts):
-        raise V2ValidationError(f"{field_name} must not traverse parent directories")
+        raise ValidationError(f"{field_name} must not traverse parent directories")
     if text.startswith("./") or text == ".":
-        raise V2ValidationError(f"{field_name} must be a clean relative path")
+        raise ValidationError(f"{field_name} must be a clean relative path")
     return text
 
 
@@ -117,7 +117,7 @@ class ValidationState:
     def __post_init__(self) -> None:
         _require_choice(self.status, "validation.status", VALIDATION_STATUSES)
         if not isinstance(self.summary, str):
-            raise V2ValidationError("validation.summary must be a string")
+            raise ValidationError("validation.summary must be a string")
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> ValidationState:
@@ -141,7 +141,7 @@ class ManifestFile:
         _require_relative_path(self.relative_path, "file.relative_path")
         _require_sha256(self.sha256, "file.sha256")
         if not isinstance(self.size_bytes, int) or self.size_bytes < 0:
-            raise V2ValidationError("file.size_bytes must be an integer >= 0")
+            raise ValidationError("file.size_bytes must be an integer >= 0")
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> ManifestFile:
@@ -205,9 +205,9 @@ class SessionManifest:
 
     def __post_init__(self) -> None:
         if self.schema_version != SCHEMA_VERSION:
-            raise V2ValidationError(f"session_manifest.schema_version must be {SCHEMA_VERSION}")
+            raise ValidationError(f"session_manifest.schema_version must be {SCHEMA_VERSION}")
         if self.kind != "session_manifest":
-            raise V2ValidationError("session_manifest.kind must be session_manifest")
+            raise ValidationError("session_manifest.kind must be session_manifest")
         _require_str(self.session_id, "session_manifest.session_id")
         _require_str(self.repo_root, "session_manifest.repo_root")
         _require_str(self.objective, "session_manifest.objective")
@@ -215,7 +215,7 @@ class SessionManifest:
         _require_choice(self.initial_agent, "session_manifest.initial_agent", set(AGENT_NAMES))
         _require_str(self.created_at, "session_manifest.created_at")
         if self.storage_model != "journal_v2":
-            raise V2ValidationError("session_manifest.storage_model must be journal_v2")
+            raise ValidationError("session_manifest.storage_model must be journal_v2")
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> SessionManifest:
@@ -265,13 +265,13 @@ class JournalEvent:
 
     def __post_init__(self) -> None:
         if self.schema_version != SCHEMA_VERSION:
-            raise V2ValidationError(f"journal_event.schema_version must be {SCHEMA_VERSION}")
+            raise ValidationError(f"journal_event.schema_version must be {SCHEMA_VERSION}")
         if self.kind != "journal_event":
-            raise V2ValidationError("journal_event.kind must be journal_event")
+            raise ValidationError("journal_event.kind must be journal_event")
         _require_str(self.session_id, "journal_event.session_id")
         _require_str(self.event_id, "journal_event.event_id")
         if self.sequence < 1:
-            raise V2ValidationError("journal_event.sequence must be >= 1")
+            raise ValidationError("journal_event.sequence must be >= 1")
         _require_choice(self.type, "journal_event.type", JOURNAL_EVENT_TYPES)
         _require_str(self.timestamp, "journal_event.timestamp")
         _require_str(self.tx_id, "journal_event.tx_id")
@@ -280,7 +280,7 @@ class JournalEvent:
         _expect_mapping(self.payload, "journal_event.payload")
         for index, ref in enumerate(self.object_refs):
             if not isinstance(ref, ObjectRef):
-                raise V2ValidationError(f"journal_event.object_refs[{index}] must be an ObjectRef")
+                raise ValidationError(f"journal_event.object_refs[{index}] must be an ObjectRef")
         if self.prev_event_hash is not None:
             _require_sha256(self.prev_event_hash, "journal_event.prev_event_hash")
         _require_sha256(self.event_hash, "journal_event.event_hash")
@@ -291,7 +291,7 @@ class JournalEvent:
         payload = _expect_mapping(mapping["payload"], "journal_event.payload")
         refs = mapping.get("object_refs", [])
         if not isinstance(refs, list):
-            raise V2ValidationError("journal_event.object_refs must be a list")
+            raise ValidationError("journal_event.object_refs must be a list")
         return cls(
             schema_version=_require_int(mapping["schema_version"], "journal_event.schema_version"),
             kind=mapping["kind"],
@@ -340,15 +340,15 @@ def _validate_manifest_files(files: tuple[ManifestFile, ...], field_name: str) -
     seen: set[str] = set()
     for index, item in enumerate(files):
         if not isinstance(item, ManifestFile):
-            raise V2ValidationError(f"{field_name}[{index}] must be a ManifestFile")
+            raise ValidationError(f"{field_name}[{index}] must be a ManifestFile")
         if item.relative_path in seen:
-            raise V2ValidationError(f"{field_name} must not contain duplicate paths")
+            raise ValidationError(f"{field_name} must not contain duplicate paths")
         seen.add(item.relative_path)
 
 
 def _load_manifest_files(data: Any, field_name: str) -> tuple[ManifestFile, ...]:
     if not isinstance(data, list):
-        raise V2ValidationError(f"{field_name} must be a list")
+        raise ValidationError(f"{field_name} must be a list")
     files = tuple(ManifestFile.from_dict(item) for item in data)
     _validate_manifest_files(files, field_name)
     return files
@@ -360,7 +360,7 @@ def _require_file_reference(relative_path: str | None, files: tuple[ManifestFile
     path = _require_relative_path(relative_path, field_name)
     file_paths = {item.relative_path for item in files}
     if path not in file_paths:
-        raise V2ValidationError(f"{field_name} must reference an entry in files")
+        raise ValidationError(f"{field_name} must reference an entry in files")
     return path
 
 
@@ -393,9 +393,9 @@ class CheckpointManifest:
 
     def __post_init__(self) -> None:
         if self.schema_version != SCHEMA_VERSION:
-            raise V2ValidationError(f"checkpoint_manifest.schema_version must be {SCHEMA_VERSION}")
+            raise ValidationError(f"checkpoint_manifest.schema_version must be {SCHEMA_VERSION}")
         if self.kind != "checkpoint_manifest":
-            raise V2ValidationError("checkpoint_manifest.kind must be checkpoint_manifest")
+            raise ValidationError("checkpoint_manifest.kind must be checkpoint_manifest")
         _require_str(self.object_id, "checkpoint_manifest.object_id")
         _require_str(self.session_id, "checkpoint_manifest.session_id")
         _require_str(self.created_at, "checkpoint_manifest.created_at")
@@ -404,7 +404,7 @@ class CheckpointManifest:
         _require_choice(self.task_status, "checkpoint_manifest.task_status", TASK_STATUSES)
         _require_choice(self.capture_mode, "checkpoint_manifest.capture_mode", WORKSPACE_CAPTURE_MODES)
         if not isinstance(self.next_action, str):
-            raise V2ValidationError("checkpoint_manifest.next_action must be a string")
+            raise ValidationError("checkpoint_manifest.next_action must be a string")
         _validate_manifest_files(self.files, "checkpoint_manifest.files")
         _require_file_reference(self.repo_state_file, self.files, "checkpoint_manifest.repo_state_file")
         _require_file_reference(self.validation_file, self.files, "checkpoint_manifest.validation_file")
@@ -427,16 +427,16 @@ class CheckpointManifest:
         )
         if self.capture_mode == "git":
             if self.git_head_file is None or self.workspace_patch_file is None or self.untracked_manifest_file is None:
-                raise V2ValidationError(
+                raise ValidationError(
                     "checkpoint_manifest git capture requires git_head_file, workspace_patch_file, and untracked_manifest_file",
                 )
             if self.snapshot_manifest_file is not None:
-                raise V2ValidationError("checkpoint_manifest git capture must not set snapshot_manifest_file")
+                raise ValidationError("checkpoint_manifest git capture must not set snapshot_manifest_file")
         if self.capture_mode == "snapshot":
             if self.snapshot_manifest_file is None:
-                raise V2ValidationError("checkpoint_manifest snapshot capture requires snapshot_manifest_file")
+                raise ValidationError("checkpoint_manifest snapshot capture requires snapshot_manifest_file")
             if self.git_head_file is not None or self.workspace_patch_file is not None:
-                raise V2ValidationError(
+                raise ValidationError(
                     "checkpoint_manifest snapshot capture must not set git_head_file or workspace_patch_file",
                 )
 
@@ -533,9 +533,9 @@ class HandoffManifest:
 
     def __post_init__(self) -> None:
         if self.schema_version != SCHEMA_VERSION:
-            raise V2ValidationError(f"handoff_manifest.schema_version must be {SCHEMA_VERSION}")
+            raise ValidationError(f"handoff_manifest.schema_version must be {SCHEMA_VERSION}")
         if self.kind != "handoff_manifest":
-            raise V2ValidationError("handoff_manifest.kind must be handoff_manifest")
+            raise ValidationError("handoff_manifest.kind must be handoff_manifest")
         _require_str(self.object_id, "handoff_manifest.object_id")
         _require_str(self.session_id, "handoff_manifest.session_id")
         _require_str(self.created_at, "handoff_manifest.created_at")
@@ -558,7 +558,7 @@ class HandoffManifest:
         )
         _optional_str(self.launch_warning, "handoff_manifest.launch_warning")
         if self.launch_execute_policy == "allow" and not self.launch_packet_aware:
-            raise V2ValidationError(
+            raise ValidationError(
                 "handoff_manifest.launch_execute_policy cannot be allow when launch_packet_aware is false"
             )
         _validate_manifest_files(self.files, "handoff_manifest.files")
@@ -649,9 +649,9 @@ class LaunchManifest:
 
     def __post_init__(self) -> None:
         if self.schema_version != SCHEMA_VERSION:
-            raise V2ValidationError(f"launch_manifest.schema_version must be {SCHEMA_VERSION}")
+            raise ValidationError(f"launch_manifest.schema_version must be {SCHEMA_VERSION}")
         if self.kind != "launch_manifest":
-            raise V2ValidationError("launch_manifest.kind must be launch_manifest")
+            raise ValidationError("launch_manifest.kind must be launch_manifest")
         _require_str(self.object_id, "launch_manifest.object_id")
         _require_str(self.session_id, "launch_manifest.session_id")
         _require_str(self.created_at, "launch_manifest.created_at")
@@ -661,7 +661,7 @@ class LaunchManifest:
         _require_str(self.finished_at, "launch_manifest.finished_at")
         _require_choice(self.status, "launch_manifest.status", LAUNCH_RESULT_STATUSES)
         if not isinstance(self.exit_code, int):
-            raise V2ValidationError("launch_manifest.exit_code must be an integer")
+            raise ValidationError("launch_manifest.exit_code must be an integer")
         _require_str(self.dispatched_command, "launch_manifest.dispatched_command")
         _validate_manifest_files(self.files, "launch_manifest.files")
         _require_file_reference(self.stdout_file, self.files, "launch_manifest.stdout_file")
@@ -720,7 +720,7 @@ def object_manifest_from_dict(data: Mapping[str, Any]) -> ObjectManifest:
         return HandoffManifest.from_dict(mapping)
     if kind == "launch_manifest":
         return LaunchManifest.from_dict(mapping)
-    raise V2ValidationError("object_manifest.kind must be a known manifest kind")
+    raise ValidationError("object_manifest.kind must be a known manifest kind")
 
 
 @dataclass(frozen=True, slots=True)
@@ -787,11 +787,11 @@ class DerivedSessionView:
 
     def __post_init__(self) -> None:
         if self.schema_version != SCHEMA_VERSION:
-            raise V2ValidationError(f"derived_view.schema_version must be {SCHEMA_VERSION}")
+            raise ValidationError(f"derived_view.schema_version must be {SCHEMA_VERSION}")
         if self.kind != "derived_session_view":
-            raise V2ValidationError("derived_view.kind must be derived_session_view")
+            raise ValidationError("derived_view.kind must be derived_session_view")
         if self.storage_model != "journal_v2":
-            raise V2ValidationError("derived_view.storage_model must be journal_v2")
+            raise ValidationError("derived_view.storage_model must be journal_v2")
         _require_choice(self.workstream_kind, "derived_view.workstream_kind", WORKSTREAM_KINDS)
         _require_choice(self.initial_agent, "derived_view.initial_agent", set(AGENT_NAMES))
         _require_choice(self.current_agent, "derived_view.current_agent", set(AGENT_NAMES))
@@ -800,10 +800,10 @@ class DerivedSessionView:
         if self.task_status is not None:
             _require_choice(self.task_status, "derived_view.task_status", TASK_STATUSES)
         if self.health != "healthy":
-            raise V2ValidationError("derived_view.health must be healthy for persisted healthy views")
+            raise ValidationError("derived_view.health must be healthy for persisted healthy views")
         for handoff in self.handoffs:
             if not isinstance(handoff, DerivedHandoffView):
-                raise V2ValidationError("derived_view.handoffs entries must be DerivedHandoffView")
+                raise ValidationError("derived_view.handoffs entries must be DerivedHandoffView")
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> DerivedSessionView:
@@ -912,13 +912,13 @@ class HeadRef:
 
     def __post_init__(self) -> None:
         if self.schema_version != SCHEMA_VERSION:
-            raise V2ValidationError(f"head_ref.schema_version must be {SCHEMA_VERSION}")
+            raise ValidationError(f"head_ref.schema_version must be {SCHEMA_VERSION}")
         if self.kind != "session_head_ref":
-            raise V2ValidationError("head_ref.kind must be session_head_ref")
+            raise ValidationError("head_ref.kind must be session_head_ref")
         _require_str(self.session_id, "head_ref.session_id")
         _require_str(self.last_event_id, "head_ref.last_event_id")
         if self.last_sequence < 1:
-            raise V2ValidationError("head_ref.last_sequence must be >= 1")
+            raise ValidationError("head_ref.last_sequence must be >= 1")
         _require_sha256(self.last_event_hash, "head_ref.last_event_hash")
         _require_str(self.updated_at, "head_ref.updated_at")
 

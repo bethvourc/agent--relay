@@ -10,7 +10,7 @@ from unittest import TestCase
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from agent_relay.errors import V2CorruptionError
+from agent_relay.errors import CorruptionError
 from agent_relay.layout import derived_view_path, head_ref_path
 from agent_relay.models import JournalEvent
 from agent_relay.storage import load_session_view
@@ -127,7 +127,7 @@ class ReplayTests(TestCase):
             event["prev_event_hash"] = "sha256:" + ("9" * 64)
             event_path.write_text(json.dumps(event, indent=2) + "\n", encoding="utf-8")
 
-            with self.assertRaises(V2CorruptionError) as context:
+            with self.assertRaises(CorruptionError) as context:
                 load_session_view(repo_root, fixture["session_id"])
 
             self.assertIn("hash chain broken", str(context.exception))
@@ -148,7 +148,7 @@ class ReplayTests(TestCase):
             )
             packet_path.write_text("# mutated\n", encoding="utf-8")
 
-            with self.assertRaises(V2CorruptionError) as context:
+            with self.assertRaises(CorruptionError) as context:
                 load_session_view(repo_root, fixture["session_id"])
 
             self.assertIn("object file hash mismatch", str(context.exception))
@@ -171,7 +171,7 @@ class ReplayTests(TestCase):
             event["event_hash"] = updated.expected_event_hash()
             event_path.write_text(json.dumps(event, indent=2) + "\n", encoding="utf-8")
 
-            with self.assertRaises(V2CorruptionError) as context:
+            with self.assertRaises(CorruptionError) as context:
                 load_session_view(repo_root, fixture["session_id"])
 
             self.assertIn("lifecycle state machine", str(context.exception))

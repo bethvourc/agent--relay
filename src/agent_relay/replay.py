@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
 
-from agent_relay.errors import V2CorruptionError
+from agent_relay.errors import CorruptionError
 from agent_relay.lifecycle import (
     LifecycleState,
     LifecycleViolation,
@@ -77,7 +77,7 @@ def replay_session(
     load_object: ObjectLoader,
 ) -> ReplayResult:
     if not events:
-        raise V2CorruptionError("journal is empty", session_id=manifest.session_id)
+        raise CorruptionError("journal is empty", session_id=manifest.session_id)
 
     ordered_events = sorted(events, key=lambda item: item.sequence)
     state = _ReplayState(
@@ -168,45 +168,45 @@ def _validate_event_chain(
     current_phase: str | None,
 ) -> None:
     if event.session_id != manifest.session_id:
-        raise V2CorruptionError(
+        raise CorruptionError(
             "journal event session_id does not match session manifest",
             session_id=manifest.session_id,
         )
     if event.sequence != expected_sequence:
-        raise V2CorruptionError(
+        raise CorruptionError(
             f"journal sequence gap or duplicate at {event.event_id}",
             session_id=manifest.session_id,
         )
     if event.prev_event_hash != previous_hash:
-        raise V2CorruptionError(
+        raise CorruptionError(
             f"journal hash chain broken at {event.event_id}",
             session_id=manifest.session_id,
         )
     if event.expected_event_hash() != event.event_hash:
-        raise V2CorruptionError(
+        raise CorruptionError(
             f"journal event hash mismatch at {event.event_id}",
             session_id=manifest.session_id,
         )
     if expected_sequence == 1:
         if event.type != "session.started":
-            raise V2CorruptionError(
+            raise CorruptionError(
                 "first journal event must be session.started",
                 session_id=manifest.session_id,
             )
         recorded_manifest_hash = event.payload.get("session_manifest_sha256")
         if recorded_manifest_hash != manifest_hash:
-            raise V2CorruptionError(
+            raise CorruptionError(
                 "session manifest hash does not match session.started payload",
                 session_id=manifest.session_id,
             )
         if event.phase_before is not None:
-            raise V2CorruptionError(
+            raise CorruptionError(
                 "first event phase_before must be null",
                 session_id=manifest.session_id,
             )
     else:
         if event.phase_before != current_phase:
-            raise V2CorruptionError(
+            raise CorruptionError(
                 f"phase_before does not match replay state at {event.event_id}",
                 session_id=manifest.session_id,
             )
@@ -235,7 +235,7 @@ def _apply_event(
     elif event.type == "repair.rebuilt":
         _apply_repair_rebuilt(state, event)
     else:
-        raise V2CorruptionError(
+        raise CorruptionError(
             f"unsupported journal event type {event.type}",
             session_id=state.manifest.session_id,
         )
@@ -250,13 +250,13 @@ def _apply_event(
 def _apply_session_started(state: _ReplayState, event: JournalEvent, manifest_hash: str) -> None:
     _ensure_no_refs(event)
     if event.payload.get("session_manifest_sha256") != manifest_hash:
-        raise V2CorruptionError(
+        raise CorruptionError(
             "session.started payload manifest hash mismatch",
             session_id=state.manifest.session_id,
         )
     transition = _plan_or_corrupt(event, lambda: plan_session_started())
     if event.phase_after != transition.phase_after:
-        raise V2CorruptionError(
+        raise CorruptionError(
             "session.started phase_after does not match the lifecycle state machine",
             session_id=state.manifest.session_id,
         )
@@ -265,13 +265,13 @@ def _apply_session_started(state: _ReplayState, event: JournalEvent, manifest_ha
 
 def _require_single_ref(event: JournalEvent, expected_kind: str) -> ObjectRef:
     if len(event.object_refs) != 1:
-        raise V2CorruptionError(
+        raise CorruptionError(
             f"{event.type} must reference exactly one {expected_kind} object",
             session_id=event.session_id,
         )
     ref = event.object_refs[0]
     if ref.object_kind != expected_kind:
-        raise V2CorruptionError(
+        raise CorruptionError(
             f"{event.type} must reference a {expected_kind} object",
             session_id=event.session_id,
         )
@@ -280,7 +280,7 @@ def _require_single_ref(event: JournalEvent, expected_kind: str) -> ObjectRef:
 
 def _ensure_no_refs(event: JournalEvent) -> None:
     if event.object_refs:
-        raise V2CorruptionError(
+        raise CorruptionError(
             f"{event.type} must not reference object manifests",
             session_id=event.session_id,
         )
@@ -290,9 +290,9 @@ def _apply_checkpoint(state: _ReplayState, event: JournalEvent, load_object: Obj
     ref = _require_single_ref(event, "checkpoint")
     manifest = load_object(ref)
     if not isinstance(manifest, CheckpointManifest):
-        raise V2CorruptionError("checkpoint event resolved to the wrong manifest type", session_id=event.session_id)
+        raise CorruptionError("checkpoint event resolved to the wrong manifest type", session_id=event.session_id)
     if event.payload.get("checkpoint_id") != manifest.object_id:
-        raise V2CorruptionError("checkpoint payload does not match checkpoint manifest", session_id=event.session_id)
+        raise CorruptionError("checkpoint payload does not match checkpoint manifest", session_id=event.session_id)
     command_name = event.payload.get("command_name", "checkpoint")
     status_directive = event.payload.get("status_directive")
     transition = _plan_or_corrupt(
@@ -304,14 +304,14 @@ def _apply_checkpoint(state: _ReplayState, event: JournalEvent, load_object: Obj
         ),
     )
     if event.phase_after != transition.phase_after:
-        raise V2CorruptionError(
+        raise CorruptionError(
             "checkpoint.recorded phase_after does not match the lifecycle state machine",
             session_id=event.session_id,
         )
     if manifest.phase_hint != transition.phase_after:
-        raise V2CorruptionError("checkpoint phase_hint does not match journal phase", session_id=event.session_id)
+        raise CorruptionError("checkpoint phase_hint does not match journal phase", session_id=event.session_id)
     if manifest.task_status != transition.task_status_after:
-        raise V2CorruptionError(
+        raise CorruptionError(
             "checkpoint task_status does not match the lifecycle state machine",
             session_id=event.session_id,
         )
@@ -333,16 +333,16 @@ def _apply_handoff(state: _ReplayState, event: JournalEvent, load_object: Object
     ref = _require_single_ref(event, "handoff")
     manifest = load_object(ref)
     if not isinstance(manifest, HandoffManifest):
-        raise V2CorruptionError("handoff event resolved to the wrong manifest type", session_id=event.session_id)
+        raise CorruptionError("handoff event resolved to the wrong manifest type", session_id=event.session_id)
     if event.payload.get("handoff_id") != manifest.object_id:
-        raise V2CorruptionError("handoff payload does not match handoff manifest", session_id=event.session_id)
+        raise CorruptionError("handoff payload does not match handoff manifest", session_id=event.session_id)
     if state.latest_checkpoint_id != manifest.source_checkpoint_id:
-        raise V2CorruptionError(
+        raise CorruptionError(
             "handoff does not reference the latest checkpoint",
             session_id=event.session_id,
         )
     if manifest.source_event_hash != state.last_event_hash:
-        raise V2CorruptionError(
+        raise CorruptionError(
             "handoff does not anchor to the prior journal head",
             session_id=event.session_id,
         )
@@ -351,7 +351,7 @@ def _apply_handoff(state: _ReplayState, event: JournalEvent, load_object: Object
         lambda: plan_failover_command(LifecycleState(phase=state.phase, task_status=state.task_status)),
     )
     if event.phase_after != transition.phase_after:
-        raise V2CorruptionError(
+        raise CorruptionError(
             "handoff.prepared phase_after does not match the lifecycle state machine",
             session_id=event.session_id,
         )
@@ -374,17 +374,17 @@ def _apply_launch_started(state: _ReplayState, event: JournalEvent) -> None:
     handoff_id = event.payload.get("handoff_id")
     launch_id = event.payload.get("launch_id")
     if not isinstance(handoff_id, str) or not isinstance(launch_id, str):
-        raise V2CorruptionError("launch.started payload must include handoff_id and launch_id", session_id=event.session_id)
+        raise CorruptionError("launch.started payload must include handoff_id and launch_id", session_id=event.session_id)
     if handoff_id not in state.handoffs:
-        raise V2CorruptionError("launch.started references an unknown handoff", session_id=event.session_id)
+        raise CorruptionError("launch.started references an unknown handoff", session_id=event.session_id)
     if state.prepared_handoff_id != handoff_id:
-        raise V2CorruptionError("launch.started must reference the current prepared handoff", session_id=event.session_id)
+        raise CorruptionError("launch.started must reference the current prepared handoff", session_id=event.session_id)
     transition = _plan_or_corrupt(
         event,
         lambda: plan_launch_started(LifecycleState(phase=state.phase, task_status=state.task_status)),
     )
     if event.phase_after != transition.phase_after:
-        raise V2CorruptionError(
+        raise CorruptionError(
             "launch.started phase_after does not match the lifecycle state machine",
             session_id=event.session_id,
         )
@@ -406,14 +406,14 @@ def _apply_launch_finished(state: _ReplayState, event: JournalEvent, load_object
     ref = _require_single_ref(event, "launch")
     manifest = load_object(ref)
     if not isinstance(manifest, LaunchManifest):
-        raise V2CorruptionError("launch event resolved to the wrong manifest type", session_id=event.session_id)
+        raise CorruptionError("launch event resolved to the wrong manifest type", session_id=event.session_id)
     if event.payload.get("handoff_id") != manifest.handoff_id or event.payload.get("launch_id") != manifest.object_id:
-        raise V2CorruptionError("launch payload does not match launch manifest", session_id=event.session_id)
+        raise CorruptionError("launch payload does not match launch manifest", session_id=event.session_id)
     if manifest.handoff_id not in state.handoffs:
-        raise V2CorruptionError("launch receipt references an unknown handoff", session_id=event.session_id)
+        raise CorruptionError("launch receipt references an unknown handoff", session_id=event.session_id)
     handoff = state.handoffs[manifest.handoff_id]
     if handoff.latest_launch_id != manifest.object_id:
-        raise V2CorruptionError("launch receipt does not match the current launch attempt", session_id=event.session_id)
+        raise CorruptionError("launch receipt does not match the current launch attempt", session_id=event.session_id)
     transition = _plan_or_corrupt(
         event,
         lambda: plan_launch_finished(
@@ -422,7 +422,7 @@ def _apply_launch_finished(state: _ReplayState, event: JournalEvent, load_object
         ),
     )
     if event.phase_after != transition.phase_after:
-        raise V2CorruptionError(
+        raise CorruptionError(
             "launch.finished phase_after does not match the lifecycle state machine",
             session_id=event.session_id,
         )
@@ -444,26 +444,26 @@ def _apply_resume(state: _ReplayState, event: JournalEvent) -> None:
     _ensure_no_refs(event)
     handoff_id = event.payload.get("handoff_id")
     if not isinstance(handoff_id, str):
-        raise V2CorruptionError("resume.accepted payload must include handoff_id", session_id=event.session_id)
+        raise CorruptionError("resume.accepted payload must include handoff_id", session_id=event.session_id)
     if handoff_id not in state.handoffs:
-        raise V2CorruptionError("resume.accepted references an unknown handoff", session_id=event.session_id)
+        raise CorruptionError("resume.accepted references an unknown handoff", session_id=event.session_id)
     if state.prepared_handoff_id != handoff_id:
-        raise V2CorruptionError("resume.accepted must reference the current prepared handoff", session_id=event.session_id)
+        raise CorruptionError("resume.accepted must reference the current prepared handoff", session_id=event.session_id)
     accepted_by_agent = event.payload.get("accepted_by_agent")
     if accepted_by_agent is not None and not isinstance(accepted_by_agent, str):
-        raise V2CorruptionError("resume.accepted accepted_by_agent must be a string", session_id=event.session_id)
+        raise CorruptionError("resume.accepted accepted_by_agent must be a string", session_id=event.session_id)
     transition = _plan_or_corrupt(
         event,
         lambda: plan_resume_command(LifecycleState(phase=state.phase, task_status=state.task_status)),
     )
     if event.phase_after != transition.phase_after:
-        raise V2CorruptionError(
+        raise CorruptionError(
             "resume.accepted phase_after does not match the lifecycle state machine",
             session_id=event.session_id,
         )
     handoff = state.handoffs[handoff_id]
     if accepted_by_agent is not None and accepted_by_agent != handoff.to_agent:
-        raise V2CorruptionError("resume.accepted accepted_by_agent does not match handoff target", session_id=event.session_id)
+        raise CorruptionError("resume.accepted accepted_by_agent does not match handoff target", session_id=event.session_id)
     state.current_agent = handoff.to_agent
     state.last_resume_handoff_id = handoff_id
     if state.prepared_handoff_id == handoff_id:
@@ -477,14 +477,14 @@ def _apply_session_completed(state: _ReplayState, event: JournalEvent) -> None:
         lambda: plan_complete_command(LifecycleState(phase=state.phase, task_status=state.task_status)),
     )
     if event.phase_after != transition.phase_after:
-        raise V2CorruptionError(
+        raise CorruptionError(
             "session.completed phase_after does not match the lifecycle state machine",
             session_id=event.session_id,
         )
     completed_by = event.payload.get("completed_by_agent")
     if completed_by is not None:
         if not isinstance(completed_by, str):
-            raise V2CorruptionError("session.completed completed_by_agent must be a string", session_id=event.session_id)
+            raise CorruptionError("session.completed completed_by_agent must be a string", session_id=event.session_id)
         state.current_agent = completed_by
 
 
@@ -495,7 +495,7 @@ def _apply_repair_rebuilt(state: _ReplayState, event: JournalEvent) -> None:
         lambda: plan_repair_command(LifecycleState(phase=state.phase, task_status=state.task_status)),
     )
     if event.phase_after != transition.phase_after:
-        raise V2CorruptionError(
+        raise CorruptionError(
             "repair.rebuilt phase_after does not match the lifecycle state machine",
             session_id=event.session_id,
         )
@@ -505,4 +505,4 @@ def _plan_or_corrupt(event: JournalEvent, planner):
     try:
         return planner()
     except LifecycleViolation as exc:
-        raise V2CorruptionError(str(exc), session_id=event.session_id) from exc
+        raise CorruptionError(str(exc), session_id=event.session_id) from exc

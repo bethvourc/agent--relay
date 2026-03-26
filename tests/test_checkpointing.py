@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from agent_relay.capture_support import CaptureOptions
 from agent_relay.checkpoints import create_checkpoint_for_command
-from agent_relay.errors import V2CorruptionError
+from agent_relay.errors import CorruptionError
 from agent_relay.layout import pending_tx_dir
 from agent_relay.models import CheckpointManifest
 from agent_relay.storage import load_session_view
@@ -170,7 +170,7 @@ class CheckpointingTests(TestCase):
             )
             (checkpoint_dir / "summary.md").write_text("# tampered\n", encoding="utf-8")
 
-            with self.assertRaises(V2CorruptionError) as context:
+            with self.assertRaises(CorruptionError) as context:
                 load_session_view(repo_root, fixture["session_id"])
 
             self.assertIn("object file hash mismatch", str(context.exception))

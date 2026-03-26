@@ -6,7 +6,7 @@ from pathlib import Path
 from agent_relay.handoffs import recover_interrupted_launches
 from agent_relay.integrity import inspect_session_integrity
 from agent_relay.layout import session_root, sessions_root
-from agent_relay.storage import is_v2_session, load_session_view
+from agent_relay.storage import is_session, load_session_view
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,7 +34,7 @@ class DashboardEntry:
 
 
 def load_session_for_inspect(repo_root: Path, session_id: str) -> dict:
-    if not is_v2_session(repo_root, session_id):
+    if not is_session(repo_root, session_id):
         candidate = session_root(repo_root, session_id)
         if candidate.exists():
             raise SystemExit(f"corrupt or unsupported session directory: {session_id}")
@@ -59,7 +59,7 @@ def list_sessions_for_dashboard(repo_root: Path) -> list[dict]:
         if not session_dir.is_dir():
             continue
         session_id = session_dir.name
-        if is_v2_session(repo_root, session_id):
+        if is_session(repo_root, session_id):
             report = inspect_session_integrity(repo_root, session_id).report
             if report.health == "healthy":
                 load_session_view(repo_root, session_id)

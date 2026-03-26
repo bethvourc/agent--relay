@@ -47,7 +47,7 @@ class AgentRelayHandoffCliTests(TestCase):
             repo_root,
             fixture["session_id"],
             command_name="prepare",
-            options=CaptureOptions(next_action="Prepare a v2 CLI handoff"),
+            options=CaptureOptions(next_action="Prepare a CLI handoff"),
             owner="test:prepare:cli",
         )
         return fixture
@@ -71,7 +71,7 @@ class AgentRelayHandoffCliTests(TestCase):
                 "--to-agent",
                 "claude",
                 "--reason",
-                "CLI v2 handoff",
+                "CLI handoff",
                 "--repo",
                 tmpdir,
                 repo_root=repo_root,

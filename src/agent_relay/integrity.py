@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from agent_relay.errors import V2CorruptionError, V2ValidationError
+from agent_relay.errors import CorruptionError, ValidationError
 from agent_relay.layout import (
     journal_dir,
     pending_tx_dir,
@@ -138,7 +138,7 @@ def inspect_session_integrity(repo_root: Path, session_id: str) -> IntegrityScan
         manifest = load_session_manifest(repo_root, session_id)
     except SystemExit:
         raise
-    except V2CorruptionError as exc:
+    except CorruptionError as exc:
         report = SessionIntegrityReport(
             session_id=session_id,
             storage_model="journal_v2",
@@ -244,7 +244,7 @@ def inspect_session_integrity(repo_root: Path, session_id: str) -> IntegrityScan
             failure_index = index
             failure_event_path = event_path
             break
-        except V2ValidationError as exc:
+        except ValidationError as exc:
             failure_message = str(exc)
             failure_path = event_path
             failure_index = index
@@ -259,7 +259,7 @@ def inspect_session_integrity(repo_root: Path, session_id: str) -> IntegrityScan
                 events=parsed_events,
                 load_object=lambda ref: _load_object_from_ref(session_path, ref),
             )
-        except V2CorruptionError as exc:
+        except CorruptionError as exc:
             failure_message = str(exc)
             failure_path = exc.path or event_path
             failure_index = index

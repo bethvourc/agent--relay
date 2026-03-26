@@ -11,7 +11,7 @@ from pathlib import Path
 from agent_relay.agents import AGENT_NAMES
 from agent_relay.read_views import list_sessions_for_dashboard, load_session_for_inspect
 from agent_relay.capture_support import CaptureOptions
-from agent_relay.errors import V2Error
+from agent_relay.errors import RelayError
 from agent_relay.lifecycle import CHECKPOINT_STATUS_DIRECTIVES
 from agent_relay.models import VALIDATION_STATUSES
 from agent_relay.resume_options import EVIDENCE_DEPTHS
@@ -405,7 +405,7 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument(
         "--snapshot-mode",
         choices=["full"],
-        help="For non-Git repos, require an explicit full workspace snapshot for the initial v2 checkpoint",
+        help="For non-Git repos, require an explicit full workspace snapshot for the initial checkpoint",
     )
     start.add_argument("--repo")
     start.set_defaults(func=cmd_start)
@@ -444,7 +444,7 @@ def build_parser() -> argparse.ArgumentParser:
     launch = subparsers.add_parser("launch", help="Launch the latest prepared handoff")
     launch.add_argument("session")
     launch.add_argument("--repo")
-    launch.add_argument("--handoff-id", help="For v2 sessions, launch this prepared handoff id")
+    launch.add_argument("--handoff-id", help="Launch this prepared handoff id")
     launch.add_argument(
         "--execute",
         action="store_true",
@@ -457,13 +457,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     launch.set_defaults(func=cmd_launch)
 
-    resume = subparsers.add_parser("resume", help="Accept a prepared v2 handoff and transfer ownership")
+    resume = subparsers.add_parser("resume", help="Accept a prepared handoff and transfer ownership")
     resume.add_argument("session")
     resume.add_argument("--repo")
-    resume.add_argument("--handoff-id", help="For v2 sessions, resume this prepared handoff id")
+    resume.add_argument("--handoff-id", help="Resume this prepared handoff id")
     resume.set_defaults(func=cmd_resume)
 
-    repair = subparsers.add_parser("repair", help="Repair v2 session integrity explicitly")
+    repair = subparsers.add_parser("repair", help="Repair session integrity explicitly")
     repair.add_argument("session")
     repair.add_argument("--repo")
     repair.add_argument("--rebuild-view", action="store_true", help="Rebuild refs/ and derived/ from a healthy journal")
@@ -493,7 +493,7 @@ def add_capture_arguments(parser: argparse.ArgumentParser, *, allow_status: bool
     parser.add_argument(
         "--snapshot-mode",
         choices=["full"],
-        help="For v2 sessions, require explicit full workspace snapshot capture instead of Git-backed capture",
+        help="Require explicit full workspace snapshot capture instead of Git-backed capture",
     )
     parser.add_argument("--next-action", "-n")
     parser.add_argument("--decision", "-d", action="append")
@@ -527,7 +527,7 @@ def main() -> int:
         elif not args.quiet:
             render_error(args.console, message)
         return exc.code if isinstance(exc.code, int) else 1
-    except V2Error as exc:
+    except RelayError as exc:
         message = str(exc) if str(exc) else "Unknown error"
         if args.json:
             emit_json({"error": message})

@@ -3,24 +3,24 @@ from __future__ import annotations
 from pathlib import Path
 
 
-class V2Error(ValueError):
-    """Base error for the v2 session core."""
+class RelayError(ValueError):
+    """Base error for the relay session core."""
 
 
-class V2ValidationError(V2Error):
-    """Raised when a v2 record fails schema validation."""
+class ValidationError(RelayError):
+    """Raised when a persisted record fails schema validation."""
 
 
-class LockTimeoutError(V2Error):
+class LockTimeoutError(RelayError):
     """Raised when a repo or session lock cannot be acquired in time."""
 
 
-class TransactionError(V2Error):
+class TransactionError(RelayError):
     """Raised when a transaction cannot be committed safely."""
 
 
-class V2CorruptionError(V2Error):
-    """Raised when canonical v2 state cannot be trusted."""
+class CorruptionError(RelayError):
+    """Raised when canonical session state cannot be trusted."""
 
     def __init__(
         self,

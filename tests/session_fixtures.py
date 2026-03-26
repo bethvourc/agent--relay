@@ -80,7 +80,7 @@ def build_sample_session(repo_root: Path, *, session_id: str = "20260325-180000-
         next_action="Prepare the first Codex handoff",
         decisions=("Keep journal state canonical",),
         blockers=(),
-        research_notes=("Mapped the v2 object model",),
+        research_notes=("Mapped the object model",),
         implementation_notes=("Started the replay engine",),
         touched_files=("src/agent_relay/models.py",),
         validation=ValidationState(status="partial", summary="Replay path still needs verification"),

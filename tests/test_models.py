@@ -8,7 +8,7 @@ from unittest import TestCase
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from agent_relay.errors import V2ValidationError
+from agent_relay.errors import ValidationError
 from agent_relay.models import (
     CheckpointManifest,
     JournalEvent,
@@ -44,7 +44,7 @@ class ModelTests(TestCase):
         self.assertEqual(JournalEvent.from_dict(hashed.to_dict()), hashed)
 
     def test_checkpoint_manifest_rejects_missing_summary_file_reference(self) -> None:
-        with self.assertRaises(V2ValidationError) as context:
+        with self.assertRaises(ValidationError) as context:
             CheckpointManifest(
                 schema_version=SCHEMA_VERSION,
                 kind="checkpoint_manifest",
@@ -106,7 +106,7 @@ class ModelTests(TestCase):
         self.assertIn("summary_file", str(context.exception))
 
     def test_object_manifest_loader_rejects_unknown_kind(self) -> None:
-        with self.assertRaises(V2ValidationError) as context:
+        with self.assertRaises(ValidationError) as context:
             object_manifest_from_dict(
                 {
                     "schema_version": SCHEMA_VERSION,
@@ -117,7 +117,7 @@ class ModelTests(TestCase):
         self.assertIn("object_manifest.kind", str(context.exception))
 
     def test_object_ref_requires_relative_manifest_path(self) -> None:
-        with self.assertRaises(V2ValidationError) as context:
+        with self.assertRaises(ValidationError) as context:
             ObjectRef(
                 object_kind="checkpoint",
                 object_id="cp-1",

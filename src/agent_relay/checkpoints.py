@@ -256,10 +256,10 @@ def _capture_workspace(
     if snapshot_mode is not None:
         raise SystemExit(f"Unsupported snapshot mode: {snapshot_mode}")
     if git_repo is None:
-        raise SystemExit("v2 checkpoints require a Git-backed repo or --snapshot-mode full")
+        raise SystemExit("checkpoints require a Git-backed repo or --snapshot-mode full")
     head = _git(repo_root, "rev-parse", "--verify", "HEAD", check=False)
     if head.returncode != 0:
-        raise SystemExit("v2 Git-backed checkpoints require at least one commit or --snapshot-mode full")
+        raise SystemExit("Git-backed checkpoints require at least one commit or --snapshot-mode full")
     return _capture_git_workspace(
         repo_root,
         view=view,

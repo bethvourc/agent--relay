@@ -627,8 +627,8 @@ def render_help(console: Console) -> None:
         _help_row_compact(console, "prepare", "Capture a clean pre-handoff checkpoint", "<session> --next-action <text>")
         _help_row_compact(console, "failover", "Prepare handoff to another agent", "<session> --to-agent <name> --reason <text>")
         _help_row_compact(console, "launch", "Preview or dispatch a handoff", "<session> [--execute] [--yes]")
-        _help_row_compact(console, "resume", "Accept a prepared v2 handoff", "<session> [--handoff-id <id>]")
-        _help_row_compact(console, "repair", "Repair v2 integrity explicitly", "<session> <--rebuild-view|--rollback-pending|--promote-last-good>")
+        _help_row_compact(console, "resume", "Accept a prepared handoff", "<session> [--handoff-id <id>]")
+        _help_row_compact(console, "repair", "Repair session integrity explicitly", "<session> <--rebuild-view|--rollback-pending|--promote-last-good>")
         _help_row_compact(console, "inspect", "View session state", "<session>")
         _help_row_compact(console, "dashboard", "List all sessions in this repo", "[--repo <path>]")
         console.print()
@@ -660,8 +660,8 @@ def render_help(console: Console) -> None:
         ("prepare", "Capture a clean pre-handoff checkpoint", "<session> --next-action <text>"),
         ("failover", "Prepare handoff to another agent", "<session> --to-agent <name> --reason <text>"),
         ("launch", "Preview or dispatch a handoff", "<session> [--execute] [--yes]"),
-        ("resume", "Accept a prepared v2 handoff", "<session> [--handoff-id <id>]"),
-        ("repair", "Repair v2 integrity explicitly", "<session> <--rebuild-view|--rollback-pending|--promote-last-good>"),
+        ("resume", "Accept a prepared handoff", "<session> [--handoff-id <id>]"),
+        ("repair", "Repair session integrity explicitly", "<session> <--rebuild-view|--rollback-pending|--promote-last-good>"),
         ("inspect", "View session state", "<session>"),
         ("dashboard", "List all sessions in this repo", "[--repo <path>]"),
     ]

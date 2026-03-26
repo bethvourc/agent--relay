@@ -45,7 +45,7 @@ class StartSessionResult:
     phase: str
 
 
-def ensure_v2_repo_layout(repo_root: Path) -> None:
+def ensure_repo_layout(repo_root: Path) -> None:
     root = relay_root(repo_root)
     root.mkdir(parents=True, exist_ok=True)
     sessions_root(repo_root).mkdir(parents=True, exist_ok=True)
@@ -139,7 +139,7 @@ def initialize_session_from_manifest(
     object_payloads: list[tuple[ObjectManifest, Mapping[str, str | bytes]]],
     owner: str,
 ) -> None:
-    ensure_v2_repo_layout(repo_root)
+    ensure_repo_layout(repo_root)
     final_path = session_root(repo_root, manifest.session_id)
     if final_path.exists():
         raise SystemExit(f"Session already exists: {manifest.session_id}")
@@ -173,7 +173,7 @@ def start_session(
     snapshot_mode: str | None,
     owner: str,
 ) -> StartSessionResult:
-    ensure_v2_repo_layout(repo_root)
+    ensure_repo_layout(repo_root)
     created_at = _utc_now()
     manifest = SessionManifest(
         schema_version=SCHEMA_VERSION,

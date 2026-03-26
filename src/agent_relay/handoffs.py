@@ -10,7 +10,7 @@ from typing import Any
 
 from agent_relay.agents import get_agent_adapter, get_agent_display_name
 from agent_relay.resume_options import EVIDENCE_DEPTHS, ResumeRenderOptions
-from agent_relay.errors import V2CorruptionError
+from agent_relay.errors import CorruptionError
 from agent_relay.hashing import sha256_path, sha256_text
 from agent_relay.integrity import require_session_mutable
 from agent_relay.layout import object_dir
@@ -417,7 +417,7 @@ def _recover_interrupted_launch_locked(repo_root: Path, session_id: str, *, owne
     handoff_id = latest_event.payload.get("handoff_id")
     launch_id = latest_event.payload.get("launch_id")
     if not isinstance(handoff_id, str) or not isinstance(launch_id, str):
-        raise V2CorruptionError("launch.started payload must include handoff_id and launch_id", session_id=session_id)
+        raise CorruptionError("launch.started payload must include handoff_id and launch_id", session_id=session_id)
 
     handoff = _load_handoff_manifest(repo_root, session_id, handoff_id)
     finished_at = utc_now()
@@ -464,14 +464,14 @@ def _recover_interrupted_launch_locked(repo_root: Path, session_id: str, *, owne
 def _load_checkpoint_manifest(repo_root: Path, session_id: str, checkpoint_id: str) -> CheckpointManifest:
     manifest = load_referenced_object(repo_root, session_id, "checkpoint", checkpoint_id)
     if not isinstance(manifest, CheckpointManifest):
-        raise V2CorruptionError("checkpoint id resolved to the wrong manifest type", session_id=session_id)
+        raise CorruptionError("checkpoint id resolved to the wrong manifest type", session_id=session_id)
     return manifest
 
 
 def _load_handoff_manifest(repo_root: Path, session_id: str, handoff_id: str) -> HandoffManifest:
     manifest = load_referenced_object(repo_root, session_id, "handoff", handoff_id)
     if not isinstance(manifest, HandoffManifest):
-        raise V2CorruptionError("handoff id resolved to the wrong manifest type", session_id=session_id)
+        raise CorruptionError("handoff id resolved to the wrong manifest type", session_id=session_id)
     return manifest
 
 
@@ -507,7 +507,7 @@ def _load_prepared_handoff(
     packet_sha_text = packet_sha_path.read_text(encoding="utf-8").strip()
     actual_packet_sha = sha256_path(packet_path)
     if packet_sha_text != actual_packet_sha:
-        raise V2CorruptionError("handoff packet sha file does not match packet.md", session_id=session_id, path=packet_sha_path)
+        raise CorruptionError("handoff packet sha file does not match packet.md", session_id=session_id, path=packet_sha_path)
     launch_spec = _load_launch_spec_file(
         launch_spec_path,
         expected=StoredLaunchSpec(
@@ -545,11 +545,11 @@ def _load_launch_spec_file(path: Path, *, expected: StoredLaunchSpec, session_id
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        raise V2CorruptionError(f"launch-spec.json is not valid JSON: {exc}", session_id=session_id, path=path) from exc
+        raise CorruptionError(f"launch-spec.json is not valid JSON: {exc}", session_id=session_id, path=path) from exc
     required = {"profile", "cwd", "command", "template", "template_source", "instructions"}
     optional = {"packet_aware", "execute_policy", "warning"}
     if not isinstance(data, dict) or not required.issubset(data) or not set(data).issubset(required | optional):
-        raise V2CorruptionError("launch-spec.json has an unexpected shape", session_id=session_id, path=path)
+        raise CorruptionError("launch-spec.json has an unexpected shape", session_id=session_id, path=path)
     packet_aware = data.get("packet_aware")
     if packet_aware is None:
         packet_aware = expected.packet_aware
@@ -569,7 +569,7 @@ def _load_launch_spec_file(path: Path, *, expected: StoredLaunchSpec, session_id
         warning=_optional_warning(warning, "launch_spec.warning"),
     )
     if spec != expected:
-        raise V2CorruptionError("launch-spec.json does not match the handoff manifest", session_id=session_id, path=path)
+        raise CorruptionError("launch-spec.json does not match the handoff manifest", session_id=session_id, path=path)
     return spec
 
 
@@ -728,20 +728,20 @@ def _id_now(prefix: str) -> str:
 
 def _require_non_empty_str(value: Any, field_name: str) -> str:
     if not isinstance(value, str) or not value.strip():
-        raise V2CorruptionError(f"{field_name} must be a non-empty string")
+        raise CorruptionError(f"{field_name} must be a non-empty string")
     return value
 
 
 def _require_bool(value: Any, field_name: str) -> bool:
     if not isinstance(value, bool):
-        raise V2CorruptionError(f"{field_name} must be a boolean")
+        raise CorruptionError(f"{field_name} must be a boolean")
     return value
 
 
 def _require_execute_policy(value: Any, field_name: str) -> str:
     text = _require_non_empty_str(value, field_name)
     if text not in {"allow", "refuse"}:
-        raise V2CorruptionError(f"{field_name} must be one of: allow, refuse")
+        raise CorruptionError(f"{field_name} must be one of: allow, refuse")
     return text
 
 
@@ -749,7 +749,7 @@ def _optional_warning(value: Any, field_name: str) -> str | None:
     if value is None:
         return None
     if not isinstance(value, str):
-        raise V2CorruptionError(f"{field_name} must be a string when provided")
+        raise CorruptionError(f"{field_name} must be a string when provided")
     return value
 
 

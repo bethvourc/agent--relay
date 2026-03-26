@@ -126,5 +126,5 @@ def repair_reports_dir(repo_root: Path, session_id: str) -> Path:
     return recovery_dir(repo_root, session_id) / "repair-reports"
 
 
-def is_v2_session_dir(path: Path) -> bool:
+def is_session_dir(path: Path) -> bool:
     return (path / "session.json").exists()

@@ -9,7 +9,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
 
 from agent_relay.fs import write_json_atomic, write_text_atomic
-from agent_relay.errors import TransactionError, V2Error
+from agent_relay.errors import TransactionError, RelayError
 from agent_relay.hashing import sha256_path
 from agent_relay.layout import (
     object_dirname,
@@ -523,7 +523,7 @@ def recover_session_transactions(repo_root: Path, session_id: str) -> RecoveryRe
     if rebuild_required:
         try:
             load_session_view(repo_root, session_id)
-        except V2Error:
+        except RelayError:
             rebuild_required = False
         for candidate in committed_dirs:
             shutil.rmtree(candidate, ignore_errors=True)

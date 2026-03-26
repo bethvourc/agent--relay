@@ -184,7 +184,7 @@ def normalize_checkpoint_status_directive(status_directive: str | None) -> str |
     if not isinstance(status_directive, str):
         raise LifecycleViolation("checkpoint status override must be a string")
     if status_directive not in CHECKPOINT_STATUS_DIRECTIVES:
-        raise LifecycleViolation(f"v2 checkpoint does not support --status {status_directive!r}")
+        raise LifecycleViolation(f"checkpoint does not support --status {status_directive!r}")
     return status_directive
 
 
