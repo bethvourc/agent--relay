@@ -7,6 +7,7 @@ from pathlib import Path
 from agent_relay.models import ModelValidationError
 from agent_relay.storage import load_session, sessions_root
 from agent_relay.v2.errors import V2Error
+from agent_relay.v2.handoffs import recover_interrupted_launches
 from agent_relay.v2.storage import is_v2_session, load_session_view
 
 
@@ -37,6 +38,7 @@ class DashboardEntry:
 def load_session_for_inspect(repo_root: Path, session_id: str) -> dict:
     if is_v2_session(repo_root, session_id):
         try:
+            recover_interrupted_launches(repo_root, session_id, owner="cli:inspect")
             return load_session_view(repo_root, session_id).to_dict()
         except V2Error as exc:
             raise SystemExit(f"Session {session_id} is corrupt: {exc}") from exc
@@ -60,6 +62,7 @@ def list_sessions_for_dashboard(repo_root: Path) -> list[dict]:
         session_id = session_dir.name
         if is_v2_session(repo_root, session_id):
             try:
+                recover_interrupted_launches(repo_root, session_id, owner="cli:dashboard")
                 view = load_session_view(repo_root, session_id)
             except V2Error as exc:
                 entries.append(

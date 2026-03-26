@@ -104,11 +104,65 @@ def build_sample_v2_session(repo_root: Path, *, session_id: str = "20260325-1800
     checkpoint_one_manifest_path = checkpoint_one_dir / "manifest.json"
     _write_json(checkpoint_one_manifest_path, checkpoint_one.to_dict())
 
+    session_started = _build_event(
+        session_id=session_id,
+        event_id="ev-000001",
+        sequence=1,
+        event_type="session.started",
+        timestamp="2026-03-25T18:00:00Z",
+        tx_id="tx-0001",
+        phase_before=None,
+        phase_after="active",
+        payload={"session_manifest_sha256": manifest_hash},
+        object_refs=(),
+        prev_event_hash=None,
+    )
+    checkpoint_one_event = _build_event(
+        session_id=session_id,
+        event_id="ev-000002",
+        sequence=2,
+        event_type="checkpoint.recorded",
+        timestamp="2026-03-25T18:05:00Z",
+        tx_id="tx-0002",
+        phase_before="active",
+        phase_after="active",
+        payload={"checkpoint_id": checkpoint_one_id},
+        object_refs=(
+            ObjectRef(
+                object_kind="checkpoint",
+                object_id=checkpoint_one_id,
+                manifest_path=_relative_to_session(session_id, checkpoint_one_manifest_path),
+                manifest_sha256=sha256_path(checkpoint_one_manifest_path),
+            ),
+        ),
+        prev_event_hash=session_started.event_hash,
+    )
+
     handoff_id = "ho-20260325T180600Z-222222"
     handoff_dir = relay_root / "sessions" / session_id / "objects" / "handoffs" / handoff_id
     packet_path = handoff_dir / "packet.md"
+    packet_sha_path = handoff_dir / "packet.sha256"
+    launch_spec_path = handoff_dir / "launch-spec.json"
     packet_path.parent.mkdir(parents=True, exist_ok=True)
-    packet_path.write_text("# Codex Resume Packet\n\nContinue from cp-1.\n", encoding="utf-8")
+    packet_text = "# Codex Resume Packet\n\nContinue from cp-1.\n"
+    packet_path.write_text(packet_text, encoding="utf-8")
+    packet_sha_path.write_text(sha256_text(packet_text) + "\n", encoding="utf-8")
+    launch_spec_path.write_text(
+        json.dumps(
+            {
+                "profile": "Codex",
+                "cwd": str(repo_root),
+                "command": f"cd {repo_root} && codex --resume packet.md",
+                "template": "cd {repo_root} && codex --resume {resume_path}",
+                "template_source": "default",
+                "instructions": "Run Codex with the packet path",
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     handoff = HandoffManifest(
         schema_version=SCHEMA_VERSION,
         kind="handoff_manifest",
@@ -119,7 +173,7 @@ def build_sample_v2_session(repo_root: Path, *, session_id: str = "20260325-1800
         to_agent="codex",
         reason="Move implementation to Codex",
         source_checkpoint_id=checkpoint_one_id,
-        source_event_hash=ZERO_DIGEST,
+        source_event_hash=checkpoint_one_event.event_hash,
         launch_profile="Codex",
         launch_cwd=str(repo_root),
         launch_command=f"cd {repo_root} && codex --resume packet.md",
@@ -127,7 +181,13 @@ def build_sample_v2_session(repo_root: Path, *, session_id: str = "20260325-1800
         launch_template_source="default",
         launch_instructions="Run Codex with the packet path",
         packet_file="packet.md",
-        files=(_file_entry(packet_path),),
+        packet_sha256_file="packet.sha256",
+        launch_spec_file="launch-spec.json",
+        files=(
+            _file_entry(packet_path),
+            _file_entry(packet_sha_path),
+            _file_entry(launch_spec_path),
+        ),
     )
     handoff_manifest_path = handoff_dir / "manifest.json"
     _write_json(handoff_manifest_path, handoff.to_dict())
@@ -213,39 +273,6 @@ def build_sample_v2_session(repo_root: Path, *, session_id: str = "20260325-1800
     checkpoint_two_manifest_path = checkpoint_two_dir / "manifest.json"
     _write_json(checkpoint_two_manifest_path, checkpoint_two.to_dict())
 
-    session_started = _build_event(
-        session_id=session_id,
-        event_id="ev-000001",
-        sequence=1,
-        event_type="session.started",
-        timestamp="2026-03-25T18:00:00Z",
-        tx_id="tx-0001",
-        phase_before=None,
-        phase_after="active",
-        payload={"session_manifest_sha256": manifest_hash},
-        object_refs=(),
-        prev_event_hash=None,
-    )
-    checkpoint_one_event = _build_event(
-        session_id=session_id,
-        event_id="ev-000002",
-        sequence=2,
-        event_type="checkpoint.recorded",
-        timestamp="2026-03-25T18:05:00Z",
-        tx_id="tx-0002",
-        phase_before="active",
-        phase_after="active",
-        payload={"checkpoint_id": checkpoint_one_id},
-        object_refs=(
-            ObjectRef(
-                object_kind="checkpoint",
-                object_id=checkpoint_one_id,
-                manifest_path=_relative_to_session(session_id, checkpoint_one_manifest_path),
-                manifest_sha256=sha256_path(checkpoint_one_manifest_path),
-            ),
-        ),
-        prev_event_hash=session_started.event_hash,
-    )
     handoff_event = _build_event(
         session_id=session_id,
         event_id="ev-000003",
@@ -308,7 +335,7 @@ def build_sample_v2_session(repo_root: Path, *, session_id: str = "20260325-1800
         tx_id="tx-0006",
         phase_before="awaiting_resume",
         phase_after="active",
-        payload={"handoff_id": handoff_id},
+        payload={"handoff_id": handoff_id, "accepted_by_agent": "codex"},
         object_refs=(),
         prev_event_hash=launch_finished.event_hash,
     )

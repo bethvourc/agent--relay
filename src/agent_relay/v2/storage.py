@@ -22,6 +22,7 @@ from agent_relay.v2.models import (
     DerivedSessionView,
     HeadRef,
     JournalEvent,
+    ObjectManifest,
     ObjectRef,
     SessionManifest,
     build_session_manifest_hash,
@@ -94,6 +95,20 @@ def load_journal_events(repo_root: Path, session_id: str) -> list[JournalEvent]:
     if not events:
         raise V2CorruptionError("journal is empty", session_id=session_id, path=directory)
     return events
+
+
+def load_latest_journal_event(repo_root: Path, session_id: str) -> JournalEvent:
+    return load_journal_events(repo_root, session_id)[-1]
+
+
+def load_referenced_object(repo_root: Path, session_id: str, object_kind: str, object_id: str) -> ObjectManifest:
+    events = load_journal_events(repo_root, session_id)
+    session_path = session_root(repo_root, session_id)
+    for event in reversed(events):
+        for ref in event.object_refs:
+            if ref.object_kind == object_kind and ref.object_id == object_id:
+                return _load_object_from_ref(session_path, ref)
+    raise SystemExit(f"{object_kind} object not found: {object_id}")
 
 
 def _load_session_manifest_path(path: Path, *, session_id: str) -> SessionManifest:
@@ -184,4 +199,3 @@ def _load_object_from_ref(session_root_path: Path, ref: ObjectRef):
                 path=candidate,
             )
     return manifest
-

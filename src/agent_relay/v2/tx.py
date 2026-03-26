@@ -206,12 +206,14 @@ class SessionTransaction:
         operation: str,
         owner: str,
         lock: LockHandle,
+        release_lock_on_close: bool = True,
     ) -> None:
         self.repo_root = repo_root
         self.session_id = session_id
         self.operation = operation
         self.owner = owner
         self.lock = lock
+        self._release_lock_on_close = release_lock_on_close
         self.tx_id = new_tx_id()
         self.created_at = utc_now()
         self._pending_root = pending_tx_root(repo_root, session_id, self.tx_id)
@@ -271,6 +273,27 @@ class SessionTransaction:
             lock.release()
             raise
 
+    @classmethod
+    def begin_with_lock(
+        cls,
+        repo_root: Path,
+        session_id: str,
+        *,
+        operation: str,
+        owner: str,
+        lock: LockHandle,
+    ) -> SessionTransaction:
+        load_session_manifest(repo_root, session_id)
+        recover_session_transactions(repo_root, session_id)
+        return cls(
+            repo_root=repo_root,
+            session_id=session_id,
+            operation=operation,
+            owner=owner,
+            lock=lock,
+            release_lock_on_close=False,
+        )
+
     def __enter__(self) -> SessionTransaction:
         return self
 
@@ -280,7 +303,8 @@ class SessionTransaction:
     def close(self) -> None:
         if self._closed:
             return
-        self.lock.release()
+        if self._release_lock_on_close:
+            self.lock.release()
         self._closed = True
 
     def stage_manifest_object(

@@ -29,6 +29,7 @@ from agent_relay.storage import (
     save_session,
 )
 from agent_relay.summary import write_summary
+from agent_relay.v2.errors import V2Error
 from agent_relay.ui import (
     create_console,
     emit_json,
@@ -47,6 +48,12 @@ from agent_relay.ui import (
     render_start_success,
 )
 from agent_relay.v2.checkpoints import create_checkpoint_for_command
+from agent_relay.v2.handoffs import (
+    create_handoff_for_command,
+    execute_launch_for_command,
+    preview_launch_for_command,
+    resume_handoff_for_command,
+)
 from agent_relay.v2.storage import is_v2_session
 
 
@@ -223,6 +230,40 @@ def cmd_prepare(args: argparse.Namespace) -> int:
 
 def cmd_failover(args: argparse.Namespace) -> int:
     repo_root = default_repo_root(args.repo)
+    if is_v2_session(repo_root, args.session):
+        result = create_handoff_for_command(
+            repo_root,
+            args.session,
+            to_agent=args.to_agent,
+            reason=args.reason,
+            evidence_depth=args.resume_evidence_depth,
+            owner="cli:failover",
+        )
+        if args.json:
+            emit_json({
+                "command": "failover",
+                "session_id": args.session,
+                "handoff_id": result.handoff_id,
+                "to_agent": result.to_agent,
+                "resume_path": result.resume_path,
+                "launch_command": result.launch_command,
+                "launch_instructions": result.launch_instructions,
+            })
+        elif args.quiet:
+            emit_quiet(result.resume_path)
+            emit_quiet(result.launch_command)
+        else:
+            session_view = load_session_for_inspect(repo_root, args.session)
+            render_failover_success(
+                args.console,
+                session_view["current_agent"],
+                result.to_agent,
+                args.reason,
+                result.resume_path,
+                result.launch_command,
+            )
+        return 0
+
     session = load_session(repo_root, args.session)
     if not session.latest_checkpoint_id:
         raise SystemExit("Session has no checkpoint to hand off")
@@ -280,6 +321,85 @@ def cmd_failover(args: argparse.Namespace) -> int:
 
 def cmd_launch(args: argparse.Namespace) -> int:
     repo_root = default_repo_root(args.repo)
+    if is_v2_session(repo_root, args.session):
+        preview = preview_launch_for_command(
+            repo_root,
+            args.session,
+            handoff_id=getattr(args, "handoff_id", None),
+            owner="cli:launch",
+        )
+
+        if not args.execute:
+            if args.json:
+                emit_json({
+                    "command": "launch",
+                    "mode": "dry_run",
+                    "session_id": args.session,
+                    "handoff_id": preview.handoff_id,
+                    "target": preview.to_agent,
+                    "resume_path": preview.resume_path,
+                    "launch_command": preview.launch_command,
+                    "launch_instructions": preview.launch_instructions,
+                })
+            elif args.quiet:
+                emit_quiet(preview.launch_command)
+            else:
+                render_launch_preview(
+                    args.console,
+                    preview.to_agent,
+                    preview.resume_path,
+                    preview.launch_command,
+                    preview.launch_instructions,
+                )
+            return 0
+
+        if not args.json and not args.quiet and not getattr(args, "yes", False) and sys.stdin.isatty():
+            from rich.prompt import Confirm
+
+            render_launch_preview(
+                args.console,
+                preview.to_agent,
+                preview.resume_path,
+                preview.launch_command,
+                preview.launch_instructions,
+            )
+            if not Confirm.ask("\n  [brand]Execute launch?[/]", console=args.console, default=True):
+                args.console.print("  [muted]Launch cancelled.[/]")
+                return 0
+
+        if not args.json and not args.quiet:
+            with render_launch_executing(args.console):
+                result = execute_launch_for_command(
+                    repo_root,
+                    args.session,
+                    handoff_id=getattr(args, "handoff_id", None),
+                    owner="cli:launch",
+                )
+            render_launch_result(args.console, result.exit_code == 0, result.exit_code)
+        else:
+            result = execute_launch_for_command(
+                repo_root,
+                args.session,
+                handoff_id=getattr(args, "handoff_id", None),
+                owner="cli:launch",
+            )
+
+        if args.json:
+            emit_json({
+                "command": "launch",
+                "mode": "execute",
+                "session_id": args.session,
+                "handoff_id": result.handoff_id,
+                "launch_id": result.launch_id,
+                "target": result.to_agent,
+                "exit_code": result.exit_code,
+                "launch_status": result.launch_status,
+                "stdout_path": result.stdout_path,
+                "stderr_path": result.stderr_path,
+            })
+
+        return result.exit_code
+
     session = load_session(repo_root, args.session)
     handoff = latest_handoff(session)
 
@@ -338,6 +458,35 @@ def cmd_launch(args: argparse.Namespace) -> int:
         })
 
     return exit_code
+
+
+def cmd_resume(args: argparse.Namespace) -> int:
+    repo_root = default_repo_root(args.repo)
+    if not is_v2_session(repo_root, args.session):
+        raise SystemExit("resume is only supported for v2 sessions")
+    result = resume_handoff_for_command(
+        repo_root,
+        args.session,
+        handoff_id=getattr(args, "handoff_id", None),
+        owner="cli:resume",
+    )
+    if args.json:
+        emit_json({
+            "command": "resume",
+            "session_id": args.session,
+            "handoff_id": result.handoff_id,
+            "current_agent": result.current_agent,
+            "status": result.phase,
+        })
+    elif args.quiet:
+        emit_quiet(result.handoff_id)
+    else:
+        args.console.print(
+            f"[success]Resume accepted[/]  [label]handoff:[/] [brand]{result.handoff_id}[/]  "
+            f"[label]agent:[/] {result.current_agent}",
+            highlight=False,
+        )
+    return 0
 
 
 def cmd_inspect(args: argparse.Namespace) -> int:
@@ -430,6 +579,7 @@ def build_parser() -> argparse.ArgumentParser:
     launch = subparsers.add_parser("launch", help="Launch the latest prepared handoff")
     launch.add_argument("session")
     launch.add_argument("--repo")
+    launch.add_argument("--handoff-id", help="For v2 sessions, launch this prepared handoff id")
     launch.add_argument(
         "--execute",
         action="store_true",
@@ -441,6 +591,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip confirmation prompt",
     )
     launch.set_defaults(func=cmd_launch)
+
+    resume = subparsers.add_parser("resume", help="Accept a prepared v2 handoff and transfer ownership")
+    resume.add_argument("session")
+    resume.add_argument("--repo")
+    resume.add_argument("--handoff-id", help="For v2 sessions, resume this prepared handoff id")
+    resume.set_defaults(func=cmd_resume)
 
     inspect = subparsers.add_parser("inspect", help="Print session state")
     inspect.add_argument("session")
@@ -491,7 +647,7 @@ def main() -> int:
 
     try:
         return args.func(args)
-    except SystemExit as exc:
+    except (SystemExit, V2Error) as exc:
         message = str(exc) if str(exc) else "Unknown error"
         if args.json:
             emit_json({"error": message})

@@ -519,6 +519,8 @@ class HandoffManifest:
     launch_template_source: str
     launch_instructions: str
     packet_file: str
+    packet_sha256_file: str
+    launch_spec_file: str
     files: tuple[ManifestFile, ...]
 
     def __post_init__(self) -> None:
@@ -542,6 +544,8 @@ class HandoffManifest:
         _require_str(self.launch_instructions, "handoff_manifest.launch_instructions")
         _validate_manifest_files(self.files, "handoff_manifest.files")
         _require_file_reference(self.packet_file, self.files, "handoff_manifest.packet_file")
+        _require_file_reference(self.packet_sha256_file, self.files, "handoff_manifest.packet_sha256_file")
+        _require_file_reference(self.launch_spec_file, self.files, "handoff_manifest.launch_spec_file")
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> HandoffManifest:
@@ -564,6 +568,8 @@ class HandoffManifest:
             launch_template_source=mapping["launch_template_source"],
             launch_instructions=mapping["launch_instructions"],
             packet_file=mapping["packet_file"],
+            packet_sha256_file=mapping["packet_sha256_file"],
+            launch_spec_file=mapping["launch_spec_file"],
             files=_load_manifest_files(mapping.get("files", []), "handoff_manifest.files"),
         )
 
@@ -586,6 +592,8 @@ class HandoffManifest:
             "launch_template_source": self.launch_template_source,
             "launch_instructions": self.launch_instructions,
             "packet_file": self.packet_file,
+            "packet_sha256_file": self.packet_sha256_file,
+            "launch_spec_file": self.launch_spec_file,
             "files": [item.to_dict() for item in self.files],
         }
 

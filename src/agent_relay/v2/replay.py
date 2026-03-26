@@ -302,6 +302,16 @@ def _apply_handoff(state: _ReplayState, event: JournalEvent, load_object: Object
             "handoff does not reference the latest checkpoint",
             session_id=event.session_id,
         )
+    if manifest.source_event_hash != state.last_event_hash:
+        raise V2CorruptionError(
+            "handoff does not anchor to the prior journal head",
+            session_id=event.session_id,
+        )
+    if event.phase_after != "ready_for_handoff":
+        raise V2CorruptionError(
+            "handoff.prepared must transition the session to ready_for_handoff",
+            session_id=event.session_id,
+        )
     handoff = DerivedHandoffView(
         handoff_id=manifest.object_id,
         from_agent=manifest.from_agent,
@@ -324,6 +334,10 @@ def _apply_launch_started(state: _ReplayState, event: JournalEvent) -> None:
         raise V2CorruptionError("launch.started payload must include handoff_id and launch_id", session_id=event.session_id)
     if handoff_id not in state.handoffs:
         raise V2CorruptionError("launch.started references an unknown handoff", session_id=event.session_id)
+    if state.prepared_handoff_id != handoff_id:
+        raise V2CorruptionError("launch.started must reference the current prepared handoff", session_id=event.session_id)
+    if event.phase_after != "launching":
+        raise V2CorruptionError("launch.started must transition the session to launching", session_id=event.session_id)
     handoff = state.handoffs[handoff_id]
     state.handoffs[handoff_id] = DerivedHandoffView(
         handoff_id=handoff.handoff_id,
@@ -348,6 +362,11 @@ def _apply_launch_finished(state: _ReplayState, event: JournalEvent, load_object
     if manifest.handoff_id not in state.handoffs:
         raise V2CorruptionError("launch receipt references an unknown handoff", session_id=event.session_id)
     handoff = state.handoffs[manifest.handoff_id]
+    if handoff.latest_launch_id != manifest.object_id:
+        raise V2CorruptionError("launch receipt does not match the current launch attempt", session_id=event.session_id)
+    expected_phase_after = "awaiting_resume" if manifest.status == "succeeded" else "ready_for_handoff"
+    if event.phase_after != expected_phase_after:
+        raise V2CorruptionError("launch.finished phase_after does not match launch status", session_id=event.session_id)
     state.handoffs[manifest.handoff_id] = DerivedHandoffView(
         handoff_id=handoff.handoff_id,
         from_agent=handoff.from_agent,
@@ -369,7 +388,16 @@ def _apply_resume(state: _ReplayState, event: JournalEvent) -> None:
         raise V2CorruptionError("resume.accepted payload must include handoff_id", session_id=event.session_id)
     if handoff_id not in state.handoffs:
         raise V2CorruptionError("resume.accepted references an unknown handoff", session_id=event.session_id)
+    if state.prepared_handoff_id != handoff_id:
+        raise V2CorruptionError("resume.accepted must reference the current prepared handoff", session_id=event.session_id)
+    accepted_by_agent = event.payload.get("accepted_by_agent")
+    if accepted_by_agent is not None and not isinstance(accepted_by_agent, str):
+        raise V2CorruptionError("resume.accepted accepted_by_agent must be a string", session_id=event.session_id)
+    if event.phase_after != "active":
+        raise V2CorruptionError("resume.accepted must transition the session to active", session_id=event.session_id)
     handoff = state.handoffs[handoff_id]
+    if accepted_by_agent is not None and accepted_by_agent != handoff.to_agent:
+        raise V2CorruptionError("resume.accepted accepted_by_agent does not match handoff target", session_id=event.session_id)
     state.current_agent = handoff.to_agent
     state.last_resume_handoff_id = handoff_id
     if state.prepared_handoff_id == handoff_id:

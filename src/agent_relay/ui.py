@@ -36,6 +36,7 @@ RELAY_THEME = Theme(
         "status.ready": "bold dim white",
         "status.succeeded": "bold green",
         "status.failed": "bold red",
+        "status.interrupted": "bold yellow",
         "status.not_run": "dim",
         "agent.claude": "bold #FFB000",
         "agent.codex": "bold cyan",
@@ -57,6 +58,7 @@ STATUS_SYMBOLS = {
     "ready": "◌",
     "succeeded": "✔",
     "failed": "✖",
+    "interrupted": "◌",
     "not_run": "·",
 }
 
@@ -120,6 +122,7 @@ STATUS_LABELS = {
     "ready": "ready",
     "succeeded": "ok",
     "failed": "failed",
+    "interrupted": "interrupted",
     "not_run": "pending",
 }
 
@@ -583,6 +586,7 @@ def render_help(console: Console) -> None:
         _help_row_compact(console, "prepare", "Capture a clean pre-handoff checkpoint", "<session> --next-action <text>")
         _help_row_compact(console, "failover", "Prepare handoff to another agent", "<session> --to-agent <name> --reason <text>")
         _help_row_compact(console, "launch", "Preview or execute a handoff", "<session> [--execute] [--yes]")
+        _help_row_compact(console, "resume", "Accept a prepared v2 handoff", "<session> [--handoff-id <id>]")
         _help_row_compact(console, "inspect", "View session state", "<session>")
         _help_row_compact(console, "dashboard", "List all sessions in this repo", "[--repo <path>]")
         console.print()
@@ -614,6 +618,7 @@ def render_help(console: Console) -> None:
         ("prepare", "Capture a clean pre-handoff checkpoint", "<session> --next-action <text>"),
         ("failover", "Prepare handoff to another agent", "<session> --to-agent <name> --reason <text>"),
         ("launch", "Preview or execute a handoff", "<session> [--execute] [--yes]"),
+        ("resume", "Accept a prepared v2 handoff", "<session> [--handoff-id <id>]"),
         ("inspect", "View session state", "<session>"),
         ("dashboard", "List all sessions in this repo", "[--repo <path>]"),
     ]
