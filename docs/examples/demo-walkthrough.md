@@ -43,12 +43,7 @@ export DEMO_REPO=/tmp/agent-relay-demo
 
 mkdir -p "$DEMO_REPO"
 cd "$AGENT_RELAY_ROOT"
-
-if [ ! -x venv/bin/python ]; then
-  python3 -m venv venv
-fi
-
-venv/bin/python -m pip install -e .
+uv sync
 ```
 
 ## 2. Configure Safe Launch Commands
@@ -67,7 +62,7 @@ These override the real launches and write marker files into the demo repo inste
 Run:
 
 ```bash
-venv/bin/agent-relay --help
+.venv/bin/agent-relay --help
 ```
 
 You should see these commands:
@@ -86,7 +81,7 @@ You should see these commands:
 Run:
 
 ```bash
-SESSION_ID=$(venv/bin/agent-relay start \
+SESSION_ID=$(.venv/bin/agent-relay start \
   --agent claude \
   --task "Validate bidirectional handoff flow" \
   --repo "$DEMO_REPO" \
@@ -106,25 +101,25 @@ This creates:
 Run:
 
 ```bash
-venv/bin/agent-relay checkpoint "$SESSION_ID" \
+.venv/bin/agent-relay checkpoint "$SESSION_ID" \
   --next-action "Prepare the Codex handoff" \
   --decision "Use safe launch overrides for the demo" \
   --capture-git-changes \
   --repo "$DEMO_REPO"
 
-venv/bin/agent-relay prepare "$SESSION_ID" \
+.venv/bin/agent-relay prepare "$SESSION_ID" \
   --next-action "Hand off to Codex and continue implementation" \
   --validation-status partial \
   --validation-summary "The launch path still needs end-to-end validation" \
   --repo "$DEMO_REPO"
 
-venv/bin/agent-relay failover "$SESSION_ID" \
+.venv/bin/agent-relay failover "$SESSION_ID" \
   --to-agent codex \
   --reason "demo walkthrough step one" \
   --resume-evidence-depth full \
   --repo "$DEMO_REPO"
 
-venv/bin/agent-relay launch "$SESSION_ID" \
+.venv/bin/agent-relay launch "$SESSION_ID" \
   --repo "$DEMO_REPO" \
   --execute
 ```
@@ -141,7 +136,7 @@ What this should produce:
 Run:
 
 ```bash
-venv/bin/agent-relay checkpoint "$SESSION_ID" \
+.venv/bin/agent-relay checkpoint "$SESSION_ID" \
   --next-action "Prepare a return handoff to Claude" \
   --implementation-note "Codex completed the implementation slice and wants review" \
   --repo "$DEMO_REPO"
@@ -154,19 +149,19 @@ This proves the session continues instead of starting over after the first hando
 Run:
 
 ```bash
-venv/bin/agent-relay prepare "$SESSION_ID" \
+.venv/bin/agent-relay prepare "$SESSION_ID" \
   --next-action "Return to Claude for validation and close-out" \
   --validation-status partial \
   --validation-summary "Implementation is complete but final review is still pending" \
   --repo "$DEMO_REPO"
 
-venv/bin/agent-relay failover "$SESSION_ID" \
+.venv/bin/agent-relay failover "$SESSION_ID" \
   --to-agent claude \
   --reason "demo walkthrough return step" \
   --resume-evidence-depth full \
   --repo "$DEMO_REPO"
 
-venv/bin/agent-relay launch "$SESSION_ID" \
+.venv/bin/agent-relay launch "$SESSION_ID" \
   --repo "$DEMO_REPO" \
   --execute
 ```
@@ -183,7 +178,7 @@ What this should produce:
 Run:
 
 ```bash
-venv/bin/agent-relay checkpoint "$SESSION_ID" \
+.venv/bin/agent-relay checkpoint "$SESSION_ID" \
   --next-action "Ship the validated demo flow" \
   --decision "The same session survives multiple handoffs" \
   --validation-status passed \
@@ -202,7 +197,7 @@ find "$DEMO_REPO/.agent-relay/sessions/$SESSION_ID" -maxdepth 2 -type f | sort
 cat "$DEMO_REPO/.agent-relay/sessions/$SESSION_ID/summary.md"
 cat "$DEMO_REPO/.agent-relay/sessions/$SESSION_ID/resume/codex.md"
 cat "$DEMO_REPO/.agent-relay/sessions/$SESSION_ID/resume/claude.md"
-venv/bin/agent-relay inspect "$SESSION_ID" --repo "$DEMO_REPO"
+.venv/bin/agent-relay inspect "$SESSION_ID" --repo "$DEMO_REPO"
 cat "$DEMO_REPO/codex-launch.txt"
 cat "$DEMO_REPO/claude-launch.txt"
 ```

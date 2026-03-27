@@ -4,12 +4,12 @@ Use this checklist before calling the current local-first MVP ready.
 
 ## Environment
 
-- `venv/bin/python -m pip install -e .`
-- `venv/bin/agent-relay --help`
+- `uv sync`
+- `.venv/bin/agent-relay --help`
 
 ## Automated Validation
 
-- `venv/bin/python -m unittest discover -s tests`
+- `.venv/bin/python -m unittest discover -s tests`
 - confirm the suite includes the bidirectional integration flow
 
 ## Manual Demo Validation

@@ -1,7 +1,10 @@
 __pycache__/
 *.py[cod]
+.venv/
+venv/
 .pytest_cache/
 src/agent_relay/__pycache__/
 tests/__pycache__/
 docs/features/local-ideas.md
-agent-relay.egg-info/
+src/agent-relay.egg-info/
+*.egg-info/
