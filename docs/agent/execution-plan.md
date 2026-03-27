@@ -17,10 +17,10 @@ The current high-level design is enough to explain the product, but not enough t
 
 This execution plan is intended to be the missing layer. A new Codex session should be able to start from:
 
-- [v1-design.md](/Users/bethvour/projects/agent-relay/docs/v1-design.md)
-- [implementation-plan.md](/Users/bethvour/projects/agent-relay/docs/implementation-plan.md)
-- [execution-plan.md](/Users/bethvour/projects/agent-relay/docs/execution-plan.md)
-- [milestone-1-reliable-session-core.md](/Users/bethvour/projects/agent-relay/docs/milestone-1-reliable-session-core.md)
+- [v1-design.md](/Users/bethvour/projects/agent-relay/docs/developer/v1-design.md)
+- [implementation-plan.md](/Users/bethvour/projects/agent-relay/docs/agent/implementation-plan.md)
+- [execution-plan.md](/Users/bethvour/projects/agent-relay/docs/agent/execution-plan.md)
+- [milestone-1-reliable-session-core.md](/Users/bethvour/projects/agent-relay/docs/agent/milestones/milestone-1-reliable-session-core.md)
 
 ## Product Definition
 
@@ -151,10 +151,17 @@ tests/
   test_cli.py
 
 docs/
-  v1-design.md
-  implementation-plan.md
-  execution-plan.md
-  milestone-1-reliable-session-core.md
+  README.md
+  developer/
+    v1-design.md
+    roadmap-status.md
+  examples/
+    demo-walkthrough.md
+  agent/
+    implementation-plan.md
+    execution-plan.md
+    milestones/
+      milestone-1-reliable-session-core.md
 ```
 
 Not every file must exist immediately, but this should be the guiding structure.
