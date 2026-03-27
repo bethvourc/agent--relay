@@ -45,13 +45,13 @@ RELAY_THEME = Theme(
         "agent.claude": "bold #FFB000",
         "agent.codex": "bold cyan",
         "muted": "dim",
-        "banner.border": "bold #C77DFF",
-        "banner.accent": "bold #4FD3FF",
-        "banner.title": "bold #FFB8F2",
+        "banner.border": "bold #B87A00",
+        "banner.accent": "bold #FFB000",
+        "banner.title": "bold #FFB000",
         "banner.subtitle": "bold white",
-        "banner.note": "#D8D8D8",
-        "banner.prompt": "bold #4FD3FF",
-        "banner.icon": "#D9B8FF",
+        "banner.note": "white",
+        "banner.prompt": "bold #FFB000",
+        "banner.icon": "#B87A00",
         "banner.surface": "on #121212",
     }
 )
@@ -141,16 +141,16 @@ def render_banner(console: Console) -> None:
 
 def _banner_icon() -> Text:
     icon = Text()
-    icon.append("╭──╮  ╭──╮\n", style="banner.accent")
-    icon.append("│  │  │  │\n", style="banner.accent")
-    icon.append("╰──╯  ╰──╯\n", style="banner.accent")
-    icon.append("▛▀▀▀▀▀▀▜\n", style="banner.border")
-    icon.append("▌ ", style="banner.border")
+    icon.append("╭──╮ ╭──╮\n", style="banner.accent")
+    icon.append("│  │ │  │\n", style="banner.accent")
+    icon.append("╰──╯ ╰──╯\n", style="banner.accent")
+    icon.append("┌──────┐\n", style="banner.border")
+    icon.append("│ ", style="banner.border")
     icon.append("■", style="success")
-    icon.append("    ", style="banner.icon")
+    icon.append("  ", style="banner.icon")
     icon.append("■", style="success")
-    icon.append(" ▐\n", style="banner.border")
-    icon.append("▙▄▄▄▄▄▄▟", style="banner.border")
+    icon.append(" │\n", style="banner.border")
+    icon.append("└──────┘", style="banner.border")
     return icon
 
 
