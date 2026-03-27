@@ -4,6 +4,7 @@ import json
 import sys
 from typing import Any
 
+from rich import box
 from rich.console import Console
 from rich.panel import Panel
 from rich.rule import Rule
@@ -11,6 +12,8 @@ from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
 from rich.tree import Tree
+
+from agent_relay import __version__
 
 RELAY_THEME = Theme(
     {
@@ -42,6 +45,15 @@ RELAY_THEME = Theme(
         "agent.claude": "bold #FFB000",
         "agent.codex": "bold cyan",
         "muted": "dim",
+        "banner.border": "#B87A00",
+        "banner.accent": "bold #FFB000",
+        "banner.title": "bold #FFB000",
+        "banner.subtitle": "bold white",
+        "banner.note": "dim white",
+        "banner.prompt": "bold #FFB000",
+        "banner.icon": "#B87A00",
+        "banner.signal": "bold #7EE34B",
+        "banner.surface": "on #121212",
     }
 )
 
@@ -69,7 +81,11 @@ AGENT_SYMBOLS = {
     "codex": "◇",
 }
 
-BANNER_COMPACT = "[brand]▸ Agent Relay[/]  [dim]·  local-first agent handoff cli[/]"
+BANNER_COMPACT = (
+    f"[banner.border]▸[/] [banner.title]Agent Relay[/] "
+    f"[muted]v{__version__} · local-first agent handoff cli[/]"
+)
+BANNER_WIDE_WIDTH = 100
 
 
 def create_console(*, json_mode: bool = False, quiet: bool = False) -> Console:
@@ -100,14 +116,68 @@ def render_banner(console: Console) -> None:
     if is_compact(console):
         console.print(BANNER_COMPACT)
     else:
-        title = Text()
-        title.append("Agent", style="bold white")
-        title.append(" ")
-        title.append("Relay", style="brand")
-        title.append("\n")
-        title.append("local-first agent handoff cli", style="dim")
-        console.print(Panel(title, border_style="brand", padding=(0, 1), expand=False))
+        show_tips = console.width >= BANNER_WIDE_WIDTH
+        layout = Table.grid(padding=(0, 1), expand=True)
+        layout.add_column(width=6, vertical="top")
+        layout.add_column(ratio=1, vertical="top")
+        layout.add_row(
+            _banner_icon(),
+            _banner_body(include_tips=show_tips),
+        )
+        console.print(Panel(
+            layout,
+            border_style="banner.border",
+            box=box.ROUNDED,
+            padding=(1, 2),
+            expand=True,
+            style="banner.surface",
+        ))
     console.print()
+
+
+def _banner_icon() -> Text:
+    signal = "bold #7EE34B"
+    frame = "#B87A00"
+
+    icon = Text()
+    # Antenna
+    icon.append("  ◈\n", style=signal)
+    # Forehead with antenna connector
+    icon.append("╭─", style=frame)
+    icon.append("┴", style=signal)
+    icon.append("─╮\n", style=frame)
+    # Eyes
+    icon.append("│", style=frame)
+    icon.append("◈", style=signal)
+    icon.append(" ", style="")
+    icon.append("◈", style=signal)
+    icon.append("│\n", style=frame)
+    # Chin
+    icon.append("╰───╯", style=frame)
+    return icon
+
+
+def _banner_body(*, include_tips: bool) -> Text:
+    body = Text()
+    body.append("Agent Relay", style="banner.title")
+    body.append(f" v{__version__}", style="muted")
+    body.append("\n")
+    body.append("Local-first agent handoff CLI", style="banner.subtitle")
+    body.append("\n")
+    body.append(
+        "Capture context, hand off cleanly, and resume with full session state intact.",
+        style="banner.note",
+    )
+    if include_tips:
+        body.append("\n\n")
+        body.append("Help:", style="banner.note")
+        body.append(" ", style="banner.note")
+        body.append("agent-relay --help", style="banner.prompt")
+        body.append("  •  ", style="banner.border")
+        body.append("Sessions:", style="banner.note")
+        body.append(" ", style="banner.note")
+        body.append("agent-relay dashboard", style="banner.prompt")
+    return body
 
 
 STATUS_LABELS = {

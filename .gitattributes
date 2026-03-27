@@ -1,0 +1,8 @@
+docs/agent export-ignore
+docs/developer export-ignore
+docs/features export-ignore
+.internal-docs export-ignore
+.agent-relay export-ignore
+build export-ignore
+dist export-ignore
+tests export-ignore

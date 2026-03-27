@@ -1,19 +1,33 @@
 [project]
 name = "agent-relay"
 version = "0.1.0"
-description = "Local-first agent handoff CLI"
+description = "Local-first CLI for handing coding sessions between agents without losing context"
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = ["rich>=13.0"]
 authors = [
-  { name = "Beth Vour" }
+  { name = "Bethvour" }
+]
+keywords = ["agent", "automation", "cli", "developer-tools", "handoff"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development",
 ]
 
 [project.scripts]
 agent-relay = "agent_relay.cli:main"
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]

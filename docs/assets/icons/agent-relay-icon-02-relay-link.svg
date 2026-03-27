@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">Agent Relay icon variation 2</title>
+  <desc id="desc">A linked-eye agent icon with a relay bridge and compact lower terminal module.</desc>
+  <defs>
+    <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="1.2" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#121212"/>
+  <g stroke="#FFB000" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" filter="url(#softGlow)">
+    <path d="M20 16h8"/>
+    <path d="M36 16h8"/>
+    <rect x="14" y="12" width="12" height="14" rx="3.5"/>
+    <rect x="38" y="12" width="12" height="14" rx="3.5"/>
+    <path d="M26 19h12" stroke="#B87A00"/>
+    <path d="M18 41h24a3 3 0 0 1 3 3v4H15v-4a3 3 0 0 1 3-3Z" stroke="#B87A00" stroke-width="3.2"/>
+    <path d="M49 42.5h3"/>
+    <path d="M52 42.5l-2 2.2"/>
+    <path d="M52 42.5l-2-2.2"/>
+  </g>
+  <g fill="#7EE34B" filter="url(#softGlow)">
+    <rect x="22.5" y="43.5" width="4.5" height="4.5" rx="0.8"/>
+    <rect x="32.5" y="43.5" width="4.5" height="4.5" rx="0.8"/>
+  </g>
+</svg>
