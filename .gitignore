@@ -3,6 +3,9 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+.agent-relay/
+build/
+dist/
 src/agent_relay/__pycache__/
 tests/__pycache__/
 docs/features/local-ideas.md

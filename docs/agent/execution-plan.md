@@ -17,10 +17,10 @@ The current high-level design is enough to explain the product, but not enough t
 
 This execution plan is intended to be the missing layer. A new Codex session should be able to start from:
 
-- [v1-design.md](/Users/bethvour/projects/agent-relay/docs/developer/v1-design.md)
-- [implementation-plan.md](/Users/bethvour/projects/agent-relay/docs/agent/implementation-plan.md)
-- [execution-plan.md](/Users/bethvour/projects/agent-relay/docs/agent/execution-plan.md)
-- [milestone-1-reliable-session-core.md](/Users/bethvour/projects/agent-relay/docs/agent/milestones/milestone-1-reliable-session-core.md)
+- [v1-design.md](../developer/v1-design.md)
+- [implementation-plan.md](implementation-plan.md)
+- [execution-plan.md](execution-plan.md)
+- [milestone-1-reliable-session-core.md](milestones/milestone-1-reliable-session-core.md)
 
 ## Product Definition
 
@@ -237,28 +237,39 @@ Target layout under a repo:
 
 ```text
 .agent-relay/
+  VERSION
   sessions/
     <session-id>/
-      state.json
-      summary.md
-      checkpoints/
-        <checkpoint-id>.json
-      resume/
-        claude.md
-        codex.md
-      artifacts/
-        commands.ndjson
-        notes/
-        patches/
+      session.json
+      journal/
+      refs/
+        head.json
+      derived/
+        view.json
+      objects/
+        checkpoints/
+          <checkpoint-id>/
+            manifest.json
+            summary.md
+        handoffs/
+          <handoff-id>/
+            packet.md
+            launch-spec.json
+        launches/
+          <launch-id>/
+            stdout.log
+            stderr.log
+      recovery/
 ```
 
 Rules:
 
-- `state.json` contains the latest canonical session state
-- `checkpoints/` stores durable snapshots
-- `summary.md` mirrors the latest checkpoint for humans
-- `resume/` stores target-specific handoff packets
-- `artifacts/` stores evidence, not canonical state
+- `session.json` is the immutable session manifest
+- `journal/` plus `objects/` are the canonical durable state
+- `derived/view.json` and `refs/head.json` are rebuildable materialized views
+- `objects/checkpoints/` stores durable checkpoint snapshots
+- `objects/handoffs/` stores immutable handoff packets and launch specs
+- `objects/launches/` stores launch receipts and process output
 
 ## Module Responsibilities
 
