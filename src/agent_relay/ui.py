@@ -118,7 +118,7 @@ def render_banner(console: Console) -> None:
         console.print(BANNER_COMPACT)
     elif console.width >= BANNER_WIDE_WIDTH:
         layout = Table.grid(padding=(0, 2), expand=True)
-        layout.add_column(width=14, vertical="middle")
+        layout.add_column(width=18, vertical="middle")
         layout.add_column(ratio=1, vertical="middle")
         layout.add_row(
             Align.center(_banner_icon(), vertical="middle"),
@@ -146,18 +146,22 @@ def render_banner(console: Console) -> None:
 
 def _banner_icon() -> Text:
     icon = Text()
-    icon.append("╭───╮  ╭───╮\n", style="banner.accent")
-    icon.append("│   │  │   │\n", style="banner.accent")
-    icon.append("│   │  │   │\n", style="banner.accent")
-    icon.append("╰───╯  ╰───╯\n", style="banner.accent")
-    icon.append("\n")
-    icon.append("╭─────────╮  \n", style="banner.border")
-    icon.append("│  ", style="banner.border")
-    icon.append("■", style="banner.signal")
-    icon.append("   ", style="banner.icon")
-    icon.append("■", style="banner.signal")
-    icon.append("  │ ╎\n", style="banner.border")
-    icon.append("╰─────────╯  ", style="banner.border")
+    icon.append("  ╭─╮    ╭─╮\n", style="banner.accent")
+    icon.append("╭─┴─┴────┴─┴─╮\n", style="banner.border")
+    icon.append("│ ", style="banner.border")
+    icon.append("╭──╮", style="banner.signal")
+    icon.append("  ", style="")
+    icon.append("╭──╮", style="banner.signal")
+    icon.append(" │\n", style="banner.border")
+    icon.append("│ ", style="banner.border")
+    icon.append("╰──╯", style="banner.signal")
+    icon.append("  ", style="")
+    icon.append("╰──╯", style="banner.signal")
+    icon.append(" │\n", style="banner.border")
+    icon.append("│", style="banner.border")
+    icon.append("     ──     ", style="banner.accent")
+    icon.append("│\n", style="banner.border")
+    icon.append("╰────────────╯", style="banner.border")
     return icon
 
 

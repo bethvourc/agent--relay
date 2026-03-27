@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">Agent Relay icon variation 1</title>
+  <desc id="desc">A literal terminal-face icon with two upper eye modules and a lower terminal dock.</desc>
+  <defs>
+    <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="1.2" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#121212"/>
+  <g stroke="#FFB000" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round" filter="url(#softGlow)">
+    <rect x="14" y="10" width="12" height="16" rx="3.5"/>
+    <rect x="38" y="10" width="12" height="16" rx="3.5"/>
+    <rect x="16" y="36" width="28" height="14" rx="1.5" stroke="#B87A00" stroke-width="3.5"/>
+    <path d="M50 38v10"/>
+  </g>
+  <g fill="#7EE34B" filter="url(#softGlow)">
+    <rect x="23" y="41" width="5" height="5" rx="0.8"/>
+    <rect x="33" y="41" width="5" height="5" rx="0.8"/>
+  </g>
+</svg>
