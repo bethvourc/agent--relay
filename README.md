@@ -142,5 +142,3 @@ Two practical rules:
 
 - add `.agent-relay/` to `.gitignore`
 - do not put secrets or tokens into `AGENT_RELAY_CLAUDE_LAUNCH_TEMPLATE` or `AGENT_RELAY_CODEX_LAUNCH_TEMPLATE`, because the rendered command and template are recorded in handoff metadata
-
-The package README is intended to be self-contained for installation, usage, and release evaluation. Public repo docs are limited to examples and assets under `docs/`.
