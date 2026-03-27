@@ -4,6 +4,7 @@ __pycache__/
 venv/
 .pytest_cache/
 .agent-relay/
+.internal-docs/
 build/
 dist/
 src/agent_relay/__pycache__/

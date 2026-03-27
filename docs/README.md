@@ -2,7 +2,7 @@
 
 The package-facing introduction lives in the repository root `README.md`.
 
-This directory is intentionally not the primary public entry point for the package. Internal planning material is not indexed here for release-facing use.
+This directory is intentionally limited to public package reference material. Internal planning and agent/developer workflow docs are kept outside the public docs tree.
 
 ## Public Reference
 
