@@ -17,6 +17,10 @@ Use this checklist before calling the current local-first MVP ready.
 - `uv build`
 - inspect `dist/agent_relay-*.tar.gz` and confirm the source distribution only contains publishable package files
 - inspect `dist/agent_relay-*.whl` and confirm the wheel only contains runtime package code and metadata
+- confirm internal planning material is not part of published artifacts:
+  - `docs/agent/`
+  - `docs/developer/`
+  - `docs/features/`
 - confirm generated state and build artifacts are not tracked:
   - `.agent-relay/`
   - `build/`

@@ -143,10 +143,4 @@ Two practical rules:
 - add `.agent-relay/` to `.gitignore`
 - do not put secrets or tokens into `AGENT_RELAY_CLAUDE_LAUNCH_TEMPLATE` or `AGENT_RELAY_CODEX_LAUNCH_TEMPLATE`, because the rendered command and template are recorded in handoff metadata
 
-## Repository docs
-
-The repository also includes deeper project docs under `docs/`, including:
-
-- `docs/examples/demo-walkthrough.md` for a full bidirectional handoff demo
-- `docs/developer/release-checklist.md` for release validation
-- `docs/README.md` for the docs index
+The package README is intended to be self-contained for installation, usage, and release evaluation.
