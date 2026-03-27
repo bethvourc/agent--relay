@@ -3,6 +3,8 @@ name = "agent-relay"
 version = "0.1.0"
 description = "Local-first CLI for handing coding sessions between agents without losing context"
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = ["rich>=13.0"]
 authors = [
@@ -25,7 +27,7 @@ classifiers = [
 agent-relay = "agent_relay.cli:main"
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
