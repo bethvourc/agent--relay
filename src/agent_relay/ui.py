@@ -5,7 +5,6 @@ import sys
 from typing import Any
 
 from rich import box
-from rich.align import Align
 from rich.console import Console
 from rich.panel import Panel
 from rich.rule import Rule
@@ -86,7 +85,7 @@ BANNER_COMPACT = (
     f"[banner.border]▸[/] [banner.title]Agent Relay[/] "
     f"[muted]v{__version__} · local-first agent handoff cli[/]"
 )
-BANNER_WIDE_WIDTH = 110
+BANNER_WIDE_WIDTH = 100
 
 
 def create_console(*, json_mode: bool = False, quiet: bool = False) -> Console:
@@ -116,25 +115,17 @@ def emit_quiet(value: str) -> None:
 def render_banner(console: Console) -> None:
     if is_compact(console):
         console.print(BANNER_COMPACT)
-    elif console.width >= BANNER_WIDE_WIDTH:
+    else:
+        show_tips = console.width >= BANNER_WIDE_WIDTH
         layout = Table.grid(padding=(0, 1), expand=True)
         layout.add_column(width=6, vertical="top")
         layout.add_column(ratio=1, vertical="top")
         layout.add_row(
             _banner_icon(),
-            _banner_body(include_tips=True),
+            _banner_body(include_tips=show_tips),
         )
         console.print(Panel(
             layout,
-            border_style="banner.border",
-            box=box.ROUNDED,
-            padding=(1, 2),
-            expand=True,
-            style="banner.surface",
-        ))
-    else:
-        console.print(Panel(
-            _banner_body(include_tips=False),
             border_style="banner.border",
             box=box.ROUNDED,
             padding=(1, 2),
