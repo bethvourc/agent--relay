@@ -5,6 +5,7 @@ import sys
 from typing import Any
 
 from rich import box
+from rich.align import Align
 from rich.console import Console
 from rich.panel import Panel
 from rich.rule import Rule
@@ -45,13 +46,14 @@ RELAY_THEME = Theme(
         "agent.claude": "bold #FFB000",
         "agent.codex": "bold cyan",
         "muted": "dim",
-        "banner.border": "bold #B87A00",
+        "banner.border": "#B87A00",
         "banner.accent": "bold #FFB000",
         "banner.title": "bold #FFB000",
         "banner.subtitle": "bold white",
-        "banner.note": "white",
+        "banner.note": "dim white",
         "banner.prompt": "bold #FFB000",
         "banner.icon": "#B87A00",
+        "banner.signal": "bold #7EE34B",
         "banner.surface": "on #121212",
     }
 )
@@ -116,9 +118,12 @@ def render_banner(console: Console) -> None:
         console.print(BANNER_COMPACT)
     elif console.width >= BANNER_WIDE_WIDTH:
         layout = Table.grid(padding=(0, 2), expand=True)
-        layout.add_column(width=12)
-        layout.add_column(ratio=1)
-        layout.add_row(_banner_icon(), _banner_body(include_tips=True))
+        layout.add_column(width=14, vertical="middle")
+        layout.add_column(ratio=1, vertical="middle")
+        layout.add_row(
+            Align.center(_banner_icon(), vertical="middle"),
+            Align.left(_banner_body(include_tips=True), vertical="middle"),
+        )
         console.print(Panel(
             layout,
             border_style="banner.border",
@@ -141,16 +146,18 @@ def render_banner(console: Console) -> None:
 
 def _banner_icon() -> Text:
     icon = Text()
-    icon.append("╭──╮ ╭──╮\n", style="banner.accent")
-    icon.append("│  │ │  │\n", style="banner.accent")
-    icon.append("╰──╯ ╰──╯\n", style="banner.accent")
-    icon.append("┌──────┐\n", style="banner.border")
-    icon.append("│ ", style="banner.border")
-    icon.append("■", style="success")
-    icon.append("  ", style="banner.icon")
-    icon.append("■", style="success")
-    icon.append(" │\n", style="banner.border")
-    icon.append("└──────┘", style="banner.border")
+    icon.append("╭───╮  ╭───╮\n", style="banner.accent")
+    icon.append("│   │  │   │\n", style="banner.accent")
+    icon.append("│   │  │   │\n", style="banner.accent")
+    icon.append("╰───╯  ╰───╯\n", style="banner.accent")
+    icon.append("\n")
+    icon.append("╭─────────╮  \n", style="banner.border")
+    icon.append("│  ", style="banner.border")
+    icon.append("■", style="banner.signal")
+    icon.append("   ", style="banner.icon")
+    icon.append("■", style="banner.signal")
+    icon.append("  │ ╎\n", style="banner.border")
+    icon.append("╰─────────╯  ", style="banner.border")
     return icon
 
 
@@ -162,16 +169,18 @@ def _banner_body(*, include_tips: bool) -> Text:
     body.append("Local-first agent handoff CLI", style="banner.subtitle")
     body.append("\n")
     body.append(
-        "Capture context, prepare handoffs, and resume cleanly across Claude Code and Codex.",
+        "Capture context, hand off cleanly, and resume with full session state intact.",
         style="banner.note",
     )
     if include_tips:
         body.append("\n\n")
-        body.append("Use ", style="banner.note")
+        body.append("Help:", style="banner.note")
+        body.append(" ", style="banner.note")
         body.append("agent-relay --help", style="banner.prompt")
-        body.append(" to see commands. Open ", style="banner.note")
+        body.append("  •  ", style="banner.border")
+        body.append("Sessions:", style="banner.note")
+        body.append(" ", style="banner.note")
         body.append("agent-relay dashboard", style="banner.prompt")
-        body.append(" to inspect sessions in this repo.", style="banner.note")
     return body
 
 
