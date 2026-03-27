@@ -4,3 +4,4 @@ __pycache__/
 src/agent_relay/__pycache__/
 tests/__pycache__/
 docs/features/local-ideas.md
+agent-relay.egg-info/

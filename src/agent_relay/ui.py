@@ -117,12 +117,12 @@ def render_banner(console: Console) -> None:
     if is_compact(console):
         console.print(BANNER_COMPACT)
     elif console.width >= BANNER_WIDE_WIDTH:
-        layout = Table.grid(padding=(0, 2), expand=True)
-        layout.add_column(width=18, vertical="middle")
-        layout.add_column(ratio=1, vertical="middle")
+        layout = Table.grid(padding=(0, 1), expand=True)
+        layout.add_column(width=6, vertical="top")
+        layout.add_column(ratio=1, vertical="top")
         layout.add_row(
-            Align.center(_banner_icon(), vertical="middle"),
-            Align.left(_banner_body(include_tips=True), vertical="middle"),
+            _banner_icon(),
+            _banner_body(include_tips=True),
         )
         console.print(Panel(
             layout,
@@ -145,23 +145,24 @@ def render_banner(console: Console) -> None:
 
 
 def _banner_icon() -> Text:
+    signal = "bold #7EE34B"
+    frame = "#B87A00"
+
     icon = Text()
-    icon.append("  ╭─╮    ╭─╮\n", style="banner.accent")
-    icon.append("╭─┴─┴────┴─┴─╮\n", style="banner.border")
-    icon.append("│ ", style="banner.border")
-    icon.append("╭──╮", style="banner.signal")
-    icon.append("  ", style="")
-    icon.append("╭──╮", style="banner.signal")
-    icon.append(" │\n", style="banner.border")
-    icon.append("│ ", style="banner.border")
-    icon.append("╰──╯", style="banner.signal")
-    icon.append("  ", style="")
-    icon.append("╰──╯", style="banner.signal")
-    icon.append(" │\n", style="banner.border")
-    icon.append("│", style="banner.border")
-    icon.append("     ──     ", style="banner.accent")
-    icon.append("│\n", style="banner.border")
-    icon.append("╰────────────╯", style="banner.border")
+    # Antenna
+    icon.append("  ◈\n", style=signal)
+    # Forehead with antenna connector
+    icon.append("╭─", style=frame)
+    icon.append("┴", style=signal)
+    icon.append("─╮\n", style=frame)
+    # Eyes
+    icon.append("│", style=frame)
+    icon.append("◈", style=signal)
+    icon.append(" ", style="")
+    icon.append("◈", style=signal)
+    icon.append("│\n", style=frame)
+    # Chin
+    icon.append("╰───╯", style=frame)
     return icon
 
 
