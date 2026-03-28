@@ -630,7 +630,7 @@ def render_dashboard(console: Console, sessions: list[dict[str, Any]]) -> None:
 
     if not sessions:
         console.print("  [muted]No sessions found.[/]")
-        console.print("  [label]Start one with:[/]  [brand]agent-relay start --agent claude --task \"...\"[/]")
+        console.print("  [label]Start one with:[/]  [brand]agent-relay codex[/]  or  [brand]agent-relay claude[/]")
         console.print()
         return
 
@@ -689,59 +689,40 @@ def render_help(console: Console) -> None:
     compact = is_compact(console)
 
     if compact:
-        console.print("[heading]Commands[/]")
+        console.print("[heading]Usage[/]")
         console.print()
-        _help_row_compact(console, "start", "Create a new relay session", "--agent <name> --task <text>")
-        _help_row_compact(console, "checkpoint", "Save a session checkpoint", "<session> [--decision ...] [--blocker ...]")
-        _help_row_compact(console, "pause", "Pause a session with a final checkpoint", "<session> [--next-action ...]")
-        _help_row_compact(console, "prepare", "Capture a clean pre-handoff checkpoint", "<session> --next-action <text>")
-        _help_row_compact(console, "failover", "Prepare handoff to another agent", "<session> --to-agent <name> --reason <text>")
-        _help_row_compact(console, "launch", "Preview or dispatch a handoff", "<session> [--execute] [--yes]")
-        _help_row_compact(console, "resume", "Accept a prepared handoff", "<session> [--handoff-id <id>]")
-        _help_row_compact(console, "repair", "Repair session integrity explicitly", "<session> <--rebuild-view|--rollback-pending|--promote-last-good>")
-        _help_row_compact(console, "inspect", "View session state", "<session>")
-        _help_row_compact(console, "dashboard", "List all sessions in this repo", "[--repo <path>]")
+        console.print("  [brand]agent-relay codex[/]                    Relay to Codex")
+        console.print("  [brand]agent-relay claude[/]                   Relay to Claude Code")
+        console.print("  [brand]agent-relay codex --task \"...\"[/]       With context")
+        console.print("  [brand]agent-relay codex --no-launch[/]        Just create the packet")
+        console.print("  [brand]agent-relay status[/]                   View sessions")
         console.print()
         console.print("[heading]Options[/]")
         console.print()
-        console.print("  [brand]--json[/]       Machine-readable JSON output")
-        console.print("  [brand]--quiet[/] [brand]-q[/]  Minimal output for scripting")
-        console.print("  [brand]--help[/]  [brand]-h[/]  Show this help message")
+        console.print("  [brand]--task[/]  [brand]-t[/]  What the next agent should do")
+        console.print("  [brand]--from[/]       Source agent (auto-detected)")
+        console.print("  [brand]--no-launch[/]  Just create the packet")
+        console.print("  [brand]--yes[/]   [brand]-y[/]  Skip confirmation")
+        console.print("  [brand]--json[/]       JSON output")
+        console.print("  [brand]--quiet[/] [brand]-q[/]  Minimal output")
         console.print()
         return
 
-    show_usage = console.width >= 110
+    # Usage examples
+    examples = Table(show_header=False, box=None, padding=(0, 2), pad_edge=True)
+    examples.add_column("Command", style="brand", no_wrap=True)
+    examples.add_column("Description", style="muted")
 
-    table = Table(
-        show_header=False,
-        box=None,
-        padding=(0, 2),
-        pad_edge=True,
-    )
-    table.add_column("Command", style="brand", no_wrap=True, min_width=12)
-    table.add_column("Description", style="value")
-    if show_usage:
-        table.add_column("Usage", style="muted")
-
-    cmds = [
-        ("start", "Create a new relay session", "--agent <name> --task <text>"),
-        ("checkpoint", "Save a session checkpoint", "<session> [--decision ...] [--blocker ...]"),
-        ("pause", "Pause a session with a final checkpoint", "<session> [--next-action <text>]"),
-        ("prepare", "Capture a clean pre-handoff checkpoint", "<session> --next-action <text>"),
-        ("failover", "Prepare handoff to another agent", "<session> --to-agent <name> --reason <text>"),
-        ("launch", "Preview or dispatch a handoff", "<session> [--execute] [--yes]"),
-        ("resume", "Accept a prepared handoff", "<session> [--handoff-id <id>]"),
-        ("repair", "Repair session integrity explicitly", "<session> <--rebuild-view|--rollback-pending|--promote-last-good>"),
-        ("inspect", "View session state", "<session>"),
-        ("dashboard", "List all sessions in this repo", "[--repo <path>]"),
-    ]
-    for cmd, desc, usage in cmds:
-        table.add_row(cmd, desc, usage) if show_usage else table.add_row(cmd, desc)
+    examples.add_row("agent-relay codex", "Relay context to Codex")
+    examples.add_row("agent-relay claude", "Relay context to Claude Code")
+    examples.add_row('agent-relay codex --task "..."', "With instructions for the next agent")
+    examples.add_row("agent-relay codex --no-launch", "Create the packet without launching")
+    examples.add_row("agent-relay status", "View all relay sessions")
 
     console.print(Panel(
-        table,
-        border_style="brand.dim",
-        title="[heading]commands[/]",
+        examples,
+        border_style="brand",
+        title="[heading]usage[/]",
         title_align="left",
         padding=(1, 2),
         expand=False,
@@ -749,31 +730,108 @@ def render_help(console: Console) -> None:
 
     console.print()
 
+    # Options
     opts = Table(show_header=False, box=None, padding=(0, 2), pad_edge=True)
     opts.add_column("Flag", style="brand", no_wrap=True, min_width=14)
     opts.add_column("Description", style="value")
 
+    opts.add_row("--task   -t", "What the next agent should do")
+    opts.add_row("--from", "Source agent (auto-detected if omitted)")
+    opts.add_row("--no-launch", "Just create the handoff packet")
+    opts.add_row("--yes    -y", "Skip confirmation prompt")
     opts.add_row("--json", "Machine-readable JSON output")
-    opts.add_row("--quiet  -q", "Minimal output for scripting")
-    opts.add_row("--help   -h", "Show this help message")
+    opts.add_row("--quiet  -q", "Minimal output (just the packet path)")
 
     console.print(Panel(
         opts,
         border_style="brand.dim",
-        title="[heading]global options[/]",
+        title="[heading]options[/]",
         title_align="left",
         padding=(0, 2),
         expand=False,
     ))
 
     console.print()
-    console.print("  [muted]Run[/] [brand]agent-relay <command> --help[/] [muted]for command-specific options[/]")
-    console.print()
 
 
 def _help_row_compact(console: Console, cmd: str, desc: str, usage: str) -> None:
     console.print(f"  [brand]{cmd:12s}[/] {desc}")
     console.print(f"  {'':12s} [muted]{usage}[/]")
+
+
+def render_relay_success(
+    console: Console,
+    from_agent: str,
+    to_agent: str,
+    session_id: str,
+    resume_path: str,
+    launch_command: str,
+    *,
+    created_session: bool,
+    no_launch: bool,
+) -> None:
+    render_banner(console)
+
+    if is_compact(console):
+        console.print("[success]Relay ready[/]", highlight=False)
+        console.print(f"  {agent_badge(from_agent)} [brand]──▶[/] {agent_badge(to_agent)}", highlight=False)
+        console.print(f"  [label]Session:[/] [muted]{session_id}[/]", highlight=False)
+        console.print(f"  [label]Packet:[/]  [path]{resume_path}[/]", highlight=False)
+        if no_launch:
+            console.print(f"\n  [label]Run manually:[/]  [muted]{launch_command}[/]", highlight=False)
+        else:
+            console.print(f"\n  [label]Launch:[/]  [muted]{launch_command}[/]", highlight=False)
+        return
+
+    arrow = Text()
+    arrow.append("\n")
+    arrow.append("    ", style="")
+    arrow.append_text(agent_badge(from_agent))
+    arrow.append("  ──▶  ", style="brand")
+    arrow.append_text(agent_badge(to_agent))
+    arrow.append("\n")
+
+    content = Text()
+    content.append("Relay ready\n", style="success")
+    content.append_text(arrow)
+    content.append("\n")
+    content.append("  Session  ", style="label")
+    content.append(session_id, style="muted")
+    if created_session:
+        content.append("  (new)", style="muted")
+    content.append("\n")
+    content.append("  Packet   ", style="label")
+    content.append(resume_path, style="path")
+    content.append("\n\n")
+
+    if no_launch:
+        content.append("  Run manually:\n", style="label")
+        content.append(f"  {launch_command}", style="muted")
+    else:
+        content.append("  Launch:\n", style="label")
+        content.append(f"  {launch_command}", style="muted")
+
+    console.print(Panel(
+        content,
+        border_style="brand",
+        title="[brand]relay[/]",
+        title_align="left",
+        padding=(1, 2),
+        expand=False,
+    ))
+
+
+def render_relay_launching(console: Console) -> Any:
+    return console.status("[brand]Launching target agent...[/]", spinner="dots")
+
+
+def render_relay_launch_result(console: Console, success: bool, exit_code: int) -> None:
+    if success:
+        console.print()
+        console.print("[success]  ✔ Agent launched successfully[/]", highlight=False)
+    else:
+        console.print()
+        console.print(f"[error]  ✖ Agent launch failed[/]  [muted]exit code {exit_code}[/]", highlight=False)
 
 
 def render_error(console: Console, message: str) -> None:
