@@ -696,6 +696,7 @@ def render_help(console: Console) -> None:
         console.print("  [brand]agent-relay claude[/]                   Relay to Claude Code")
         console.print("  [brand]agent-relay claude --task \"...\"[/]      With instructions for the next agent")
         console.print("  [brand]agent-relay codex --no-launch[/]        Just create the packet")
+        console.print('  [brand]agent-relay converse claude codex -t "..."[/]  Agent-to-agent conversation')
         console.print("  [brand]agent-relay status[/]                   View sessions")
         console.print("  [brand]agent-relay clean[/]                    Remove all sessions")
         console.print()
@@ -720,6 +721,7 @@ def render_help(console: Console) -> None:
     examples.add_row("agent-relay claude", "Relay context to Claude Code")
     examples.add_row('agent-relay claude --task "..."', "With instructions for the next agent")
     examples.add_row("agent-relay codex --no-launch", "Create the packet without launching")
+    examples.add_row('agent-relay converse claude codex -t "..."', "Agent-to-agent conversation")
     examples.add_row("agent-relay status", "View all relay sessions")
     examples.add_row("agent-relay clean", "Remove all sessions")
 
@@ -851,3 +853,82 @@ def render_error(console: Console, message: str) -> None:
         padding=(0, 2),
         expand=False,
     ))
+
+
+# ---------------------------------------------------------------------------
+# Converse UI
+# ---------------------------------------------------------------------------
+
+def render_converse_start(
+    console: Console,
+    agent1: str,
+    agent2: str,
+    task: str,
+    max_turns: int,
+) -> None:
+    render_banner(console)
+    badge1 = agent_badge(agent1)
+    badge2 = agent_badge(agent2)
+    console.print(f"  {badge1} [brand]⇄[/] {badge2}  [muted]·[/]  [muted]{max_turns} turns max[/]", highlight=False)
+    console.print(f"  [label]Task:[/] {task}", highlight=False)
+    console.print()
+
+
+def render_converse_turn_active(console: Console, agent_key: str, turn_number: int, max_turns: int) -> Any:
+    """Return a console.status() context manager for the turn spinner."""
+    name = AGENT_NAMES_DISPLAY.get(agent_key, agent_key)
+    symbol = AGENT_SYMBOLS.get(agent_key, "·")
+    return console.status(
+        f"  [brand]Turn {turn_number}/{max_turns}[/]  {symbol} [agent.{agent_key}]{name}[/] is thinking...",
+        spinner="dots",
+    )
+
+
+def render_converse_turn_done(console: Console, turn_number: int, agent_key: str, summary: str, exit_code: int) -> None:
+    badge = agent_badge(agent_key, short=True)
+    if exit_code == 0:
+        console.print(
+            f"  [success]✔[/] [brand]Turn {turn_number}[/]  {badge}  [muted]{summary}[/]",
+            highlight=False,
+        )
+    else:
+        console.print(
+            f"  [error]✖[/] [brand]Turn {turn_number}[/]  {badge}  [error]exit {exit_code}[/]  [muted]{summary}[/]",
+            highlight=False,
+        )
+
+
+_STOP_REASON_LABELS = {
+    "max_turns": "Max turns reached",
+    "done_signal": "Task completed",
+    "interrupted": "Interrupted by user",
+    "agent_error": "Agent exited with error",
+}
+
+
+def render_converse_result(
+    console: Console,
+    session_id: str,
+    agent1: str,
+    agent2: str,
+    turns_completed: int,
+    stop_reason: str,
+) -> None:
+    console.print()
+    reason_label = _STOP_REASON_LABELS.get(stop_reason, stop_reason)
+
+    if stop_reason == "done_signal":
+        style = "success"
+        symbol = "✔"
+    elif stop_reason in ("agent_error", "interrupted"):
+        style = "warning"
+        symbol = "◌"
+    else:
+        style = "brand"
+        symbol = "●"
+
+    badge1 = agent_badge(agent1, short=True)
+    badge2 = agent_badge(agent2, short=True)
+    console.print(f"  [{style}]{symbol} {reason_label}[/]  [muted]·[/]  {badge1} [brand]⇄[/] {badge2}  [muted]·[/]  [muted]{turns_completed} turns[/]", highlight=False)
+    console.print(f"  [label]Session:[/]  [muted]{session_id}[/]", highlight=False)
+    console.print()

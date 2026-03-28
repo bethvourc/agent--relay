@@ -126,5 +126,13 @@ def repair_reports_dir(repo_root: Path, session_id: str) -> Path:
     return recovery_dir(repo_root, session_id) / "repair-reports"
 
 
+def turns_dir(repo_root: Path, session_id: str) -> Path:
+    return session_root(repo_root, session_id) / "turns"
+
+
+def turn_dir(repo_root: Path, session_id: str, turn_number: int) -> Path:
+    return turns_dir(repo_root, session_id) / f"turn-{turn_number:03d}"
+
+
 def is_session_dir(path: Path) -> bool:
     return (path / "session.json").exists()

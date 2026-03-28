@@ -12,6 +12,10 @@ from agent_relay.ui import (
     create_console,
     emit_json,
     emit_quiet,
+    render_converse_result,
+    render_converse_start,
+    render_converse_turn_active,
+    render_converse_turn_done,
     render_dashboard,
     render_error,
     render_help,
@@ -180,6 +184,84 @@ def cmd_clean(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_converse(args: argparse.Namespace) -> int:
+    from agent_relay.converse import converse as do_converse
+
+    repo_root = _resolve_repo(args.repo)
+    console = args.console
+    interactive = not args.json and not args.quiet
+
+    if interactive:
+        render_converse_start(console, args.agent1, args.agent2, args.task, args.max_turns)
+
+    # Build UI callbacks for interactive mode
+    _spinner_ctx = None
+
+    def on_turn_start(agent_key: str, turn_number: int, max_turns: int) -> None:
+        nonlocal _spinner_ctx
+        if interactive:
+            _spinner_ctx = render_converse_turn_active(console, agent_key, turn_number, max_turns)
+            _spinner_ctx.__enter__()
+
+    def on_turn_complete(turn: "TurnResult") -> None:  # noqa: F821
+        nonlocal _spinner_ctx
+        if _spinner_ctx is not None:
+            _spinner_ctx.__exit__(None, None, None)
+            _spinner_ctx = None
+        if interactive:
+            render_converse_turn_done(console, turn.turn_number, turn.agent_key, turn.summary, turn.exit_code)
+
+    result = do_converse(
+        repo_root,
+        agent1=args.agent1,
+        agent2=args.agent2,
+        task=args.task,
+        max_turns=args.max_turns,
+        owner="cli:converse",
+        on_turn_start=on_turn_start if interactive else None,
+        on_turn_complete=on_turn_complete if interactive else None,
+    )
+
+    # Clean up spinner if interrupted mid-turn
+    if _spinner_ctx is not None:
+        _spinner_ctx.__exit__(None, None, None)
+
+    if args.json:
+        emit_json({
+            "command": "converse",
+            "session_id": result.session_id,
+            "agent1": result.agent1,
+            "agent2": result.agent2,
+            "turns_completed": result.turns_completed,
+            "stop_reason": result.stop_reason,
+            "turns": [
+                {
+                    "turn": t.turn_number,
+                    "agent": t.agent_key,
+                    "exit_code": t.exit_code,
+                    "summary": t.summary,
+                    "done_signal": t.done_signal,
+                    "started_at": t.started_at,
+                    "finished_at": t.finished_at,
+                }
+                for t in result.turn_results
+            ],
+        })
+    elif args.quiet:
+        emit_quiet(result.session_id)
+    else:
+        render_converse_result(
+            console,
+            result.session_id,
+            result.agent1,
+            result.agent2,
+            result.turns_completed,
+            result.stop_reason,
+        )
+
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agent-relay", add_help=False)
     parser.add_argument("--help", "-h", action="store_true", default=False)
@@ -207,6 +289,16 @@ def build_parser() -> argparse.ArgumentParser:
     clean.add_argument("--all", action="store_true", help="Remove the entire .agent-relay directory")
     clean.add_argument("--repo")
     clean.set_defaults(func=cmd_clean)
+
+    # agent-relay converse <agent1> <agent2> — turn-based agent conversation
+    converse = subparsers.add_parser("converse", help="Turn-based agent-to-agent conversation")
+    converse.add_argument("agent1", choices=AGENT_NAMES, help="First agent (speaks first)")
+    converse.add_argument("agent2", choices=AGENT_NAMES, help="Second agent")
+    converse.add_argument("--task", "-t", required=True, help="Task for the agents to work on")
+    converse.add_argument("--max-turns", type=int, default=10, help="Maximum turns (default: 10)")
+    converse.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
+    converse.add_argument("--repo", help="Repository path (default: cwd)")
+    converse.set_defaults(func=cmd_converse)
 
     return parser
 
