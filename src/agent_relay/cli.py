@@ -125,6 +125,61 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_clean(args: argparse.Namespace) -> int:
+    import shutil
+    from agent_relay.layout import relay_root, sessions_root, session_root
+    from agent_relay.storage import is_session
+
+    repo_root = _resolve_repo(args.repo)
+    root = relay_root(repo_root)
+
+    if not root.exists():
+        if args.json:
+            emit_json({"command": "clean", "removed": 0})
+        elif not args.quiet:
+            args.console.print("  [muted]Nothing to clean.[/]")
+        return 0
+
+    if getattr(args, "all", False):
+        # Remove the entire .agent-relay directory
+        shutil.rmtree(root)
+        if args.json:
+            emit_json({"command": "clean", "mode": "all", "removed_path": str(root)})
+        elif args.quiet:
+            emit_quiet(str(root))
+        else:
+            args.console.print("[success]Cleaned[/]  Removed all relay data.", highlight=False)
+        return 0
+
+    # Remove all sessions
+    sess_root = sessions_root(repo_root)
+    if not sess_root.exists():
+        if args.json:
+            emit_json({"command": "clean", "removed": 0})
+        elif not args.quiet:
+            args.console.print("  [muted]No sessions to clean.[/]")
+        return 0
+
+    removed = []
+    for session_dir in sorted(sess_root.iterdir()):
+        if not session_dir.is_dir():
+            continue
+        session_id = session_dir.name
+        shutil.rmtree(session_dir)
+        removed.append(session_id)
+
+    if args.json:
+        emit_json({"command": "clean", "removed": len(removed), "session_ids": removed})
+    elif args.quiet:
+        emit_quiet(str(len(removed)))
+    else:
+        args.console.print(
+            f"[success]Cleaned[/]  Removed {len(removed)} session{'s' if len(removed) != 1 else ''}.",
+            highlight=False,
+        )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agent-relay", add_help=False)
     parser.add_argument("--help", "-h", action="store_true", default=False)
@@ -146,6 +201,12 @@ def build_parser() -> argparse.ArgumentParser:
     status = subparsers.add_parser("status", help="Show relay sessions")
     status.add_argument("--repo")
     status.set_defaults(func=cmd_status)
+
+    # agent-relay clean — remove sessions
+    clean = subparsers.add_parser("clean", help="Remove all relay sessions")
+    clean.add_argument("--all", action="store_true", help="Remove the entire .agent-relay directory")
+    clean.add_argument("--repo")
+    clean.set_defaults(func=cmd_clean)
 
     return parser
 

@@ -696,6 +696,7 @@ def render_help(console: Console) -> None:
         console.print("  [brand]agent-relay codex --task \"...\"[/]       With context")
         console.print("  [brand]agent-relay codex --no-launch[/]        Just create the packet")
         console.print("  [brand]agent-relay status[/]                   View sessions")
+        console.print("  [brand]agent-relay clean[/]                    Remove all sessions")
         console.print()
         console.print("[heading]Options[/]")
         console.print()
@@ -718,6 +719,7 @@ def render_help(console: Console) -> None:
     examples.add_row('agent-relay codex --task "..."', "With instructions for the next agent")
     examples.add_row("agent-relay codex --no-launch", "Create the packet without launching")
     examples.add_row("agent-relay status", "View all relay sessions")
+    examples.add_row("agent-relay clean", "Remove all sessions")
 
     console.print(Panel(
         examples,

@@ -107,10 +107,9 @@ class ClaudeCodeAdapter(AgentAdapter):
             display_name="Claude Code",
             cli_command="claude",
             launch_template_env="AGENT_RELAY_CLAUDE_LAUNCH_TEMPLATE",
-            default_launch_template="cd {repo_root} && {agent_cli} --resume {resume_path}",
+            default_launch_template='cd {repo_root} && {agent_cli} -p "$(cat {resume_path})"',
             launch_instructions_template=(
-                "Start {agent_name} in {repo_root_path} with {resume_path_path} as the "
-                "resume packet input."
+                "Start {agent_name} in {repo_root_path} with the resume packet as its prompt."
             ),
             resume_packet_target="claude",
             event_capture_hook_name=None,
@@ -124,10 +123,9 @@ class CodexAdapter(AgentAdapter):
             display_name="Codex",
             cli_command="codex",
             launch_template_env="AGENT_RELAY_CODEX_LAUNCH_TEMPLATE",
-            default_launch_template="cd {repo_root} && {agent_cli} --resume {resume_path}",
+            default_launch_template='cd {repo_root} && {agent_cli} "$(cat {resume_path})"',
             launch_instructions_template=(
-                "Start {agent_name} in {repo_root_path} with {resume_path_path} as the "
-                "resume packet input."
+                "Start {agent_name} in {repo_root_path} with the resume packet as its prompt."
             ),
             resume_packet_target="codex",
             event_capture_hook_name=None,
