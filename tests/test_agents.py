@@ -30,13 +30,13 @@ class AgentAdapterTests(TestCase):
 
             self.assertEqual(
                 launch_spec.command,
-                f"cd {shlex.quote(str(repo_root))} && codex --resume {shlex.quote(str(resume_path))}",
+                f'cd {shlex.quote(str(repo_root))} && codex "$(cat {shlex.quote(str(resume_path))})"',
             )
             self.assertEqual(launch_spec.template_source, "default")
             self.assertEqual(launch_spec.cwd, str(repo_root))
             self.assertTrue(launch_spec.packet_aware)
             self.assertEqual(launch_spec.execute_policy, "allow")
-            self.assertIn(str(resume_path), launch_spec.instructions)
+            self.assertIn("resume packet as its prompt", launch_spec.instructions)
 
     def test_adapter_renders_env_override_launch_spec(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

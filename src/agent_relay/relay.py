@@ -117,6 +117,10 @@ def relay(
     view = load_session_view(repo_root, session_id)
     if view.phase in ("active", "paused"):
         # Need to prepare for handoff — checkpoint with git changes + transition
+        # If the user provided a task, store it as a research note so the
+        # target agent gets context even when there are no code changes.
+        notes = [task] if task else []
+
         create_checkpoint_for_command(
             repo_root,
             session_id,
@@ -128,7 +132,7 @@ def relay(
                 decisions=[],
                 blockers=[],
                 touched_files=[],
-                research_notes=[],
+                research_notes=notes,
                 implementation_notes=[],
                 validation_status=None,
                 validation_summary=None,

@@ -147,6 +147,8 @@ def create_handoff_for_command(
         handoff_reason=reason,
         prepared_at=prepared_at,
         options=ResumeRenderOptions(evidence_depth=evidence_depth),
+        repo_root=repo_root,
+        session_id=session_id,
     )
     packet_sha = sha256_text(packet_text)
     packet_sha_text = packet_sha + "\n"
@@ -646,26 +648,49 @@ def _render_resume_packet(
     handoff_reason: str,
     prepared_at: str,
     options: ResumeRenderOptions,
+    repo_root: Path,
+    session_id: str,
 ) -> str:
     if get_agent_adapter(target_agent).resume_packet_target == "claude":
         title = "# Claude Code Resume Packet"
     else:
         title = "# Codex Resume Packet"
 
+    has_code_changes = bool(checkpoint.touched_files)
+
     lines = [
         title,
         "",
-        "Resume this Agent Relay session from the immutable state captured below.",
+        "Resume this Agent Relay session from the state captured below.",
         "",
-        "Session snapshot:",
+    ]
+
+    # Task briefing — the most important context for the target agent
+    if handoff_reason:
+        lines.append("## Task")
+        lines.append("")
+        lines.append(handoff_reason)
+        lines.append("")
+
+    if not has_code_changes:
+        lines.append(
+            "Note: No code changes were made in the previous session. "
+            "The prior agent may have been planning, researching, or discussing the approach. "
+            "Review the task above and continue from where they left off."
+        )
+        lines.append("")
+
+    lines.extend([
+        "## Session snapshot",
+        "",
         f"- Objective: {view.objective}",
         f"- Repository root: {view.repo_root}",
         f"- Current phase: {view.phase}",
         f"- Source agent: {get_agent_display_name(view.current_agent)}",
         f"- Prepared at: {prepared_at}",
-        f"- Handoff reason: {handoff_reason}",
         "",
-        "Latest checkpoint:",
+        "## Latest checkpoint",
+        "",
         f"- Checkpoint id: {checkpoint.object_id}",
         f"- Created at: {checkpoint.created_at}",
         f"- Phase hint: {checkpoint.phase_hint}",
@@ -676,14 +701,14 @@ def _render_resume_packet(
         f"- Status: {checkpoint.validation.status}",
         f"- Summary: {checkpoint.validation.summary or 'None recorded'}",
         "",
-    ]
+    ])
     _append_section(lines, "Decisions:", checkpoint.decisions)
     _append_section(lines, "Blockers:", checkpoint.blockers)
     _append_section(lines, "Research notes:", checkpoint.research_notes)
     _append_section(lines, "Implementation notes:", checkpoint.implementation_notes)
     _append_section(lines, "Touched files:", checkpoint.touched_files)
     _append_recent_handoffs(lines, view)
-    _append_checkpoint_artifacts(lines, checkpoint, options)
+    _append_checkpoint_artifacts(lines, checkpoint, options, repo_root=repo_root, session_id=session_id)
     return "\n".join(lines) + "\n"
 
 
@@ -710,28 +735,77 @@ def _append_recent_handoffs(lines: list[str], view: DerivedSessionView) -> None:
     lines.append("")
 
 
-def _append_checkpoint_artifacts(lines: list[str], checkpoint: CheckpointManifest, options: ResumeRenderOptions) -> None:
+def _append_checkpoint_artifacts(
+    lines: list[str],
+    checkpoint: CheckpointManifest,
+    options: ResumeRenderOptions,
+    *,
+    repo_root: Path,
+    session_id: str,
+) -> None:
     if options.evidence_depth == "minimal":
         return
+
+    checkpoint_dir = object_dir(repo_root, session_id, "checkpoint", checkpoint.object_id)
+
     lines.append("Latest checkpoint artifacts:")
-    if options.evidence_depth == "standard":
-        lines.append(f"- Capture mode: {checkpoint.capture_mode}")
-        lines.append(f"- Repo state: {checkpoint.repo_state_file}")
-        lines.append(f"- Validation: {checkpoint.validation_file}")
-        lines.append(f"- Summary: {checkpoint.summary_file}")
-        if checkpoint.git_head_file is not None:
-            lines.append(f"- Git head: {checkpoint.git_head_file}")
-        if checkpoint.workspace_patch_file is not None:
-            lines.append(f"- Workspace patch: {checkpoint.workspace_patch_file}")
-        if checkpoint.untracked_manifest_file is not None:
-            lines.append(f"- Untracked manifest: {checkpoint.untracked_manifest_file}")
-        if checkpoint.snapshot_manifest_file is not None:
-            lines.append(f"- Snapshot manifest: {checkpoint.snapshot_manifest_file}")
-        lines.append("")
-        return
-    for file_entry in checkpoint.files:
-        lines.append(f"- {file_entry.relative_path}")
+    lines.append(f"- Capture mode: {checkpoint.capture_mode}")
     lines.append("")
+
+    # Include git HEAD info
+    if checkpoint.git_head_file is not None:
+        git_head_path = checkpoint_dir / checkpoint.git_head_file
+        if git_head_path.exists():
+            lines.append("Git HEAD:")
+            lines.append("```")
+            lines.append(git_head_path.read_text(errors="replace").strip())
+            lines.append("```")
+            lines.append("")
+
+    # Include the actual workspace diff — this is the key content the target agent needs
+    if checkpoint.workspace_patch_file is not None:
+        patch_path = checkpoint_dir / checkpoint.workspace_patch_file
+        if patch_path.exists():
+            try:
+                patch_text = patch_path.read_text(errors="replace").strip()
+            except Exception:
+                patch_text = ""
+            if patch_text:
+                lines.append("Workspace changes (git diff):")
+                lines.append("```diff")
+                # Cap at 50k chars to avoid overwhelming the target agent
+                if len(patch_text) > 50_000:
+                    lines.append(patch_text[:50_000])
+                    lines.append(f"\n... (truncated, full patch is {len(patch_text)} chars)")
+                else:
+                    lines.append(patch_text)
+                lines.append("```")
+                lines.append("")
+            else:
+                lines.append("Workspace changes: None (clean working tree)")
+                lines.append("")
+
+    # Include untracked files list
+    if checkpoint.untracked_manifest_file is not None:
+        manifest_path = checkpoint_dir / checkpoint.untracked_manifest_file
+        if manifest_path.exists():
+            try:
+                manifest_data = json.loads(manifest_path.read_text())
+                untracked_files = manifest_data.get("files", [])
+            except Exception:
+                untracked_files = []
+            if untracked_files:
+                lines.append("Untracked files:")
+                for entry in untracked_files:
+                    rel_path = entry.get("relative_path", entry.get("path", "?"))
+                    lines.append(f"- {rel_path}")
+                lines.append("")
+
+    if options.evidence_depth == "full":
+        lines.append("All checkpoint files:")
+        for file_entry in checkpoint.files:
+            lines.append(f"- {file_entry.relative_path}")
+        lines.append("")
 
 
 def _manifest_file_for_text(relative_path: str, content: str) -> ManifestFile:

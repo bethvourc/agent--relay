@@ -78,13 +78,13 @@ def cmd_relay(args: argparse.Namespace) -> int:
                 return 0
 
         if not args.json and not args.quiet:
-            with render_relay_launching(args.console):
-                launch_result = execute_launch_for_command(
-                    repo_root,
-                    result.session_id,
-                    handoff_id=result.handoff_id,
-                    owner="cli:relay:launch",
-                )
+            args.console.print("\n  [brand]∴ Launching target agent...[/]\n")
+            launch_result = execute_launch_for_command(
+                repo_root,
+                result.session_id,
+                handoff_id=result.handoff_id,
+                owner="cli:relay:launch",
+            )
             render_relay_launch_result(args.console, launch_result.exit_code == 0, launch_result.exit_code)
         else:
             launch_result = execute_launch_for_command(
