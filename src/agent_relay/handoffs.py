@@ -574,6 +574,23 @@ def _load_launch_spec_file(path: Path, *, expected: StoredLaunchSpec, session_id
 
 
 def _run_launch_command(command: str, *, cwd: str) -> subprocess.CompletedProcess[str]:
+    import sys
+
+    if sys.stdin.isatty():
+        # Interactive CLIs (claude, codex) need a real terminal.
+        # Inherit stdio so the child process can detect the TTY.
+        result = subprocess.run(
+            command,
+            cwd=cwd,
+            shell=True,
+            check=False,
+        )
+        return subprocess.CompletedProcess(
+            args=result.args,
+            returncode=result.returncode,
+            stdout="",
+            stderr="",
+        )
     return subprocess.run(
         command,
         cwd=cwd,
