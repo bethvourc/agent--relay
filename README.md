@@ -17,7 +17,7 @@ Built-in agent adapters currently support `Claude Code` and `Codex`.
 ## Installation
 
 ```bash
-pip install agent-relay
+pip install agent-relay-tool
 ```
 
 Python 3.11 or newer is required.
