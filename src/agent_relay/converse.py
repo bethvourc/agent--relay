@@ -215,7 +215,7 @@ def _build_agent_command(agent_key: str, prompt_path: Path, repo_root: Path) -> 
     rr = shlex.quote(str(repo_root))
 
     if agent_key == "claude":
-        return f'cd {rr} && {cli} -p "$(cat {pp})" --output-format stream-json'
+        return f'cd {rr} && {cli} -p "$(cat {pp})" --output-format stream-json --verbose'
     elif agent_key == "codex":
         return f'cd {rr} && {cli} exec "$(cat {pp})" --json'
     else:
