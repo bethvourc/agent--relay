@@ -76,8 +76,8 @@ def normalize_claude_output(raw_stdout: str) -> str:
 
 
 def normalize_codex_output(raw_stdout: str) -> str:
-    """Parse Codex exec --json JSONL, extract final message text."""
-    last_text = ""
+    """Parse Codex exec --json JSONL, extract agent message text."""
+    texts: list[str] = []
     for line in raw_stdout.splitlines():
         line = line.strip()
         if not line:
@@ -86,20 +86,21 @@ def normalize_codex_output(raw_stdout: str) -> str:
             event = json.loads(line)
         except json.JSONDecodeError:
             continue
-        # Codex emits various event types; look for message content
+        # Codex emits item.completed with item.type=agent_message
+        if event.get("type") == "item.completed":
+            item = event.get("item", {})
+            if isinstance(item, dict) and item.get("type") == "agent_message":
+                text = item.get("text", "")
+                if text:
+                    texts.append(text)
+        # Also handle message events with content blocks
         if event.get("type") == "message" and event.get("role") == "assistant":
             for block in event.get("content", []):
-                if isinstance(block, dict) and block.get("type") == "output_text":
-                    last_text = block.get("text", "")
-                elif isinstance(block, dict) and block.get("type") == "text":
-                    last_text = block.get("text", "")
-        # Also handle flat content field
-        if "content" in event and isinstance(event["content"], str):
-            last_text = event["content"]
-        # Handle message wrapper
-        if "message" in event and isinstance(event["message"], str):
-            last_text = event["message"]
-    return last_text.strip() if last_text else raw_stdout.strip()
+                if isinstance(block, dict) and block.get("type") in ("output_text", "text"):
+                    text = block.get("text", "")
+                    if text:
+                        texts.append(text)
+    return "\n".join(texts) if texts else raw_stdout.strip()
 
 
 def _normalize_output(agent_key: str, raw_stdout: str) -> str:
@@ -109,6 +110,12 @@ def _normalize_output(agent_key: str, raw_stdout: str) -> str:
         return normalize_codex_output(raw_stdout)
     # Fallback: return raw output
     return raw_stdout.strip()
+
+
+def _strip_done_marker(text: str) -> str:
+    """Remove the CONVERSATION_COMPLETE marker from display text."""
+    import re
+    return re.sub(r'\s*CONVERSATION_COMPLETE\s*', ' ', text, flags=re.IGNORECASE).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -367,8 +374,9 @@ def converse(
             finished_at = _utc_now()
 
             # Normalize output
-            text = _normalize_output(current_agent, result.stdout)
-            done = detect_done_signal(text)
+            raw_text = _normalize_output(current_agent, result.stdout)
+            done = detect_done_signal(raw_text)
+            display_text = _strip_done_marker(raw_text)
 
             # Store artifacts
             _store_turn_artifacts(
@@ -376,15 +384,15 @@ def converse(
                 prompt_text, result.stdout, result.stderr,
             )
 
-            # Build turn result
+            # Build turn result — text is cleaned for display, raw kept in stdout
             turn = TurnResult(
                 turn_number=turn_number,
                 agent_key=current_agent,
                 exit_code=result.returncode,
                 raw_stdout=result.stdout,
                 raw_stderr=result.stderr,
-                text=text,
-                summary=_make_summary(text),
+                text=display_text,
+                summary=_make_summary(display_text),
                 done_signal=done,
                 started_at=started_at,
                 finished_at=finished_at,

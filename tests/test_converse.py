@@ -12,6 +12,7 @@ from agent_relay.converse import (
     normalize_codex_output,
     _make_summary,
     _normalize_output,
+    _strip_done_marker,
 )
 
 
@@ -73,26 +74,33 @@ class NormalizeClaudeOutputTests(TestCase):
 
 
 class NormalizeCodexOutputTests(TestCase):
-    def test_extracts_output_text(self) -> None:
+    def test_extracts_item_completed_agent_message(self) -> None:
+        lines = [
+            json.dumps({"type": "thread.started", "thread_id": "abc"}),
+            json.dumps({"type": "turn.started"}),
+            json.dumps({"type": "item.completed", "item": {"id": "item_0", "type": "agent_message", "text": "Hello from Codex"}}),
+            json.dumps({"type": "turn.completed", "usage": {"input_tokens": 100}}),
+        ]
+        raw = "\n".join(lines)
+        result = normalize_codex_output(raw)
+        self.assertEqual(result, "Hello from Codex")
+
+    def test_ignores_non_agent_message_items(self) -> None:
+        lines = [
+            json.dumps({"type": "item.completed", "item": {"id": "item_0", "type": "tool_call", "text": "ignored"}}),
+            json.dumps({"type": "item.completed", "item": {"id": "item_1", "type": "agent_message", "text": "keep this"}}),
+        ]
+        raw = "\n".join(lines)
+        result = normalize_codex_output(raw)
+        self.assertEqual(result, "keep this")
+
+    def test_extracts_message_with_content_blocks(self) -> None:
         lines = [
             json.dumps({"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Codex says hi"}]}),
         ]
         raw = "\n".join(lines)
         result = normalize_codex_output(raw)
         self.assertIn("Codex says hi", result)
-
-    def test_extracts_text_type(self) -> None:
-        lines = [
-            json.dumps({"type": "message", "role": "assistant", "content": [{"type": "text", "text": "text block"}]}),
-        ]
-        raw = "\n".join(lines)
-        result = normalize_codex_output(raw)
-        self.assertIn("text block", result)
-
-    def test_handles_flat_content_string(self) -> None:
-        raw = json.dumps({"content": "flat content string"})
-        result = normalize_codex_output(raw)
-        self.assertIn("flat content string", result)
 
     def test_falls_back_to_raw(self) -> None:
         raw = "raw codex output"
@@ -190,6 +198,24 @@ class BuildTurnPromptTests(TestCase):
             repo_root=Path("/tmp/repo"),
         )
         self.assertIn("CONVERSATION_COMPLETE", prompt)
+
+
+class StripDoneMarkerTests(TestCase):
+    def test_strips_marker(self) -> None:
+        self.assertEqual(_strip_done_marker("Hello CONVERSATION_COMPLETE"), "Hello")
+
+    def test_strips_marker_case_insensitive(self) -> None:
+        self.assertEqual(_strip_done_marker("Done conversation_complete"), "Done")
+
+    def test_preserves_text_without_marker(self) -> None:
+        self.assertEqual(_strip_done_marker("Just normal text"), "Just normal text")
+
+    def test_strips_marker_from_middle(self) -> None:
+        result = _strip_done_marker("Before CONVERSATION_COMPLETE after")
+        self.assertEqual(result, "Before after")
+
+    def test_empty_string(self) -> None:
+        self.assertEqual(_strip_done_marker(""), "")
 
 
 class MakeSummaryTests(TestCase):
