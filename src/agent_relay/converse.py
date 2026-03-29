@@ -149,6 +149,8 @@ Your shared workspace is: {repo_root}
 - You can read files, edit code, run commands — use your full capabilities.
 - When you believe the task is FULLY COMPLETE, include the exact text: CONVERSATION_COMPLETE
 - Do NOT include CONVERSATION_COMPLETE if there is still meaningful work to do.
+- The other agent will always get a chance to respond after you signal completion.
+- The conversation only ends when both agents agree, or after the other agent's final response.
 """
 
 
@@ -342,6 +344,7 @@ def converse(
 
     agents = [agent1, agent2]
     turn_history: list[TurnResult] = []
+    done_agents: set[str] = set()  # Track which agents have signaled completion
     stop_reason = "max_turns"
 
     try:
@@ -402,13 +405,20 @@ def converse(
             if on_turn_complete:
                 on_turn_complete(turn)
 
-            # Check stop conditions
-            # Require at least 2 turns so both agents get to speak
-            if done and turn_number >= 2:
-                stop_reason = "done_signal"
-                break
+            # Check stop conditions — bilateral completion
+            if done:
+                done_agents.add(current_agent)
             if result.returncode != 0:
                 stop_reason = "agent_error"
+                break
+            # Both agents agreed — conversation is done
+            if len(done_agents) == 2:
+                stop_reason = "done_signal"
+                break
+            # One agent signaled done, but the other already had their response turn
+            # (i.e., the other agent spoke after the first done signal without also signaling)
+            if len(done_agents) == 1 and other_agent in done_agents:
+                stop_reason = "done_signal"
                 break
 
     except KeyboardInterrupt:

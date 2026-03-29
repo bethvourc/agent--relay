@@ -6,6 +6,8 @@ from typing import Any
 
 from rich import box
 from rich.console import Console
+from rich.markdown import Markdown
+from rich.padding import Padding
 from rich.panel import Panel
 from rich.rule import Rule
 from rich.table import Table
@@ -904,16 +906,10 @@ def render_converse_turn_done(
             highlight=False,
         )
 
-    # Show the agent's actual output so users can follow the conversation
+    # Show the agent's actual output as rendered markdown
     if text.strip():
-        # Indent and cap the output for readability
-        lines = text.strip().splitlines()
-        max_lines = 30
-        for line in lines[:max_lines]:
-            console.print(f"    [muted]│[/] {line}", highlight=False)
-        if len(lines) > max_lines:
-            console.print(f"    [muted]│ ... ({len(lines) - max_lines} more lines)[/]", highlight=False)
-        console.print()
+        md = Markdown(text.strip())
+        console.print(Padding(md, (0, 0, 1, 6)))
 
 
 _STOP_REASON_LABELS = {
