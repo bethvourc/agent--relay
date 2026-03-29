@@ -395,7 +395,8 @@ def converse(
                 on_turn_complete(turn)
 
             # Check stop conditions
-            if done:
+            # Require at least 2 turns so both agents get to speak
+            if done and turn_number >= 2:
                 stop_reason = "done_signal"
                 break
             if result.returncode != 0:

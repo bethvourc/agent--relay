@@ -884,18 +884,36 @@ def render_converse_turn_active(console: Console, agent_key: str, turn_number: i
     )
 
 
-def render_converse_turn_done(console: Console, turn_number: int, agent_key: str, summary: str, exit_code: int) -> None:
+def render_converse_turn_done(
+    console: Console,
+    turn_number: int,
+    agent_key: str,
+    summary: str,
+    exit_code: int,
+    text: str = "",
+) -> None:
     badge = agent_badge(agent_key, short=True)
     if exit_code == 0:
         console.print(
-            f"  [success]✔[/] [brand]Turn {turn_number}[/]  {badge}  [muted]{summary}[/]",
+            f"  [success]✔[/] [brand]Turn {turn_number}[/]  {badge}",
             highlight=False,
         )
     else:
         console.print(
-            f"  [error]✖[/] [brand]Turn {turn_number}[/]  {badge}  [error]exit {exit_code}[/]  [muted]{summary}[/]",
+            f"  [error]✖[/] [brand]Turn {turn_number}[/]  {badge}  [error]exit {exit_code}[/]",
             highlight=False,
         )
+
+    # Show the agent's actual output so users can follow the conversation
+    if text.strip():
+        # Indent and cap the output for readability
+        lines = text.strip().splitlines()
+        max_lines = 30
+        for line in lines[:max_lines]:
+            console.print(f"    [muted]│[/] {line}", highlight=False)
+        if len(lines) > max_lines:
+            console.print(f"    [muted]│ ... ({len(lines) - max_lines} more lines)[/]", highlight=False)
+        console.print()
 
 
 _STOP_REASON_LABELS = {

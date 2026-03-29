@@ -209,7 +209,7 @@ def cmd_converse(args: argparse.Namespace) -> int:
             _spinner_ctx.__exit__(None, None, None)
             _spinner_ctx = None
         if interactive:
-            render_converse_turn_done(console, turn.turn_number, turn.agent_key, turn.summary, turn.exit_code)
+            render_converse_turn_done(console, turn.turn_number, turn.agent_key, turn.summary, turn.exit_code, turn.text)
 
     result = do_converse(
         repo_root,
