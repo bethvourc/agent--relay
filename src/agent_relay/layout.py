@@ -134,5 +134,17 @@ def turn_dir(repo_root: Path, session_id: str, turn_number: int) -> Path:
     return turns_dir(repo_root, session_id) / f"turn-{turn_number:03d}"
 
 
+def workspace_log_path(repo_root: Path, session_id: str) -> Path:
+    return session_root(repo_root, session_id) / "workspace-log.md"
+
+
+def concurrent_dir(repo_root: Path, session_id: str) -> Path:
+    return session_root(repo_root, session_id) / "concurrent"
+
+
+def concurrent_agent_dir(repo_root: Path, session_id: str, slot_index: int) -> Path:
+    return concurrent_dir(repo_root, session_id) / f"agent-{slot_index:02d}"
+
+
 def is_session_dir(path: Path) -> bool:
     return (path / "session.json").exists()

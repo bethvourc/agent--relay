@@ -858,20 +858,47 @@ def render_error(console: Console, message: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Discover UI
+# ---------------------------------------------------------------------------
+
+def render_discover_results(console: Console, results: list[Any]) -> None:
+    render_banner(console)
+    table = Table(box=None, padding=(0, 2), show_header=True, header_style="label")
+    table.add_column("Agent")
+    table.add_column("Status")
+    table.add_column("Path")
+    table.add_column("Version")
+
+    for r in results:
+        badge = agent_badge(r.key, short=True)
+        if r.available:
+            status = Text("● installed", style="success")
+            path = Text(r.cli_path or "—", style="muted")
+            version = Text(r.version or "—", style="muted")
+        else:
+            status = Text("✖ missing", style="error")
+            path = Text("—", style="muted")
+            version = Text("—", style="muted")
+        table.add_row(badge, status, path, version)
+
+    console.print(Padding(table, (0, 2)))
+    console.print()
+
+
+# ---------------------------------------------------------------------------
 # Converse UI
 # ---------------------------------------------------------------------------
 
 def render_converse_start(
     console: Console,
-    agent1: str,
-    agent2: str,
+    agents: "Sequence[str]",
     task: str,
     max_turns: int,
 ) -> None:
     render_banner(console)
-    badge1 = agent_badge(agent1)
-    badge2 = agent_badge(agent2)
-    console.print(f"  {badge1} [brand]⇄[/] {badge2}  [muted]·[/]  [muted]{max_turns} turns max[/]", highlight=False)
+    badges = [agent_badge(a) for a in agents]
+    chain = " [brand]→[/] ".join(badges)
+    console.print(f"  {chain}  [muted]·[/]  [muted]{max_turns} turns max[/]", highlight=False)
     console.print(f"  [label]Task:[/] {task}", highlight=False)
     console.print()
 
@@ -915,6 +942,8 @@ def render_converse_turn_done(
 _STOP_REASON_LABELS = {
     "max_turns": "Max turns reached",
     "done_signal": "Task completed",
+    "all_done": "All agents completed",
+    "max_time": "Time limit reached",
     "interrupted": "Interrupted by user",
     "agent_error": "Agent exited with error",
 }
@@ -923,8 +952,7 @@ _STOP_REASON_LABELS = {
 def render_converse_result(
     console: Console,
     session_id: str,
-    agent1: str,
-    agent2: str,
+    agents: "Sequence[str]",
     turns_completed: int,
     stop_reason: str,
 ) -> None:
@@ -941,8 +969,48 @@ def render_converse_result(
         style = "brand"
         symbol = "●"
 
-    badge1 = agent_badge(agent1, short=True)
-    badge2 = agent_badge(agent2, short=True)
-    console.print(f"  [{style}]{symbol} {reason_label}[/]  [muted]·[/]  {badge1} [brand]⇄[/] {badge2}  [muted]·[/]  [muted]{turns_completed} turns[/]", highlight=False)
+    badges = [agent_badge(a, short=True) for a in agents]
+    chain = " [brand]→[/] ".join(badges)
+    console.print(f"  [{style}]{symbol} {reason_label}[/]  [muted]·[/]  {chain}  [muted]·[/]  [muted]{turns_completed} turns[/]", highlight=False)
     console.print(f"  [label]Session:[/]  [muted]{session_id}[/]", highlight=False)
+    console.print()
+
+
+# ---------------------------------------------------------------------------
+# Concurrent mode renderers
+# ---------------------------------------------------------------------------
+
+
+def render_concurrent_start(
+    console: Console,
+    agents: "Sequence[str]",
+    task: str,
+    max_time: int,
+) -> None:
+    render_banner(console)
+    badges = [agent_badge(a) for a in agents]
+    chain = " [brand]⫲[/] ".join(badges)
+    console.print(f"  {chain}  [muted]·[/]  [muted]concurrent · {max_time}s max[/]", highlight=False)
+    console.print(f"  [label]Task:[/] {task}", highlight=False)
+    console.print()
+
+
+def render_concurrent_result(console: Console, result: "ConcurrentResult") -> None:  # noqa: F821
+    console.print()
+    reason_label = _STOP_REASON_LABELS.get(result.stop_reason, result.stop_reason)
+
+    if result.stop_reason == "all_done":
+        style = "success"
+        symbol = "✔"
+    elif result.stop_reason in ("agent_error", "interrupted", "max_time"):
+        style = "warning"
+        symbol = "◌"
+    else:
+        style = "brand"
+        symbol = "●"
+
+    badges = [agent_badge(a, short=True) for a in result.agents]
+    chain = " [brand]⫲[/] ".join(badges)
+    console.print(f"  [{style}]{symbol} {reason_label}[/]  [muted]·[/]  {chain}  [muted]·[/]  [muted]{result.elapsed_seconds}s[/]", highlight=False)
+    console.print(f"  [label]Session:[/]  [muted]{result.session_id}[/]", highlight=False)
     console.print()

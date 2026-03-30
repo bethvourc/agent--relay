@@ -12,11 +12,14 @@ from agent_relay.ui import (
     create_console,
     emit_json,
     emit_quiet,
+    render_concurrent_result,
+    render_concurrent_start,
     render_converse_result,
     render_converse_start,
     render_converse_turn_active,
     render_converse_turn_done,
     render_dashboard,
+    render_discover_results,
     render_error,
     render_help,
     render_relay_launch_result,
@@ -184,15 +187,133 @@ def cmd_clean(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_converse(args: argparse.Namespace) -> int:
-    from agent_relay.converse import converse as do_converse
+def cmd_discover(args: argparse.Namespace) -> int:
+    from agent_relay.agents import discover
 
+    results = discover()
+
+    if args.json:
+        emit_json({
+            "command": "discover",
+            "agents": [
+                {
+                    "key": r.key,
+                    "display_name": r.display_name,
+                    "cli_command": r.cli_command,
+                    "available": r.available,
+                    "cli_path": r.cli_path,
+                    "version": r.version,
+                }
+                for r in results
+            ],
+        })
+    elif args.quiet:
+        for r in results:
+            if r.available:
+                emit_quiet(r.key)
+    else:
+        render_discover_results(args.console, results)
+
+    return 0
+
+
+def cmd_converse(args: argparse.Namespace) -> int:
     repo_root = _resolve_repo(args.repo)
     console = args.console
     interactive = not args.json and not args.quiet
 
+    # Validate agent keys
+    agents = args.agents
+    if len(agents) < 2:
+        raise SystemExit("Converse requires at least 2 agents.")
+    unknown = [a for a in agents if a not in AGENT_REGISTRY]
+    if unknown:
+        allowed = ", ".join(sorted(AGENT_REGISTRY))
+        raise SystemExit(f"Unknown agent(s): {', '.join(unknown)}. Choose from: {allowed}")
+
+    # Branch: concurrent vs turn-based
+    if getattr(args, "concurrent", False):
+        return _cmd_converse_concurrent(args, repo_root, agents, console, interactive)
+    return _cmd_converse_turns(args, repo_root, agents, console, interactive)
+
+
+def _cmd_converse_concurrent(
+    args: argparse.Namespace,
+    repo_root: Path,
+    agents: list[str],
+    console: "Console",  # noqa: F821
+    interactive: bool,
+) -> int:
+    from agent_relay.concurrent import run_concurrent
+
+    max_time = getattr(args, "max_time", 600)
+
     if interactive:
-        render_converse_start(console, args.agent1, args.agent2, args.task, args.max_turns)
+        render_concurrent_start(console, agents, args.task, max_time)
+
+    def on_agent_start(slot: int, agent_key: str) -> None:
+        if interactive:
+            from agent_relay.agents import get_agent_display_name
+            name = get_agent_display_name(agent_key)
+            console.print(f"  [brand]▸[/] Slot {slot}: [bold]{name}[/] started", highlight=False)
+
+    def on_agent_done(outcome: "AgentOutcome") -> None:  # noqa: F821
+        if interactive:
+            from agent_relay.agents import get_agent_display_name
+            name = get_agent_display_name(outcome.agent_key)
+            status = "[success]done[/]" if outcome.exit_code == 0 else f"[warning]exit {outcome.exit_code}[/]"
+            console.print(f"  [brand]▸[/] Slot {outcome.slot}: [bold]{name}[/] {status} — {outcome.summary}", highlight=False)
+
+    result = run_concurrent(
+        repo_root,
+        agents=agents,
+        task=args.task,
+        max_time_seconds=max_time,
+        owner="cli:converse:concurrent",
+        on_agent_start=on_agent_start if interactive else None,
+        on_agent_done=on_agent_done if interactive else None,
+    )
+
+    if args.json:
+        emit_json({
+            "command": "converse",
+            "mode": "concurrent",
+            "session_id": result.session_id,
+            "agents": list(result.agents),
+            "stop_reason": result.stop_reason,
+            "elapsed_seconds": result.elapsed_seconds,
+            "outcomes": [
+                {
+                    "slot": o.slot,
+                    "agent": o.agent_key,
+                    "exit_code": o.exit_code,
+                    "summary": o.summary,
+                    "done_signal": o.done_signal,
+                    "started_at": o.started_at,
+                    "finished_at": o.finished_at,
+                }
+                for o in result.outcomes
+            ],
+        })
+    elif args.quiet:
+        emit_quiet(result.session_id)
+    else:
+        render_concurrent_result(console, result)
+
+    return 0
+
+
+def _cmd_converse_turns(
+    args: argparse.Namespace,
+    repo_root: Path,
+    agents: list[str],
+    console: "Console",  # noqa: F821
+    interactive: bool,
+) -> int:
+    from agent_relay.converse import converse as do_converse
+
+    if interactive:
+        render_converse_start(console, agents, args.task, args.max_turns)
 
     # Build UI callbacks for interactive mode
     _spinner_ctx = None
@@ -213,8 +334,7 @@ def cmd_converse(args: argparse.Namespace) -> int:
 
     result = do_converse(
         repo_root,
-        agent1=args.agent1,
-        agent2=args.agent2,
+        agents=agents,
         task=args.task,
         max_turns=args.max_turns,
         owner="cli:converse",
@@ -229,9 +349,9 @@ def cmd_converse(args: argparse.Namespace) -> int:
     if args.json:
         emit_json({
             "command": "converse",
+            "mode": "turns",
             "session_id": result.session_id,
-            "agent1": result.agent1,
-            "agent2": result.agent2,
+            "agents": list(result.agents),
             "turns_completed": result.turns_completed,
             "stop_reason": result.stop_reason,
             "turns": [
@@ -253,8 +373,7 @@ def cmd_converse(args: argparse.Namespace) -> int:
         render_converse_result(
             console,
             result.session_id,
-            result.agent1,
-            result.agent2,
+            result.agents,
             result.turns_completed,
             result.stop_reason,
         )
@@ -290,12 +409,17 @@ def build_parser() -> argparse.ArgumentParser:
     clean.add_argument("--repo")
     clean.set_defaults(func=cmd_clean)
 
-    # agent-relay converse <agent1> <agent2> — turn-based agent conversation
+    # agent-relay discover — detect available agent CLIs
+    disc = subparsers.add_parser("discover", help="Detect available agent CLIs")
+    disc.set_defaults(func=cmd_discover)
+
+    # agent-relay converse <agent> <agent> [<agent>...] — turn-based agent conversation
     converse = subparsers.add_parser("converse", help="Turn-based agent-to-agent conversation")
-    converse.add_argument("agent1", choices=AGENT_NAMES, help="First agent (speaks first)")
-    converse.add_argument("agent2", choices=AGENT_NAMES, help="Second agent")
+    converse.add_argument("agents", nargs="+", metavar="AGENT", help="Agents to converse (round-robin, minimum 2)")
     converse.add_argument("--task", "-t", required=True, help="Task for the agents to work on")
     converse.add_argument("--max-turns", type=int, default=10, help="Maximum turns (default: 10)")
+    converse.add_argument("--concurrent", action="store_true", help="Run agents simultaneously instead of turn-based")
+    converse.add_argument("--max-time", type=int, default=600, help="Max seconds for concurrent mode (default: 600)")
     converse.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
     converse.add_argument("--repo", help="Repository path (default: cwd)")
     converse.set_defaults(func=cmd_converse)

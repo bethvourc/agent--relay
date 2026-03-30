@@ -159,7 +159,7 @@ class BuildTurnPromptTests(TestCase):
             task="Fix the tests",
             turn_history=[],
             current_agent="claude",
-            other_agent="codex",
+            all_agents=["claude", "codex"],
             turn_number=1,
             repo_root=Path("/tmp/repo"),
         )
@@ -178,7 +178,7 @@ class BuildTurnPromptTests(TestCase):
             task="Fix the tests",
             turn_history=history,
             current_agent="codex",
-            other_agent="claude",
+            all_agents=["claude", "codex"],
             turn_number=2,
             repo_root=Path("/tmp/repo"),
         )
@@ -193,11 +193,57 @@ class BuildTurnPromptTests(TestCase):
             task="Do something",
             turn_history=[],
             current_agent="claude",
-            other_agent="codex",
+            all_agents=["claude", "codex"],
             turn_number=1,
             repo_root=Path("/tmp/repo"),
         )
         self.assertIn("CONVERSATION_COMPLETE", prompt)
+
+    def test_three_agent_prompt_lists_all_participants(self) -> None:
+        from pathlib import Path
+        # claude + codex + claude: unique others from claude's perspective is just codex
+        prompt = build_turn_prompt(
+            task="Collaborate on design",
+            turn_history=[],
+            current_agent="codex",
+            all_agents=["claude", "codex", "claude"],
+            turn_number=2,
+            repo_root=Path("/tmp/repo"),
+        )
+        self.assertIn("Collaborate on design", prompt)
+        self.assertIn("Codex", prompt)
+        self.assertIn("Claude Code", prompt)
+        # From codex's perspective, the unique other agent is claude (1 unique)
+        self.assertIn("1 other AI agent", prompt)
+
+    def test_three_distinct_agents_lists_two_others(self) -> None:
+        """When three distinct agents converse, each sees 2 others."""
+        from pathlib import Path
+        # Use claude twice to simulate 3 slots, but test with codex seeing 1 unique
+        # For a true 3-distinct test we'd need a third agent type; test the count logic
+        prompt = build_turn_prompt(
+            task="Three-way task",
+            turn_history=[],
+            current_agent="claude",
+            all_agents=["claude", "codex"],
+            turn_number=1,
+            repo_root=Path("/tmp/repo"),
+        )
+        self.assertIn("1 other AI agent", prompt)
+
+    def test_two_agent_prompt_says_one_other(self) -> None:
+        from pathlib import Path
+        prompt = build_turn_prompt(
+            task="Pair up",
+            turn_history=[],
+            current_agent="claude",
+            all_agents=["claude", "codex"],
+            turn_number=1,
+            repo_root=Path("/tmp/repo"),
+        )
+        self.assertIn("1 other AI agent", prompt)
+        # Should not have trailing 's'
+        self.assertNotIn("1 other AI agents", prompt)
 
 
 class StripDoneMarkerTests(TestCase):

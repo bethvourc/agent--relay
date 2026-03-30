@@ -13,11 +13,13 @@ import sys
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from collections.abc import Sequence
 from typing import Callable
 
-from agent_relay.agents import AGENT_REGISTRY, get_agent_adapter, get_agent_display_name
+from agent_relay.agents import AGENT_REGISTRY, get_agent_adapter, get_agent_display_name, require_available
 from agent_relay.bootstrap import start_session
-from agent_relay.layout import turn_dir, turns_dir
+from agent_relay.layout import turn_dir, turns_dir, workspace_log_path
+from agent_relay.workspace_log import LogEntry, WorkspaceLog, utc_timestamp
 
 
 # ---------------------------------------------------------------------------
@@ -41,8 +43,7 @@ class TurnResult:
 @dataclass(frozen=True, slots=True)
 class ConverseResult:
     session_id: str
-    agent1: str
-    agent2: str
+    agents: tuple[str, ...]
     turns_completed: int
     stop_reason: str   # "max_turns" | "done_signal" | "interrupted" | "agent_error"
     turn_results: tuple[TurnResult, ...]
@@ -137,20 +138,21 @@ def detect_done_signal(text: str) -> bool:
 _MAX_HISTORY_CHARS = 100_000
 
 _SYSTEM_PREAMBLE = """\
-You are participating in a turn-based conversation with another AI agent.
+You are participating in a turn-based conversation with {other_count} other AI agent{plural}.
 You are {current_agent_name} ({current_agent_key}).
-The other agent is {other_agent_name} ({other_agent_key}).
+
+{participants_section}
 
 Your shared workspace is: {repo_root}
 
 ## Rules
 - Focus on the task. Be direct and concise.
-- Build on what the other agent has done. Don't repeat their work.
+- Build on what the other agents have done. Don't repeat their work.
 - You can read files, edit code, run commands — use your full capabilities.
 - When you believe the task is FULLY COMPLETE, include the exact text: CONVERSATION_COMPLETE
 - Do NOT include CONVERSATION_COMPLETE if there is still meaningful work to do.
-- The other agent will always get a chance to respond after you signal completion.
-- The conversation only ends when both agents agree, or after the other agent's final response.
+- All other agents will get a chance to respond after you signal completion.
+- The conversation only ends when all agents agree, or after everyone else responds.
 """
 
 
@@ -158,20 +160,33 @@ def build_turn_prompt(
     task: str,
     turn_history: list[TurnResult],
     current_agent: str,
-    other_agent: str,
+    all_agents: Sequence[str],
     turn_number: int,
     repo_root: Path,
 ) -> str:
     """Build the prompt for the next agent turn with full conversation history."""
     current_name = get_agent_display_name(current_agent)
-    other_name = get_agent_display_name(other_agent)
+
+    # Build participants section listing all other agents
+    others = [a for a in all_agents if a != current_agent]
+    unique_others = list(dict.fromkeys(others))  # dedupe preserving order
+    if unique_others:
+        participant_lines = ["Other participants:"]
+        for a in unique_others:
+            participant_lines.append(f"- {get_agent_display_name(a)} ({a})")
+        participants_section = "\n".join(participant_lines)
+    else:
+        participants_section = ""
+
+    other_count = len(set(all_agents) - {current_agent})
 
     lines: list[str] = [
         _SYSTEM_PREAMBLE.format(
             current_agent_name=current_name,
             current_agent_key=current_agent,
-            other_agent_name=other_name,
-            other_agent_key=other_agent,
+            other_count=other_count,
+            plural="s" if other_count != 1 else "",
+            participants_section=participants_section,
             repo_root=str(repo_root),
         ),
         "## Task",
@@ -296,20 +311,18 @@ def _utc_now() -> str:
 def converse(
     repo_root: Path,
     *,
-    agent1: str,
-    agent2: str,
+    agents: Sequence[str],
     task: str,
     max_turns: int = 10,
     owner: str = "cli:converse",
     on_turn_start: Callable[[str, int, int], None] | None = None,
     on_turn_complete: Callable[[TurnResult], None] | None = None,
 ) -> ConverseResult:
-    """Run a turn-based conversation between two agents.
+    """Run a turn-based conversation between N agents.
 
     Args:
         repo_root: Repository root path.
-        agent1: First agent key (speaks first).
-        agent2: Second agent key.
+        agents: Ordered list of agent keys (round-robin). Must have >= 2.
         task: The task prompt for the conversation.
         max_turns: Maximum number of turns before stopping.
         owner: Owner string for journal events.
@@ -319,11 +332,14 @@ def converse(
     Returns:
         ConverseResult with all turn data and stop reason.
     """
-    # Validate agents
-    for agent_key in (agent1, agent2):
-        if agent_key not in AGENT_REGISTRY:
-            allowed = ", ".join(sorted(AGENT_REGISTRY))
-            raise SystemExit(f"Unknown agent: {agent_key}. Choose from: {allowed}")
+    if len(agents) < 2:
+        raise SystemExit("Converse requires at least 2 agents.")
+
+    # Validate agents are registered and installed
+    require_available(agents)
+
+    n = len(agents)
+    agent_names = [get_agent_display_name(a) for a in agents]
 
     # Create session
     session_id = datetime.now(UTC).strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(3)
@@ -332,8 +348,8 @@ def converse(
         session_id=session_id,
         objective=task,
         workstream_kind="mixed",
-        initial_agent=agent1,
-        next_action=f"Converse with {get_agent_display_name(agent2)}",
+        initial_agent=agents[0],
+        next_action=f"Converse with {', '.join(agent_names[1:])}",
         snapshot_mode=None,
         owner=f"{owner}:start",
     )
@@ -342,15 +358,18 @@ def converse(
     turns_root = turns_dir(repo_root, session_id)
     turns_root.mkdir(parents=True, exist_ok=True)
 
-    agents = [agent1, agent2]
+    # Initialize workspace log
+    wlog = WorkspaceLog(workspace_log_path(repo_root, session_id))
+
     turn_history: list[TurnResult] = []
-    done_agents: set[str] = set()  # Track which agents have signaled completion
+    done_indices: set[int] = set()  # Track slot indices that signaled completion
+    grace_turns: int | None = None  # Countdown after first done signal
     stop_reason = "max_turns"
 
     try:
         for turn_number in range(1, max_turns + 1):
-            current_agent = agents[(turn_number - 1) % 2]
-            other_agent = agents[turn_number % 2]
+            slot = (turn_number - 1) % n
+            current_agent = agents[slot]
 
             if on_turn_start:
                 on_turn_start(current_agent, turn_number, max_turns)
@@ -360,7 +379,7 @@ def converse(
                 task=task,
                 turn_history=turn_history,
                 current_agent=current_agent,
-                other_agent=other_agent,
+                all_agents=agents,
                 turn_number=turn_number,
                 repo_root=repo_root,
             )
@@ -387,7 +406,7 @@ def converse(
                 prompt_text, result.stdout, result.stderr,
             )
 
-            # Build turn result — text is cleaned for display, raw kept in stdout
+            # Build turn result
             turn = TurnResult(
                 turn_number=turn_number,
                 agent_key=current_agent,
@@ -402,32 +421,45 @@ def converse(
             )
             turn_history.append(turn)
 
+            # Write workspace log entry
+            wlog.append(LogEntry(
+                timestamp=finished_at,
+                agent_key=current_agent,
+                agent_slot=slot,
+                entry_type="signal" if done else "turn_complete",
+                summary=turn.summary,
+            ))
+
             if on_turn_complete:
                 on_turn_complete(turn)
 
-            # Check stop conditions — bilateral completion
+            # --- N-lateral stop conditions ---
             if done:
-                done_agents.add(current_agent)
+                done_indices.add(slot)
             if result.returncode != 0:
                 stop_reason = "agent_error"
                 break
-            # Both agents agreed — conversation is done
-            if len(done_agents) == 2:
+            # All agent slots signaled done
+            if len(done_indices) == n:
                 stop_reason = "done_signal"
                 break
-            # One agent signaled done, but the other already had their response turn
-            # (i.e., the other agent spoke after the first done signal without also signaling)
-            if len(done_agents) == 1 and other_agent in done_agents:
-                stop_reason = "done_signal"
-                break
+            # Grace period: once any agent signals done, give every other
+            # non-done slot exactly one more turn to respond
+            if done_indices and grace_turns is None:
+                grace_turns = n - len(done_indices)
+            if grace_turns is not None:
+                if slot not in done_indices:
+                    grace_turns -= 1
+                if grace_turns <= 0:
+                    stop_reason = "done_signal"
+                    break
 
     except KeyboardInterrupt:
         stop_reason = "interrupted"
 
     return ConverseResult(
         session_id=session_id,
-        agent1=agent1,
-        agent2=agent2,
+        agents=tuple(agents),
         turns_completed=len(turn_history),
         stop_reason=stop_reason,
         turn_results=tuple(turn_history),

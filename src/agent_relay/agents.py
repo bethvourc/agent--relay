@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shlex
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -152,3 +153,69 @@ def get_agent_adapter(agent: str) -> AgentAdapter:
 
 def get_agent_display_name(agent: str) -> str:
     return get_agent_adapter(agent).display_name
+
+
+# ---------------------------------------------------------------------------
+# Agent discovery
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, slots=True)
+class DiscoveryResult:
+    key: str
+    display_name: str
+    cli_command: str
+    available: bool
+    cli_path: str | None
+    version: str | None
+
+
+def _detect_version(cli_command: str) -> str | None:
+    """Try to get version string from a CLI tool."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            [cli_command, "--version"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip().splitlines()[0]
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
+    return None
+
+
+def discover(keys: Iterable[str] | None = None) -> list[DiscoveryResult]:
+    """Check which registered agents have their CLI available on PATH."""
+    import shutil
+    target_keys = keys if keys is not None else AGENT_REGISTRY.keys()
+    results: list[DiscoveryResult] = []
+    for key in target_keys:
+        adapter = AGENT_REGISTRY.get(key)
+        if adapter is None:
+            continue
+        cli_path = shutil.which(adapter.cli_command)
+        version = _detect_version(adapter.cli_command) if cli_path else None
+        results.append(DiscoveryResult(
+            key=adapter.key,
+            display_name=adapter.display_name,
+            cli_command=adapter.cli_command,
+            available=cli_path is not None,
+            cli_path=cli_path,
+            version=version,
+        ))
+    return results
+
+
+def require_available(keys: Iterable[str]) -> None:
+    """Raise SystemExit if any specified agent CLI is not installed."""
+    import shutil
+    for key in keys:
+        adapter = AGENT_REGISTRY.get(key)
+        if adapter is None:
+            allowed = ", ".join(sorted(AGENT_REGISTRY))
+            raise SystemExit(f"Unknown agent: {key}. Choose from: {allowed}")
+        if shutil.which(adapter.cli_command) is None:
+            raise SystemExit(
+                f"{adapter.display_name} CLI ({adapter.cli_command}) not found on PATH. "
+                f"Install it or check your $PATH."
+            )
