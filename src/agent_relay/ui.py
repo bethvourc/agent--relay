@@ -804,6 +804,12 @@ def render_conflict_inspect(console: Console, summary: dict[str, Any]) -> None:
         path = str(item.get("path", "")).strip() or "?"
         kind = str(item.get("kind", "unknown")).strip() or "unknown"
         console.print(f"  [brand]•[/] [value]{path}[/]  [muted]({kind})[/]", highlight=False)
+        manual_reasons = item.get("manual_reasons", [])
+        if isinstance(manual_reasons, list) and manual_reasons:
+            console.print(
+                f"      [label]Handling:[/]  [muted]{', '.join(str(reason) for reason in manual_reasons)}[/]",
+                highlight=False,
+            )
         contributors = item.get("contributors", [])
         if isinstance(contributors, list) and contributors:
             contributor_bits: list[str] = []

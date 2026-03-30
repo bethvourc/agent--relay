@@ -133,6 +133,40 @@ _UNRESOLVED_CONFLICT_STATUSES = frozenset({
     "manual_resolution_required",
     "resolution_retry_pending",
 })
+_LOCKFILE_NAMES = frozenset({
+    "bun.lockb",
+    "Cargo.lock",
+    "composer.lock",
+    "Gemfile.lock",
+    "package-lock.json",
+    "Pipfile.lock",
+    "pnpm-lock.yaml",
+    "poetry.lock",
+    "uv.lock",
+    "yarn.lock",
+})
+_GENERATED_DIR_MARKERS = (
+    "__generated__",
+    "generated",
+    "dist",
+    "build",
+    ".next",
+    ".nuxt",
+)
+_GENERATED_SUFFIXES = (
+    ".generated.cjs",
+    ".generated.css",
+    ".generated.js",
+    ".generated.json",
+    ".generated.jsx",
+    ".generated.ts",
+    ".generated.tsx",
+    ".gen.js",
+    ".gen.jsx",
+    ".gen.ts",
+    ".gen.tsx",
+    ".g.dart",
+)
 
 def _require_tmux() -> str:
     """Return tmux path or raise SystemExit."""
@@ -853,6 +887,30 @@ def _read_text_if_possible(path: Path) -> str | None:
         return None
 
 
+def _is_lockfile_path(relative_path: str) -> bool:
+    return Path(relative_path).name in _LOCKFILE_NAMES
+
+
+def _is_generated_path(relative_path: str) -> bool:
+    normalized = relative_path.strip("/")
+    if not normalized:
+        return False
+    lower_path = normalized.lower()
+    name = Path(normalized).name.lower()
+    if any(name.endswith(suffix) for suffix in _GENERATED_SUFFIXES):
+        return True
+    segments = [segment.lower() for segment in Path(normalized).parts[:-1]]
+    return any(marker in segments for marker in _GENERATED_DIR_MARKERS)
+
+
+def _supports_auto_text_merge(relative_path: str, baseline_path: Path, source: Path) -> bool:
+    if _is_lockfile_path(relative_path) or _is_generated_path(relative_path):
+        return False
+    if not source.exists() or not baseline_path.exists():
+        return False
+    return _looks_like_text_file(source) and _looks_like_text_file(baseline_path)
+
+
 def _merge_shared_text_change(destination: Path, baseline_path: Path, source: Path) -> bool:
     current_text = _read_text_if_possible(destination)
     baseline_text = _read_text_if_possible(baseline_path)
@@ -964,6 +1022,44 @@ def _changed_paths_from_manifest(
     return current_manifest, changed_paths
 
 
+def _detect_renamed_paths(
+    baseline_manifest: dict[str, str],
+    current_manifest: dict[str, str],
+) -> dict[str, str]:
+    deleted_by_hash: dict[str, list[str]] = {}
+    for relative_path, file_hash in baseline_manifest.items():
+        if relative_path in current_manifest:
+            continue
+        deleted_by_hash.setdefault(file_hash, []).append(relative_path)
+
+    renamed_paths: dict[str, str] = {}
+    for relative_path, file_hash in current_manifest.items():
+        if relative_path in baseline_manifest:
+            continue
+        candidates = deleted_by_hash.get(file_hash)
+        if not candidates:
+            continue
+        source_path = candidates.pop(0)
+        renamed_paths[source_path] = relative_path
+        renamed_paths[relative_path] = source_path
+    return renamed_paths
+
+
+def _path_or_rename_matches_claims(
+    relative_path: str,
+    *,
+    editable_claims: Sequence[ClaimSpec],
+    renamed_paths: dict[str, str],
+    repo_root: Path,
+) -> bool:
+    if any(_path_matches_claim_spec(relative_path, claim, repo_root) for claim in editable_claims):
+        return True
+    counterpart = renamed_paths.get(relative_path)
+    if counterpart is None:
+        return False
+    return any(_path_matches_claim_spec(counterpart, claim, repo_root) for claim in editable_claims)
+
+
 def _merge_worktree_changes(
     repo_root: Path,
     *,
@@ -982,7 +1078,10 @@ def _merge_worktree_changes(
         baseline_hash = baseline_manifest.get(relative_path)
         current_hash = _path_hash_or_none(destination)
         if current_hash != baseline_hash:
-            if _shared_collaboration_enabled(relative_path, accepted_claims_by_slot, repo_root):
+            if (
+                _shared_collaboration_enabled(relative_path, accepted_claims_by_slot, repo_root)
+                and _supports_auto_text_merge(relative_path, baseline_path, source)
+            ):
                 merged = _merge_shared_text_change(destination, baseline_path, source)
                 if merged:
                     merged_paths.append(relative_path)
@@ -1016,11 +1115,17 @@ def _postprocess_implementation_outcomes(
             continue
         effective_claims = accepted_claims_by_slot.get(outcome.slot, outcome.claim_specs)
         editable_claims = _editable_claim_specs(effective_claims)
-        _current_manifest, changed_paths = _changed_paths_from_manifest(worktree_path, baseline_manifest)
+        current_manifest, changed_paths = _changed_paths_from_manifest(worktree_path, baseline_manifest)
+        renamed_paths = _detect_renamed_paths(baseline_manifest, current_manifest)
         scope_violations = tuple(sorted(
             path
             for path in changed_paths
-            if not any(_path_matches_claim_spec(path, claim, repo_root) for claim in editable_claims)
+            if not _path_or_rename_matches_claims(
+                path,
+                editable_claims=editable_claims,
+                renamed_paths=renamed_paths,
+                repo_root=repo_root,
+            )
         ))
         merged_paths: tuple[str, ...] = ()
         merge_conflicts: tuple[str, ...] = ()
@@ -1095,6 +1200,7 @@ def _build_conflict_artifact(
 
     worktree_by_slot = dict(enumerate(worktree_paths))
     payload_paths: list[dict[str, object]] = []
+    manual_paths: set[str] = set()
     for relative_path in conflict_paths:
         contributors: list[dict[str, object]] = []
         for outcome in outcomes:
@@ -1121,10 +1227,30 @@ def _build_conflict_artifact(
                 "version_path": version_rel,
             })
 
+        base_exists = (baseline_root / relative_path).exists() or (baseline_root / relative_path).is_symlink()
+        repo_exists = (repo_root / relative_path).exists() or (repo_root / relative_path).is_symlink()
+        manual_reasons: list[str] = []
+        if _is_lockfile_path(relative_path):
+            manual_reasons.append("lockfile")
+        if _is_generated_path(relative_path):
+            manual_reasons.append("generated")
+        version_paths = [baseline_root / relative_path, repo_root / relative_path]
+        version_paths.extend(
+            worktree_by_slot[outcome.slot] / relative_path
+            for outcome in outcomes
+            if relative_path in outcome.changed_paths and outcome.slot in worktree_by_slot
+        )
+        if any(path.exists() and not _looks_like_text_file(path) for path in version_paths):
+            manual_reasons.append("binary")
+        if base_exists and any(not bool(contributor.get("exists")) for contributor in contributors):
+            manual_reasons.append("delete")
+        if manual_reasons:
+            manual_paths.add(relative_path)
+
         payload_paths.append({
             "path": relative_path,
             "base_version": {
-                "exists": (baseline_root / relative_path).exists() or (baseline_root / relative_path).is_symlink(),
+                "exists": base_exists,
                 "path": _copy_conflict_version(
                     root=baseline_root,
                     relative_path=relative_path,
@@ -1133,7 +1259,7 @@ def _build_conflict_artifact(
                 ),
             },
             "repo_version": {
-                "exists": (repo_root / relative_path).exists() or (repo_root / relative_path).is_symlink(),
+                "exists": repo_exists,
                 "path": _copy_conflict_version(
                     root=repo_root,
                     relative_path=relative_path,
@@ -1142,12 +1268,14 @@ def _build_conflict_artifact(
                 ),
             },
             "contributors": contributors,
+            "manual_reasons": sorted(dict.fromkeys(manual_reasons)),
         })
 
     write_json_atomic(artifact_path, {
         "session_id": session_id,
         "generated_at": utc_timestamp(),
         "status": "merge_conflict",
+        "manual_paths": sorted(manual_paths),
         "paths": payload_paths,
     })
     return artifact_path
@@ -1477,6 +1605,11 @@ def load_conflict_artifact_summary(repo_root: Path, session_id: str) -> dict[str
             summaries.append({
                 "path": relative_path,
                 "kind": kind,
+                "manual_reasons": [
+                    str(reason).strip()
+                    for reason in item.get("manual_reasons", [])
+                    if isinstance(reason, str) and str(reason).strip()
+                ],
                 "contributors": contributors,
                 "base_version": _summarize_version("base_version"),
                 "repo_version": _summarize_version("repo_version"),
@@ -2125,6 +2258,20 @@ def _run_review_phase(
     return "approved", processed_outcome, (review_worktree,)
 
 
+def _manual_conflict_paths(artifact_path: Path) -> tuple[str, ...]:
+    payload = _load_conflict_artifact(artifact_path)
+    if payload is None:
+        return ()
+    raw_paths = payload.get("manual_paths")
+    if not isinstance(raw_paths, list):
+        return ()
+    return tuple(sorted({
+        str(path).strip()
+        for path in raw_paths
+        if isinstance(path, str) and str(path).strip()
+    }))
+
+
 def _attempt_resolution_phase(
     repo_root: Path,
     *,
@@ -2185,13 +2332,15 @@ def _attempt_resolution_phase(
             phase_outcomes=(),
         )
 
-    non_text_paths = _non_text_conflict_paths(conflict_artifact_path)
-    if non_text_paths:
+    manual_paths = _manual_conflict_paths(conflict_artifact_path)
+    if not manual_paths:
+        manual_paths = _non_text_conflict_paths(conflict_artifact_path)
+    if manual_paths:
         _set_conflict_artifact_status(
             conflict_artifact_path,
             status="manual_resolution_required",
-            note="One or more conflicted files are non-text and require human resolution.",
-            manual_paths=non_text_paths,
+            note="One or more conflicted files use special handling and require human resolution.",
+            manual_paths=manual_paths,
         )
         return ResolutionWorkflowResult(
             stop_reason="manual_resolution_required",

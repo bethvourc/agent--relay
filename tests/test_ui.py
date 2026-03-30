@@ -334,6 +334,7 @@ class ConflictInspectRenderTests(TestCase):
                 {
                     "path": "README.md",
                     "kind": "text",
+                    "manual_reasons": ["lockfile"],
                     "contributors": [
                         {
                             "slot": 0,
@@ -356,6 +357,7 @@ class ConflictInspectRenderTests(TestCase):
         output = buf.getvalue()
         self.assertIn("manual_resolution_required", output)
         self.assertIn("README.md", output)
+        self.assertIn("lockfile", output)
         self.assertIn("Contributors:", output)
         self.assertIn("/tmp/conflicts/base/README.md", output)
         self.assertIn("/tmp/conflicts/slot-01/README.md", output)

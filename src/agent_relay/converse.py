@@ -342,7 +342,7 @@ def build_turn_prompt(
         "",
         "## Completion State",
         "",
-    ]
+    ])
 
     if completion_state.active_epoch is None:
         lines.extend([

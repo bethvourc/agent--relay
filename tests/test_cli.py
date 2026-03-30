@@ -160,6 +160,7 @@ class AgentRelayCliTests(TestCase):
                     "paths": [
                         {
                             "path": "README.md",
+                            "manual_reasons": ["lockfile"],
                             "base_version": {"exists": True, "path": "conflicts/base/README.md"},
                             "repo_version": {"exists": True, "path": "conflicts/repo/README.md"},
                             "contributors": [
@@ -188,6 +189,7 @@ class AgentRelayCliTests(TestCase):
             self.assertEqual(data["attempted_slots"], [0, 1])
             self.assertEqual(data["paths"][0]["path"], "README.md")
             self.assertEqual(data["paths"][0]["kind"], "text")
+            self.assertEqual(data["paths"][0]["manual_reasons"], ["lockfile"])
             self.assertEqual(data["paths"][0]["contributors"][0]["roles"], ["shared"])
 
     def test_checkpoint_captures_notes_validation_and_git_touched_files(self) -> None:

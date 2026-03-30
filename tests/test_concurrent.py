@@ -732,6 +732,155 @@ class RunConcurrentTests(TestCase):
             self.assertEqual((repo_root / "README.md").read_text(encoding="utf-8"), "baseline readme\n")
             self.assertFalse((repo_root / "src" / "unexpected.py").exists())
 
+    def test_delete_within_claim_merges_cleanly(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            result = self._run(
+                planning_contents={
+                    0: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Docs","claims":["README.md"],"remaining_work":["docs"],"verification":[]}',
+                    1: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Tests","claims":["tests/test_concurrent.py"],"remaining_work":["tests"],"verification":[]}',
+                },
+                implementation_contents={
+                    0: 'Done\nRELAY_STATUS: {"status":"done","reason":"Removed stale doc","remaining_work":[],"verification":["review"]}',
+                    1: 'Done\nRELAY_STATUS: {"status":"done","reason":"No changes","remaining_work":[],"verification":["review"]}',
+                },
+                worktree_overrides={
+                    0: {"README.md": None},
+                },
+                planning_exit_codes={0: 0, 1: 0},
+                implementation_exit_codes={0: 0, 1: 0},
+                pane_dead=lambda _session, _slot: True,
+                session_exists=lambda _session: True,
+                repo_root=repo_root,
+            )
+            self.assertEqual(result.stop_reason, "all_done")
+            self.assertFalse((repo_root / "README.md").exists())
+            self.assertEqual(result.outcomes[0].merged_paths, ("README.md",))
+
+    def test_pure_rename_of_claimed_file_is_in_scope(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            result = self._run(
+                planning_contents={
+                    0: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Docs","claims":["README.md"],"remaining_work":["docs"],"verification":[]}',
+                    1: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Tests","claims":["tests/test_concurrent.py"],"remaining_work":["tests"],"verification":[]}',
+                },
+                implementation_contents={
+                    0: 'Done\nRELAY_STATUS: {"status":"done","reason":"Renamed doc","remaining_work":[],"verification":["review"]}',
+                    1: 'Done\nRELAY_STATUS: {"status":"done","reason":"No changes","remaining_work":[],"verification":["review"]}',
+                },
+                baseline_files={
+                    "README.md": "before\n",
+                    "tests/test_concurrent.py": "baseline tests\n",
+                },
+                worktree_overrides={
+                    0: {
+                        "README.md": None,
+                        "docs/README.md": "before\n",
+                    },
+                },
+                planning_exit_codes={0: 0, 1: 0},
+                implementation_exit_codes={0: 0, 1: 0},
+                pane_dead=lambda _session, _slot: True,
+                session_exists=lambda _session: True,
+                repo_root=repo_root,
+            )
+            self.assertEqual(result.stop_reason, "all_done")
+            self.assertFalse((repo_root / "README.md").exists())
+            self.assertEqual((repo_root / "docs" / "README.md").read_text(encoding="utf-8"), "before\n")
+            self.assertEqual(set(result.outcomes[0].merged_paths), {"README.md", "docs/README.md"})
+
+    def test_delete_conflict_requires_manual_resolution(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            result = self._run(
+                planning_contents={
+                    0: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Shared docs","claims":[{"path":"README.md","role":"shared"}],"remaining_work":["docs"],"verification":[]}',
+                    1: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Shared docs too","claims":[{"path":"README.md","role":"shared"}],"remaining_work":["docs"],"verification":[]}',
+                },
+                implementation_contents={
+                    0: 'Done\nRELAY_STATUS: {"status":"done","reason":"Delete doc","remaining_work":[],"verification":["review"]}',
+                    1: 'Done\nRELAY_STATUS: {"status":"done","reason":"Edit doc","remaining_work":[],"verification":["review"]}',
+                },
+                worktree_overrides={
+                    0: {"README.md": None},
+                    1: {"README.md": "edited instead of deleted\n"},
+                },
+                planning_exit_codes={0: 0, 1: 0},
+                implementation_exit_codes={0: 0, 1: 0},
+                pane_dead=lambda _session, _slot: True,
+                session_exists=lambda _session: True,
+                repo_root=repo_root,
+            )
+            self.assertEqual(result.stop_reason, "manual_resolution_required")
+            self.assertIsNotNone(result.conflict_artifact_path)
+            artifact = Path(result.conflict_artifact_path).read_text(encoding="utf-8")
+            self.assertIn('"manual_paths": [', artifact)
+            self.assertIn('"README.md"', artifact)
+            self.assertIn('"delete"', artifact)
+
+    def test_lockfile_conflict_requires_manual_resolution(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            result = self._run(
+                planning_contents={
+                    0: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Shared deps","claims":[{"path":"uv.lock","role":"shared"}],"remaining_work":["deps"],"verification":[]}',
+                    1: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Shared deps too","claims":[{"path":"uv.lock","role":"shared"}],"remaining_work":["deps"],"verification":[]}',
+                },
+                implementation_contents={
+                    0: 'Done\nRELAY_STATUS: {"status":"done","reason":"Updated lockfile","remaining_work":[],"verification":["review"]}',
+                    1: 'Done\nRELAY_STATUS: {"status":"done","reason":"Different lockfile update","remaining_work":[],"verification":["review"]}',
+                },
+                baseline_files={
+                    "uv.lock": "version = 1\n",
+                    "tests/test_concurrent.py": "baseline tests\n",
+                },
+                worktree_overrides={
+                    0: {"uv.lock": "version = 2\n"},
+                    1: {"uv.lock": "version = 3\n"},
+                },
+                planning_exit_codes={0: 0, 1: 0},
+                implementation_exit_codes={0: 0, 1: 0},
+                pane_dead=lambda _session, _slot: True,
+                session_exists=lambda _session: True,
+                repo_root=repo_root,
+            )
+            self.assertEqual(result.stop_reason, "manual_resolution_required")
+            artifact = Path(result.conflict_artifact_path).read_text(encoding="utf-8")
+            self.assertIn('"uv.lock"', artifact)
+            self.assertIn('"lockfile"', artifact)
+
+    def test_generated_file_conflict_requires_manual_resolution(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            result = self._run(
+                planning_contents={
+                    0: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Shared generated output","claims":[{"path":"src/schema.generated.ts","role":"shared"}],"remaining_work":["generated"],"verification":[]}',
+                    1: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Shared generated output too","claims":[{"path":"src/schema.generated.ts","role":"shared"}],"remaining_work":["generated"],"verification":[]}',
+                },
+                implementation_contents={
+                    0: 'Done\nRELAY_STATUS: {"status":"done","reason":"Regenerated schema","remaining_work":[],"verification":["review"]}',
+                    1: 'Done\nRELAY_STATUS: {"status":"done","reason":"Different regeneration","remaining_work":[],"verification":["review"]}',
+                },
+                baseline_files={
+                    "src/schema.generated.ts": "export const version = 1;\n",
+                    "tests/test_concurrent.py": "baseline tests\n",
+                },
+                worktree_overrides={
+                    0: {"src/schema.generated.ts": "export const version = 2;\n"},
+                    1: {"src/schema.generated.ts": "export const version = 3;\n"},
+                },
+                planning_exit_codes={0: 0, 1: 0},
+                implementation_exit_codes={0: 0, 1: 0},
+                pane_dead=lambda _session, _slot: True,
+                session_exists=lambda _session: True,
+                repo_root=repo_root,
+            )
+            self.assertEqual(result.stop_reason, "manual_resolution_required")
+            artifact = Path(result.conflict_artifact_path).read_text(encoding="utf-8")
+            self.assertIn('"src/schema.generated.ts"', artifact)
+            self.assertIn('"generated"', artifact)
+
     def test_shared_claims_can_collaboratively_merge_same_file(self) -> None:
         with TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
