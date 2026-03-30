@@ -37,6 +37,7 @@ from agent_relay.storage import (
     load_referenced_object,
     load_session_view,
 )
+from agent_relay.resumable_state import load_resumable_state_text
 from agent_relay.tx import JournalCommitRequest, SessionTransaction
 from agent_relay.workspace_log import WorkspaceLog
 
@@ -124,9 +125,22 @@ class RelayTurnSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class RelayResumableState:
+    source_label: str
+    relative_path: str
+    summary: str
+    next_step: str | None = None
+    remaining_work: tuple[str, ...] = ()
+    verification: tuple[str, ...] = ()
+    intended_edits: tuple[str, ...] = ()
+    raw_text: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class RelayConversationContext:
     artifacts: tuple[RelayArtifact, ...]
     turn_summaries: tuple[RelayTurnSummary, ...]
+    resumable_states: tuple[RelayResumableState, ...] = ()
     workspace_log_path: str | None = None
     workspace_log_excerpt: tuple[str, ...] = ()
 
@@ -140,6 +154,8 @@ class SupplementalCheckpointContext:
     proposed_edits_path: str | None = None
     provider_source_agent: str | None = None
     provider_hook_name: str | None = None
+    provider_resumable_state: str | None = None
+    provider_resumable_state_path: str | None = None
     provider_transcript: str | None = None
     provider_transcript_path: str | None = None
     provider_session_metadata: str | None = None
@@ -781,6 +797,7 @@ def _render_resume_packet(
     _append_section(lines, "Research notes:", checkpoint.research_notes)
     _append_section(lines, "Implementation notes:", checkpoint.implementation_notes)
     _append_section(lines, "Touched files:", checkpoint.touched_files)
+    _append_resumable_state_context(lines, relay_context, supplemental_context, options)
     _append_supplemental_checkpoint_context(lines, supplemental_context, options)
     _append_provider_export_context(lines, supplemental_context, options)
     _append_relay_conversation(lines, relay_context, options)
@@ -851,6 +868,52 @@ def _append_relay_conversation(
         lines.append("")
 
 
+def _append_resumable_state_context(
+    lines: list[str],
+    relay_context: RelayConversationContext,
+    supplemental_context: SupplementalCheckpointContext,
+    options: ResumeRenderOptions,
+) -> None:
+    if options.evidence_depth == "minimal":
+        return
+    if supplemental_context.provider_resumable_state is None and not relay_context.resumable_states:
+        return
+
+    lines.append("## Resumable State")
+    lines.append("")
+    lines.append("Structured relay-owned state is preferred over weaker transcript-only context when available.")
+    lines.append("")
+
+    if supplemental_context.provider_resumable_state is not None:
+        lines.append("Provider-exported resumable state:")
+        if supplemental_context.provider_resumable_state_path is not None:
+            lines.append(f"- Artifact: {supplemental_context.provider_resumable_state_path}")
+        _append_resumable_state_details(
+            lines,
+            supplemental_context.provider_resumable_state,
+            max_chars=3_000 if options.evidence_depth == "standard" else 10_000,
+        )
+
+    if relay_context.resumable_states:
+        lines.append("Recent relay turn states:")
+        for state in relay_context.resumable_states:
+            lines.append(f"- {state.source_label}: {state.summary}")
+            lines.append(f"- Artifact: {state.relative_path}")
+            if state.next_step:
+                lines.append(f"- Next step: {state.next_step}")
+            if state.remaining_work:
+                lines.append(f"- Remaining work: {', '.join(state.remaining_work)}")
+            if state.intended_edits:
+                lines.append(f"- Intended edits: {', '.join(state.intended_edits)}")
+            if state.verification:
+                lines.append(f"- Verification: {', '.join(state.verification)}")
+            if options.evidence_depth == "full" and state.raw_text is not None:
+                lines.append("```json")
+                lines.append(_excerpt_relay_text(state.raw_text, max_chars=10_000) or "")
+                lines.append("```")
+            lines.append("")
+
+
 def _append_supplemental_checkpoint_context(
     lines: list[str],
     context: SupplementalCheckpointContext,
@@ -897,7 +960,8 @@ def _append_provider_export_context(
     if options.evidence_depth == "minimal":
         return
     if (
-        context.provider_transcript is None
+        context.provider_resumable_state is None
+        and context.provider_transcript is None
         and context.provider_session_metadata is None
         and not context.provider_warnings
     ):
@@ -920,6 +984,15 @@ def _append_provider_export_context(
             lines.append(f"- {warning}")
         if context.provider_warnings_path is not None:
             lines.append(f"- Artifact: {context.provider_warnings_path}")
+        lines.append("")
+
+    if context.provider_resumable_state is not None:
+        lines.append("Raw provider resumable state artifact:")
+        if context.provider_resumable_state_path is not None:
+            lines.append(f"- Artifact: {context.provider_resumable_state_path}")
+        lines.append("```json")
+        lines.append(_excerpt_relay_text(context.provider_resumable_state, max_chars=transcript_limit) or "")
+        lines.append("```")
         lines.append("")
 
     if context.provider_transcript is not None:
@@ -960,6 +1033,7 @@ def _collect_relay_conversation_context(
 
     artifacts: list[RelayArtifact] = []
     turn_summaries: list[RelayTurnSummary] = []
+    resumable_states: list[RelayResumableState] = []
 
     turns_root = turns_dir(repo_root, session_id)
     if turns_root.exists():
@@ -972,6 +1046,7 @@ def _collect_relay_conversation_context(
 
             prompt_relative = f"relay/turns/{turn_path.name}/prompt.md"
             output_relative = f"relay/turns/{turn_path.name}/output.jsonl"
+            state_relative = f"relay/turns/{turn_path.name}/state.json"
             stderr_relative = (
                 f"relay/turns/{turn_path.name}/stderr.log"
                 if stderr_file.exists()
@@ -1001,6 +1076,21 @@ def _collect_relay_conversation_context(
                         relative_path=stderr_relative,
                         content=stderr_text,
                     ))
+
+            state_file = turn_path / "state.json"
+            if state_file.exists():
+                state_text = state_file.read_text(encoding="utf-8", errors="replace")
+                artifacts.append(RelayArtifact(
+                    relative_path=state_relative,
+                    content=state_text,
+                ))
+                state_summary = _build_resumable_state_summary(
+                    state_text,
+                    source_label=f"Turn {turn_number} — {_safe_agent_display_name(_resumable_state_agent(state_text) or 'agent')}",
+                    relative_path=state_relative,
+                )
+                if state_summary is not None:
+                    resumable_states.append(state_summary)
 
             summary_source = normalized_output or stderr_text or raw_output
             turn_summaries.append(
@@ -1042,6 +1132,7 @@ def _collect_relay_conversation_context(
     return RelayConversationContext(
         artifacts=tuple(artifacts),
         turn_summaries=tuple(turn_summaries),
+        resumable_states=tuple(resumable_states),
         workspace_log_path=workspace_relative_path,
         workspace_log_excerpt=workspace_excerpt,
     )
@@ -1073,6 +1164,10 @@ def _collect_checkpoint_supplemental_context(
         checkpoint_dir,
         manifest_data.get("proposed_edits_file"),
     )
+    provider_resumable_state = _load_checkpoint_capture_text(
+        checkpoint_dir,
+        manifest_data.get("provider_resumable_state_file"),
+    )
     provider_transcript = _load_checkpoint_capture_text(
         checkpoint_dir,
         manifest_data.get("provider_transcript_file"),
@@ -1089,6 +1184,7 @@ def _collect_checkpoint_supplemental_context(
 
     planning_snapshot_path = None
     proposed_edits_path = None
+    provider_resumable_state_path = None
     provider_transcript_path = None
     provider_session_metadata_path = None
     provider_warnings_path = None
@@ -1104,6 +1200,14 @@ def _collect_checkpoint_supplemental_context(
         artifacts.append(RelayArtifact(
             relative_path=proposed_edits_path,
             content=_ensure_trailing_newline(proposed_edits),
+        ))
+    if provider_resumable_state is not None:
+        provider_source_agent = _capture_manifest_text(manifest_data.get("provider_source_agent"))
+        provider_suffix = (provider_source_agent or "provider").replace("/", "-")
+        provider_resumable_state_path = f"relay/provider/{provider_suffix}-resumable-state.json"
+        artifacts.append(RelayArtifact(
+            relative_path=provider_resumable_state_path,
+            content=_ensure_trailing_newline(provider_resumable_state),
         ))
     if provider_transcript is not None:
         provider_source_agent = _capture_manifest_text(manifest_data.get("provider_source_agent"))
@@ -1139,6 +1243,8 @@ def _collect_checkpoint_supplemental_context(
         proposed_edits_path=proposed_edits_path,
         provider_source_agent=_capture_manifest_text(manifest_data.get("provider_source_agent")),
         provider_hook_name=_capture_manifest_text(manifest_data.get("provider_hook_name")),
+        provider_resumable_state=provider_resumable_state,
+        provider_resumable_state_path=provider_resumable_state_path,
         provider_transcript=provider_transcript,
         provider_transcript_path=provider_transcript_path,
         provider_session_metadata=provider_session_metadata,
@@ -1158,6 +1264,79 @@ def _load_checkpoint_capture_text(checkpoint_dir: Path, relative_path: object) -
 
 
 def _capture_manifest_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped if stripped else None
+
+
+def _append_resumable_state_details(lines: list[str], raw_text: str, *, max_chars: int) -> None:
+    state = load_resumable_state_text(raw_text)
+    if state is None:
+        lines.append("```text")
+        lines.append(_excerpt_relay_text(raw_text, max_chars=max_chars) or "")
+        lines.append("```")
+        lines.append("")
+        return
+    summary = _capture_manifest_text(state.get("summary"))
+    next_step = _capture_manifest_text(state.get("next_step"))
+    remaining_work = _parse_string_list(state.get("remaining_work"))
+    intended_edits = _parse_string_list(state.get("intended_edits"))
+    verification = _parse_string_list(state.get("verification"))
+    if summary:
+        lines.append(f"- Summary: {summary}")
+    if next_step:
+        lines.append(f"- Next step: {next_step}")
+    if remaining_work:
+        lines.append(f"- Remaining work: {', '.join(remaining_work)}")
+    if intended_edits:
+        lines.append(f"- Intended edits: {', '.join(intended_edits)}")
+    if verification:
+        lines.append(f"- Verification: {', '.join(verification)}")
+    lines.append("```json")
+    lines.append(_excerpt_relay_text(raw_text, max_chars=max_chars) or "")
+    lines.append("```")
+    lines.append("")
+
+
+def _build_resumable_state_summary(
+    raw_text: str,
+    *,
+    source_label: str,
+    relative_path: str,
+) -> RelayResumableState | None:
+    state = load_resumable_state_text(raw_text)
+    if state is None:
+        return None
+    return RelayResumableState(
+        source_label=source_label,
+        relative_path=relative_path,
+        summary=_capture_manifest_text(state.get("summary")) or "No summary recorded",
+        next_step=_capture_manifest_text(state.get("next_step")),
+        remaining_work=_parse_string_list(state.get("remaining_work")),
+        verification=_parse_string_list(state.get("verification")),
+        intended_edits=_parse_string_list(state.get("intended_edits")),
+        raw_text=raw_text,
+    )
+
+
+def _parse_string_list(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    items: list[str] = []
+    for item in value:
+        if isinstance(item, str):
+            stripped = item.strip()
+            if stripped:
+                items.append(stripped)
+    return tuple(items)
+
+
+def _resumable_state_agent(raw_text: str) -> str | None:
+    state = load_resumable_state_text(raw_text)
+    if state is None:
+        return None
+    value = state.get("agent_key")
     if not isinstance(value, str):
         return None
     stripped = value.strip()

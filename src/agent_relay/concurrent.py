@@ -1305,6 +1305,100 @@ def _import_conflict_artifact(
     return target_path
 
 
+def load_conflict_artifact_summary(repo_root: Path, session_id: str) -> dict[str, object]:
+    artifact_path = _conflict_artifact_path(repo_root, session_id)
+    payload = _load_conflict_artifact(artifact_path)
+    if payload is None:
+        raise SystemExit(f"No conflict artifact found for session: {session_id}")
+
+    manual_paths_raw = payload.get("manual_paths", [])
+    manual_paths = {
+        str(path).strip()
+        for path in manual_paths_raw
+        if isinstance(path, str) and str(path).strip()
+    }
+    raw_paths = payload.get("paths", [])
+    summaries: list[dict[str, object]] = []
+    if isinstance(raw_paths, list):
+        for item in raw_paths:
+            if not isinstance(item, dict):
+                continue
+            relative_path = str(item.get("path", "")).strip()
+            if not relative_path:
+                continue
+            contributors: list[dict[str, object]] = []
+            raw_contributors = item.get("contributors", [])
+            if isinstance(raw_contributors, list):
+                for contributor in raw_contributors:
+                    if not isinstance(contributor, dict):
+                        continue
+                    claim_specs = contributor.get("claim_specs", [])
+                    roles: list[str] = []
+                    if isinstance(claim_specs, list):
+                        roles = sorted({
+                            str(spec.get("role", "")).strip()
+                            for spec in claim_specs
+                            if isinstance(spec, dict) and str(spec.get("role", "")).strip()
+                        })
+                    version_path = contributor.get("version_path")
+                    version_full_path = None
+                    if isinstance(version_path, str) and version_path.strip():
+                        version_full_path = str((artifact_path.parent / version_path).resolve())
+                    contributors.append({
+                        "slot": contributor.get("slot"),
+                        "agent": contributor.get("agent"),
+                        "roles": roles,
+                        "version_path": version_path,
+                        "full_version_path": version_full_path,
+                    })
+
+            kind = "binary" if relative_path in manual_paths else "text"
+            if kind == "text":
+                version_paths = _artifact_entry_version_paths(artifact_path, item)
+                if any(not _looks_like_text_file(version_path) for version_path in version_paths):
+                    kind = "binary"
+
+            def _summarize_version(key: str) -> dict[str, object]:
+                raw = item.get(key, {})
+                if not isinstance(raw, dict):
+                    return {"exists": False, "path": None, "full_path": None}
+                rel = raw.get("path")
+                full_path = None
+                if isinstance(rel, str) and rel.strip():
+                    full_path = str((artifact_path.parent / rel).resolve())
+                return {
+                    "exists": bool(raw.get("exists")),
+                    "path": rel if isinstance(rel, str) else None,
+                    "full_path": full_path,
+                }
+
+            summaries.append({
+                "path": relative_path,
+                "kind": kind,
+                "contributors": contributors,
+                "base_version": _summarize_version("base_version"),
+                "repo_version": _summarize_version("repo_version"),
+            })
+
+    attempted_slots_raw = payload.get("attempted_slots", [])
+    attempted_slots = [
+        int(slot)
+        for slot in attempted_slots_raw
+        if isinstance(slot, int) or (isinstance(slot, str) and slot.isdigit())
+    ]
+
+    return {
+        "session_id": session_id,
+        "conflict_artifact_path": str(artifact_path),
+        "status": str(payload.get("status", "unknown")).strip() or "unknown",
+        "note": str(payload.get("note", "")).strip(),
+        "continued_from_conflict_artifact": payload.get("continued_from_conflict_artifact"),
+        "manual_paths": sorted(manual_paths),
+        "attempted_slots": attempted_slots,
+        "paths": summaries,
+    }
+
+
 def _sync_conflict_artifact_to_worktree(
     *,
     worktree_path: Path,

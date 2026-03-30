@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import tempfile
 from io import StringIO
+from pathlib import Path
 from unittest import TestCase
 
 from rich.console import Console
 
+from agent_relay.concurrent import AgentOutcome, ConcurrentResult
 from agent_relay.ui import (
     RELAY_THEME,
     create_console,
@@ -14,7 +17,9 @@ from agent_relay.ui import (
     is_compact,
     render_banner,
     render_checkpoint_success,
+    render_conflict_inspect,
     render_dashboard,
+    render_concurrent_result,
     render_error,
     render_failover_success,
     render_help,
@@ -249,3 +254,107 @@ class HelpRenderTests(TestCase):
         self.assertIn("discover", output)
         self.assertIn("status", output)
         self.assertIn("clean", output)
+        self.assertIn("inspect-conflicts", output)
+
+
+class ConcurrentRenderTests(TestCase):
+    def test_concurrent_result_shows_conflict_files_and_next_action(self) -> None:
+        console, buf = make_console()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact_path = Path(tmpdir) / "conflicts.json"
+            artifact_path.write_text(json.dumps({
+                "status": "manual_resolution_required",
+                "paths": [{"path": "README.md"}, {"path": "docs/guide.md"}],
+            }), encoding="utf-8")
+            result = ConcurrentResult(
+                session_id="sess-123",
+                agents=("claude", "codex"),
+                tmux_sessions=("relay-sess-123-00", "relay-sess-123-01"),
+                continued_from_session_id=None,
+                claim_ledger_path=None,
+                stop_reason="manual_resolution_required",
+                elapsed_seconds=18.2,
+                outcomes=(),
+                conflict_artifact_path=str(artifact_path),
+            )
+            render_concurrent_result(console, result)
+        output = buf.getvalue()
+        self.assertIn("Conflicts:", output)
+        self.assertIn("README.md", output)
+        self.assertIn("docs/guide.md", output)
+        self.assertIn("Next:", output)
+        self.assertIn("agent-relay race", output)
+        self.assertIn("--continue sess-123", output)
+
+    def test_concurrent_result_shows_scope_files(self) -> None:
+        console, buf = make_console()
+        outcome = AgentOutcome(
+            slot=0,
+            agent_key="claude",
+            tmux_session="relay-test-00",
+            phase="implementation",
+            exit_code=0,
+            raw_stdout="",
+            raw_stderr="",
+            text="",
+            summary="",
+            done_signal=False,
+            started_at="",
+            finished_at="",
+            scope_violations=("src/unexpected.py",),
+        )
+        result = ConcurrentResult(
+            session_id="sess-456",
+            agents=("claude", "codex"),
+            tmux_sessions=("relay-sess-456-00", "relay-sess-456-01"),
+            continued_from_session_id=None,
+            claim_ledger_path=None,
+            stop_reason="scope_violation",
+            elapsed_seconds=11.0,
+            outcomes=(outcome,),
+        )
+        render_concurrent_result(console, result)
+        output = buf.getvalue()
+        self.assertIn("Scope:", output)
+        self.assertIn("src/unexpected.py", output)
+
+
+class ConflictInspectRenderTests(TestCase):
+    def test_render_conflict_inspect_shows_paths_and_versions(self) -> None:
+        console, buf = make_console()
+        render_conflict_inspect(console, {
+            "session_id": "sess-123",
+            "status": "manual_resolution_required",
+            "conflict_artifact_path": "/tmp/conflicts.json",
+            "note": "Need a human decision.",
+            "manual_paths": ["assets/logo.bin"],
+            "attempted_slots": [0, 1],
+            "paths": [
+                {
+                    "path": "README.md",
+                    "kind": "text",
+                    "contributors": [
+                        {
+                            "slot": 0,
+                            "agent": "claude",
+                            "roles": ["shared"],
+                            "full_version_path": "/tmp/conflicts/slot-00/README.md",
+                        },
+                        {
+                            "slot": 1,
+                            "agent": "codex",
+                            "roles": ["shared"],
+                            "full_version_path": "/tmp/conflicts/slot-01/README.md",
+                        },
+                    ],
+                    "base_version": {"full_path": "/tmp/conflicts/base/README.md"},
+                    "repo_version": {"full_path": "/tmp/conflicts/repo/README.md"},
+                }
+            ],
+        })
+        output = buf.getvalue()
+        self.assertIn("manual_resolution_required", output)
+        self.assertIn("README.md", output)
+        self.assertIn("Contributors:", output)
+        self.assertIn("/tmp/conflicts/base/README.md", output)
+        self.assertIn("/tmp/conflicts/slot-01/README.md", output)

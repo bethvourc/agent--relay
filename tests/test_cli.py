@@ -9,7 +9,8 @@ from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
 
-from agent_relay.cli import _open_tmux_session_in_terminal, _should_auto_open_terminals
+from agent_relay.cli import _open_tmux_session_in_terminal, _race_result_metadata, _should_auto_open_terminals
+from agent_relay.concurrent import AgentOutcome, ConcurrentResult
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -55,6 +56,25 @@ class AgentRelayCliTests(TestCase):
             tmpdir,
             extra_env=extra_env,
         )
+
+    def write_conflict_artifact(
+        self,
+        repo_root: Path,
+        *,
+        session_id: str,
+        payload: dict,
+        extra_files: dict[str, str] | None = None,
+    ) -> Path:
+        artifact_dir = repo_root / ".agent-relay" / "sessions" / session_id / "concurrent"
+        (artifact_dir / "conflicts").mkdir(parents=True, exist_ok=True)
+        if extra_files:
+            for relative_path, content in extra_files.items():
+                target = artifact_dir / relative_path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content, encoding="utf-8")
+        artifact_path = artifact_dir / "conflicts.json"
+        artifact_path.write_text(json.dumps(payload), encoding="utf-8")
+        return artifact_path
 
     def test_start_creates_initial_state_checkpoint_and_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -118,6 +138,51 @@ class AgentRelayCliTests(TestCase):
             self.assertIn("Render a Codex resume packet", summary)
             self.assertIn("Use repo-local state", summary)
             self.assertIn("src/agent_relay/cli.py", summary)
+
+    def test_inspect_conflicts_returns_json_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir).resolve()
+            artifact_path = self.write_conflict_artifact(
+                repo_root,
+                session_id="sess-123",
+                payload={
+                    "session_id": "sess-123",
+                    "status": "manual_resolution_required",
+                    "note": "Need a human decision.",
+                    "manual_paths": ["assets/logo.bin"],
+                    "attempted_slots": [0, 1],
+                    "paths": [
+                        {
+                            "path": "README.md",
+                            "base_version": {"exists": True, "path": "conflicts/base/README.md"},
+                            "repo_version": {"exists": True, "path": "conflicts/repo/README.md"},
+                            "contributors": [
+                                {
+                                    "slot": 0,
+                                    "agent": "claude",
+                                    "claim_specs": [{"path": "README.md", "role": "shared"}],
+                                    "version_path": "conflicts/slot-00/README.md",
+                                },
+                            ],
+                        }
+                    ],
+                },
+                extra_files={
+                    "conflicts/base/README.md": "base\n",
+                    "conflicts/repo/README.md": "repo\n",
+                    "conflicts/slot-00/README.md": "slot\n",
+                },
+            )
+            data = self.run_cli_json("inspect-conflicts", "sess-123", "--repo", tmpdir)
+            self.assertEqual(data["command"], "inspect-conflicts")
+            self.assertEqual(data["session_id"], "sess-123")
+            self.assertEqual(data["status"], "manual_resolution_required")
+            self.assertEqual(data["conflict_artifact_path"], str(artifact_path))
+            self.assertEqual(data["manual_paths"], ["assets/logo.bin"])
+            self.assertEqual(data["attempted_slots"], [0, 1])
+            self.assertEqual(data["paths"][0]["path"], "README.md")
+            self.assertEqual(data["paths"][0]["kind"], "text")
+            self.assertEqual(data["paths"][0]["contributors"][0]["roles"], ["shared"])
 
     def test_checkpoint_captures_notes_validation_and_git_touched_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -453,3 +518,60 @@ class RaceCliHelpersTests(TestCase):
         self.assertIsNone(error)
         self.assertEqual(run_mock.call_args.args[0][:2], ["osascript", "-e"])
         self.assertIn('tell application "iTerm"', run_mock.call_args.args[0][2])
+
+    def test_race_result_metadata_surfaces_conflict_paths_and_next_action(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact_path = Path(tmpdir) / "conflicts.json"
+            artifact_path.write_text(json.dumps({
+                "status": "manual_resolution_required",
+                "paths": [
+                    {"path": "README.md"},
+                    {"path": "docs/guide.md"},
+                ],
+            }), encoding="utf-8")
+            result = ConcurrentResult(
+                session_id="sess-123",
+                agents=("claude", "codex"),
+                tmux_sessions=("relay-sess-123-00", "relay-sess-123-01"),
+                continued_from_session_id=None,
+                claim_ledger_path=None,
+                stop_reason="manual_resolution_required",
+                elapsed_seconds=12.0,
+                outcomes=(),
+                conflict_artifact_path=str(artifact_path),
+            )
+            metadata = _race_result_metadata(result)
+            self.assertEqual(metadata["conflict_paths"], ["README.md", "docs/guide.md"])
+            self.assertEqual(metadata["scope_violation_paths"], [])
+            self.assertIn("sess-123", metadata["next_action"])
+
+    def test_race_result_metadata_surfaces_scope_violation_paths(self) -> None:
+        outcome = AgentOutcome(
+            slot=0,
+            agent_key="claude",
+            tmux_session="relay-test-00",
+            phase="implementation",
+            exit_code=0,
+            raw_stdout="",
+            raw_stderr="",
+            text="",
+            summary="",
+            done_signal=False,
+            started_at="",
+            finished_at="",
+            scope_violations=("src/unexpected.py",),
+        )
+        result = ConcurrentResult(
+            session_id="sess-456",
+            agents=("claude", "codex"),
+            tmux_sessions=("relay-sess-456-00", "relay-sess-456-01"),
+            continued_from_session_id=None,
+            claim_ledger_path=None,
+            stop_reason="scope_violation",
+            elapsed_seconds=9.0,
+            outcomes=(outcome,),
+        )
+        metadata = _race_result_metadata(result)
+        self.assertEqual(metadata["conflict_paths"], [])
+        self.assertEqual(metadata["scope_violation_paths"], ["src/unexpected.py"])
+        self.assertNotIn("next_action", metadata)

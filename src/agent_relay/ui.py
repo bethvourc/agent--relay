@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 from typing import Any
 
 from rich import box
@@ -710,6 +711,7 @@ def render_help(console: Console) -> None:
         console.print('  [brand]agent-relay race c x "build auth"[/]   Concurrent agents (tmux)')
         console.print("  [brand]agent-relay discover[/]                Show available agents")
         console.print("  [brand]agent-relay status[/]                  View sessions")
+        console.print("  [brand]agent-relay inspect-conflicts <id>[/]  Inspect race conflicts")
         console.print("  [brand]agent-relay clean[/]                   Remove all sessions")
         console.print()
         console.print("[heading]Aliases[/]  [muted]c = claude, x = codex (see: agent-relay discover)[/]")
@@ -727,6 +729,7 @@ def render_help(console: Console) -> None:
     examples.add_row('agent-relay chat c x "fix tests"', "Turn-based agent conversation")
     examples.add_row('agent-relay chat c x c "review" -n 6', "3-agent, 6 turns max")
     examples.add_row('agent-relay race c x "build auth"', "Concurrent agents (tmux)")
+    examples.add_row("agent-relay inspect-conflicts <session>", "Inspect saved conflict artifacts")
     examples.add_row("agent-relay discover", "Show available agents & aliases")
     examples.add_row("agent-relay status", "View all relay sessions")
     examples.add_row("agent-relay clean", "Remove all sessions")
@@ -765,6 +768,77 @@ def render_help(console: Console) -> None:
         expand=False,
     ))
 
+    console.print()
+
+
+def render_conflict_inspect(console: Console, summary: dict[str, Any]) -> None:
+    render_banner(console)
+    console.print(f"  [label]Session:[/]  [muted]{summary.get('session_id', '?')}[/]", highlight=False)
+    console.print(f"  [label]Status:[/]  [value]{summary.get('status', 'unknown')}[/]", highlight=False)
+    console.print(f"  [label]Artifact:[/]  [muted]{summary.get('conflict_artifact_path', '?')}[/]", highlight=False)
+    note = str(summary.get("note", "")).strip()
+    if note:
+        console.print(f"  [label]Note:[/]  {note}", highlight=False)
+    manual_paths = summary.get("manual_paths", [])
+    if isinstance(manual_paths, list) and manual_paths:
+        console.print(f"  [label]Manual:[/]  [muted]{', '.join(str(path) for path in manual_paths)}[/]", highlight=False)
+    attempted_slots = summary.get("attempted_slots", [])
+    if isinstance(attempted_slots, list) and attempted_slots:
+        console.print(
+            f"  [label]Tried:[/]  [muted]{', '.join(f'slot {slot}' for slot in attempted_slots)}[/]",
+            highlight=False,
+        )
+    console.print()
+
+    raw_paths = summary.get("paths", [])
+    if not isinstance(raw_paths, list) or not raw_paths:
+        console.print("  [muted]No conflicted paths recorded.[/]", highlight=False)
+        console.print()
+        return
+
+    for item in raw_paths:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path", "")).strip() or "?"
+        kind = str(item.get("kind", "unknown")).strip() or "unknown"
+        console.print(f"  [brand]•[/] [value]{path}[/]  [muted]({kind})[/]", highlight=False)
+        contributors = item.get("contributors", [])
+        if isinstance(contributors, list) and contributors:
+            contributor_bits: list[str] = []
+            for contributor in contributors:
+                if not isinstance(contributor, dict):
+                    continue
+                agent = str(contributor.get("agent", "?")).strip() or "?"
+                slot = contributor.get("slot")
+                roles = contributor.get("roles", [])
+                role_text = ""
+                if isinstance(roles, list) and roles:
+                    role_text = f" [{'/'.join(str(role) for role in roles)}]"
+                contributor_bits.append(f"{agent} (slot {slot}){role_text}")
+            if contributor_bits:
+                console.print(
+                    f"      [label]Contributors:[/]  [muted]{'; '.join(contributor_bits)}[/]",
+                    highlight=False,
+                )
+        for version_label, key in (("Base", "base_version"), ("Repo", "repo_version")):
+            version = item.get(key, {})
+            if not isinstance(version, dict):
+                continue
+            full_path = version.get("full_path")
+            if isinstance(full_path, str) and full_path.strip():
+                console.print(f"      [label]{version_label}:[/]  [muted]{full_path}[/]", highlight=False)
+        if isinstance(contributors, list):
+            for contributor in contributors:
+                if not isinstance(contributor, dict):
+                    continue
+                full_path = contributor.get("full_version_path")
+                if isinstance(full_path, str) and full_path.strip():
+                    agent = str(contributor.get("agent", "?")).strip() or "?"
+                    slot = contributor.get("slot")
+                    console.print(
+                        f"      [label]{agent} slot {slot}:[/]  [muted]{full_path}[/]",
+                        highlight=False,
+                    )
     console.print()
 
 
@@ -1056,4 +1130,91 @@ def render_concurrent_result(console: Console, result: "ConcurrentResult") -> No
     console.print(f"  [label]Session:[/]  [muted]{result.session_id}[/]", highlight=False)
     if result.conflict_artifact_path:
         console.print(f"  [label]Conflicts:[/]  [muted]{result.conflict_artifact_path}[/]", highlight=False)
+    conflict_paths = _concurrent_conflict_paths(result)
+    if conflict_paths and result.stop_reason in {"merge_conflict", "manual_resolution_required"}:
+        console.print(
+            f"  [label]Files:[/]  [muted]{_summarize_paths(conflict_paths)}[/]",
+            highlight=False,
+        )
+    scope_paths = _concurrent_scope_violation_paths(result)
+    if scope_paths and result.stop_reason == "scope_violation":
+        console.print(
+            f"  [label]Scope:[/]  [muted]{_summarize_paths(scope_paths)}[/]",
+            highlight=False,
+        )
+    next_action = _concurrent_next_action(result)
+    if next_action:
+        console.print(f"  [label]Next:[/]  {next_action}", highlight=False)
     console.print()
+
+
+def _load_conflict_artifact_paths(conflict_artifact_path: str | None) -> tuple[str, ...]:
+    if not conflict_artifact_path:
+        return ()
+    try:
+        payload = json.loads(Path(conflict_artifact_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ()
+    if not isinstance(payload, dict):
+        return ()
+    raw_paths = payload.get("paths")
+    if not isinstance(raw_paths, list):
+        return ()
+    paths = [
+        str(item.get("path", "")).strip()
+        for item in raw_paths
+        if isinstance(item, dict) and str(item.get("path", "")).strip()
+    ]
+    return tuple(dict.fromkeys(paths))
+
+
+def _concurrent_conflict_paths(result: "ConcurrentResult") -> tuple[str, ...]:  # noqa: F821
+    artifact_paths = _load_conflict_artifact_paths(result.conflict_artifact_path)
+    if artifact_paths:
+        return artifact_paths
+    paths = [
+        path
+        for outcome in result.outcomes
+        for path in outcome.merge_conflicts
+    ]
+    return tuple(dict.fromkeys(paths))
+
+
+def _concurrent_scope_violation_paths(result: "ConcurrentResult") -> tuple[str, ...]:  # noqa: F821
+    paths = [
+        path
+        for outcome in result.outcomes
+        for path in outcome.scope_violations
+    ]
+    return tuple(dict.fromkeys(paths))
+
+
+def _summarize_paths(paths: tuple[str, ...], *, limit: int = 4) -> str:
+    if not paths:
+        return ""
+    shown = list(paths[:limit])
+    suffix = f" (+{len(paths) - limit} more)" if len(paths) > limit else ""
+    return ", ".join(shown) + suffix
+
+
+def _concurrent_next_action(result: "ConcurrentResult") -> str | None:  # noqa: F821
+    if result.stop_reason == "manual_resolution_required":
+        return (
+            f"Inspect the conflict artifact and continue with "
+            f"`agent-relay race --continue {result.session_id} <agents> \"resolve the remaining conflict\"`."
+        )
+    if result.stop_reason == "merge_conflict":
+        return (
+            f"Continue with `agent-relay race --continue {result.session_id} <agents> "
+            f"\"resolve the merge conflict\"`."
+        )
+    if result.stop_reason == "scope_violation":
+        return "Review the out-of-scope files and rerun once claims match the intended edits."
+    if result.stop_reason in {"claim_conflict", "planning_incomplete"}:
+        return "Adjust the planning claims so each agent has a concrete, non-conflicting slice, then rerun `race`."
+    if result.stop_reason in {"max_time", "interrupted", "incomplete", "agent_error"}:
+        return (
+            f"If you want to keep going, continue with "
+            f"`agent-relay race --continue {result.session_id} <agents> \"continue the task\"`."
+        )
+    return None

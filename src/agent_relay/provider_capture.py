@@ -7,12 +7,14 @@ from pathlib import Path
 from typing import Any
 
 from agent_relay.agents import get_agent_adapter, get_agent_display_name
+from agent_relay.resumable_state import normalize_resumable_state, resumable_state_text
 
 
 @dataclass(frozen=True, slots=True)
 class ProviderCaptureResult:
     source_agent: str
     hook_name: str | None = None
+    resumable_state: str | None = None
     planning_snapshot: str | None = None
     proposed_edits: str | None = None
     transcript: str | None = None
@@ -79,6 +81,7 @@ def capture_provider_state(
             warnings=(f"{get_agent_display_name(agent_key)} capture hook returned an unexpected payload shape.",),
         )
 
+    resumable_state = _normalize_resumable_state_text(payload.get("resumable_state"))
     planning_snapshot = _optional_text(payload.get("planning_snapshot"))
     proposed_edits = _optional_text(payload.get("proposed_edits"))
     transcript = _optional_text(payload.get("transcript"))
@@ -88,6 +91,7 @@ def capture_provider_state(
     return ProviderCaptureResult(
         source_agent=agent_key,
         hook_name=spec.hook_name,
+        resumable_state=resumable_state,
         planning_snapshot=planning_snapshot,
         proposed_edits=proposed_edits,
         transcript=transcript,
@@ -131,3 +135,10 @@ def _normalize_warnings(value: Any) -> tuple[str, ...]:
                     warnings.append(stripped)
         return tuple(warnings)
     return ()
+
+
+def _normalize_resumable_state_text(value: Any) -> str | None:
+    normalized = normalize_resumable_state(value, source="provider_export")
+    if normalized is None:
+        return None
+    return resumable_state_text(normalized).rstrip()

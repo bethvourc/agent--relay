@@ -15,6 +15,7 @@ from agent_relay.ui import (
     create_console,
     emit_json,
     emit_quiet,
+    render_conflict_inspect,
     render_concurrent_result,
     render_concurrent_start,
     render_converse_result,
@@ -88,6 +89,86 @@ def _open_tmux_session_in_terminal(tmux_session: str) -> str | None:
 
     error = result.stderr.strip() or result.stdout.strip() or "Unknown osascript error"
     return f"Automatic terminal opening failed: {error}"
+
+
+def _load_conflict_paths(conflict_artifact_path: str | None) -> list[str]:
+    if not conflict_artifact_path:
+        return []
+    try:
+        payload = json.loads(Path(conflict_artifact_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(payload, dict):
+        return []
+    raw_paths = payload.get("paths")
+    if not isinstance(raw_paths, list):
+        return []
+    return list(dict.fromkeys(
+        str(item.get("path", "")).strip()
+        for item in raw_paths
+        if isinstance(item, dict) and str(item.get("path", "")).strip()
+    ))
+
+
+def _race_next_action(result: "ConcurrentResult") -> str | None:  # noqa: F821
+    if result.stop_reason == "manual_resolution_required":
+        return (
+            f'agent-relay race --continue {result.session_id} <agents> '
+            f'"resolve the remaining conflict"'
+        )
+    if result.stop_reason == "merge_conflict":
+        return (
+            f'agent-relay race --continue {result.session_id} <agents> '
+            f'"resolve the merge conflict"'
+        )
+    if result.stop_reason in {"max_time", "interrupted", "incomplete", "agent_error"}:
+        return (
+            f'agent-relay race --continue {result.session_id} <agents> '
+            f'"continue the task"'
+        )
+    return None
+
+
+def _race_result_metadata(result: "ConcurrentResult") -> dict[str, object]:  # noqa: F821
+    conflict_paths = _load_conflict_paths(result.conflict_artifact_path)
+    if not conflict_paths:
+        conflict_paths = list(dict.fromkeys(
+            path
+            for outcome in result.outcomes
+            for path in outcome.merge_conflicts
+        ))
+    scope_violation_paths = list(dict.fromkeys(
+        path
+        for outcome in result.outcomes
+        for path in outcome.scope_violations
+    ))
+    metadata: dict[str, object] = {
+        "conflict_paths": conflict_paths,
+        "scope_violation_paths": scope_violation_paths,
+    }
+    next_action = _race_next_action(result)
+    if next_action is not None:
+        metadata["next_action"] = next_action
+    return metadata
+
+
+def cmd_inspect_conflicts(args: argparse.Namespace) -> int:
+    from agent_relay.concurrent import load_conflict_artifact_summary
+
+    repo_root = _resolve_repo(args.repo)
+    summary = load_conflict_artifact_summary(repo_root, args.session_id)
+
+    if args.json:
+        emit_json({
+            "command": "inspect-conflicts",
+            **summary,
+        })
+    elif args.quiet:
+        emit_quiet(str(summary.get("conflict_artifact_path", "")))
+    else:
+        render_conflict_inspect(args.console, summary)
+
+    return 0
 
 
 def cmd_relay(args: argparse.Namespace) -> int:
@@ -475,6 +556,7 @@ def cmd_race(args: argparse.Namespace) -> int:
             "conflict_artifact_path": result.conflict_artifact_path,
             "stop_reason": result.stop_reason,
             "elapsed_seconds": result.elapsed_seconds,
+            **_race_result_metadata(result),
             "outcomes": [
                 {
                     "slot": o.slot,
@@ -572,6 +654,11 @@ def build_parser() -> argparse.ArgumentParser:
     race.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
     race.add_argument("--repo", help="Repository path (default: cwd)")
     race.set_defaults(func=cmd_race)
+
+    inspect_conflicts = subparsers.add_parser("inspect-conflicts", help="Inspect saved concurrent conflict artifacts")
+    inspect_conflicts.add_argument("session_id", help="Relay session id")
+    inspect_conflicts.add_argument("--repo", help="Repository path (default: cwd)")
+    inspect_conflicts.set_defaults(func=cmd_inspect_conflicts)
 
     return parser
 

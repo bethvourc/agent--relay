@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -62,6 +63,25 @@ class HandoffTests(TestCase):
             '{"message":{"role":"assistant","content":[{"type":"text","text":"Reviewed the current relay handoff flow."}]}}\n',
             encoding="utf-8",
         )
+        (first_turn / "state.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "kind": "relay_resumable_state",
+                    "source": "relay_turn",
+                    "summary": "Reviewed the current relay handoff flow.",
+                    "next_step": "Capture the missing planning state.",
+                    "current_plan": ["Capture the missing planning state."],
+                    "verification": ["Review recent relay artifacts"],
+                    "agent_key": "claude",
+                    "turn_number": 1,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
 
         second_turn = turn_dir(repo_root, session_id, 2)
         second_turn.mkdir(parents=True, exist_ok=True)
@@ -71,6 +91,25 @@ class HandoffTests(TestCase):
             encoding="utf-8",
         )
         (second_turn / "stderr.log").write_text("warning: rate limit soon\n", encoding="utf-8")
+        (second_turn / "state.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "kind": "relay_resumable_state",
+                    "source": "relay_turn",
+                    "summary": "Identified that hidden planning state is not captured yet.",
+                    "next_step": "Persist resumable state in handoff artifacts.",
+                    "remaining_work": ["Persist resumable state in handoff artifacts."],
+                    "intended_edits": ["src/agent_relay/handoffs.py"],
+                    "agent_key": "codex",
+                    "turn_number": 2,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
 
         workspace_log = WorkspaceLog(workspace_log_path(repo_root, session_id))
         workspace_log.append(LogEntry(
@@ -146,6 +185,9 @@ class HandoffTests(TestCase):
             packet_text = Path(handoff.resume_path).read_text(encoding="utf-8")
             handoff_dir = object_dir(repo_root, fixture["session_id"], "handoff", handoff.handoff_id)
 
+            self.assertIn("## Resumable State", packet_text)
+            self.assertIn("Persist resumable state in handoff artifacts.", packet_text)
+            self.assertIn("relay/turns/turn-002/state.json", packet_text)
             self.assertIn("## Prior Relay Conversation", packet_text)
             self.assertIn("Turn 1: Reviewed the current relay handoff flow.", packet_text)
             self.assertIn("Turn 2: Identified that hidden planning state is not captured yet.", packet_text)
@@ -153,6 +195,7 @@ class HandoffTests(TestCase):
             self.assertIn("relay/workspace-log.md", packet_text)
             self.assertTrue((handoff_dir / "relay" / "turns" / "turn-001" / "prompt.md").exists())
             self.assertTrue((handoff_dir / "relay" / "turns" / "turn-002" / "output.jsonl").exists())
+            self.assertTrue((handoff_dir / "relay" / "turns" / "turn-002" / "state.json").exists())
             self.assertTrue((handoff_dir / "relay" / "workspace-log.md").exists())
 
     def test_minimal_handoff_skips_relay_conversation_artifacts(self) -> None:

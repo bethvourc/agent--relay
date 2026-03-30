@@ -33,6 +33,7 @@ class CaptureOptions:
     proposed_edits_file: str | None = None
     provider_source_agent: str | None = None
     provider_hook_name: str | None = None
+    provider_resumable_state: str | None = None
     provider_transcript: str | None = None
     provider_session_metadata: str | None = None
     provider_warnings: list[str] = field(default_factory=list)

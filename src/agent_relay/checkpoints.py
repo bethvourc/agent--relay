@@ -86,6 +86,7 @@ class SupplementalCaptureInputs:
     proposed_edits_source: Path | None = None
     provider_source_agent: str | None = None
     provider_hook_name: str | None = None
+    provider_resumable_state: str | None = None
     provider_transcript: str | None = None
     provider_session_metadata: str | None = None
     provider_warnings: tuple[str, ...] = ()
@@ -248,6 +249,11 @@ def _build_checkpoint_draft(
             _summarize_explicit_capture("Captured UI-only proposed edits", supplemental.proposed_edits),
         )
     provider_label = _provider_label(supplemental.provider_source_agent)
+    if supplemental.provider_resumable_state:
+        _append_unique(
+            research_notes,
+            f"Provider resumable state captured from {provider_label}.",
+        )
     if supplemental.provider_transcript:
         _append_unique(
             research_notes,
@@ -634,6 +640,11 @@ def _load_supplemental_capture_inputs(repo_root: Path, options: CaptureOptions) 
         proposed_edits_source=proposed_edits_source,
         provider_source_agent=options.provider_source_agent,
         provider_hook_name=options.provider_hook_name,
+        provider_resumable_state=(
+            options.provider_resumable_state.strip()
+            if options.provider_resumable_state
+            else None
+        ),
         provider_transcript=(options.provider_transcript.strip() if options.provider_transcript else None),
         provider_session_metadata=(
             options.provider_session_metadata.strip()
@@ -670,6 +681,7 @@ def _append_supplemental_capture_files(
         "proposed_edits_source": None,
         "provider_source_agent": supplemental.provider_source_agent,
         "provider_hook_name": supplemental.provider_hook_name,
+        "provider_resumable_state_file": None,
         "provider_transcript_file": None,
         "provider_session_metadata_file": None,
         "provider_warnings_file": None,
@@ -689,6 +701,10 @@ def _append_supplemental_capture_files(
             manifest["proposed_edits_source"] = str(supplemental.proposed_edits_source)
 
     provider_prefix = _provider_capture_prefix(supplemental.provider_source_agent)
+    if supplemental.provider_resumable_state:
+        resumable_state_path = f"{provider_prefix}-resumable-state.json"
+        file_contents[resumable_state_path] = _ensure_trailing_newline(supplemental.provider_resumable_state)
+        manifest["provider_resumable_state_file"] = resumable_state_path
     if supplemental.provider_transcript:
         transcript_path = f"{provider_prefix}-transcript.md"
         file_contents[transcript_path] = _ensure_trailing_newline(supplemental.provider_transcript)
@@ -708,7 +724,8 @@ def _append_supplemental_capture_files(
     if manifest["planning_snapshot_file"] or manifest["proposed_edits_file"]:
         file_contents["captures/manifest.json"] = _json_text(manifest)
     elif (
-        manifest["provider_transcript_file"]
+        manifest["provider_resumable_state_file"]
+        or manifest["provider_transcript_file"]
         or manifest["provider_session_metadata_file"]
         or manifest["provider_warnings_file"]
     ):

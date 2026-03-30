@@ -19,6 +19,7 @@ from typing import Callable
 from agent_relay.agents import AGENT_REGISTRY, get_agent_adapter, get_agent_display_name, require_available
 from agent_relay.bootstrap import start_session
 from agent_relay.layout import session_root, turn_dir, turns_dir, workspace_log_path
+from agent_relay.resumable_state import normalize_resumable_state, resumable_state_text
 from agent_relay.storage import is_session
 from agent_relay.workspace_log import LogEntry, WorkspaceLog, utc_timestamp
 
@@ -142,11 +143,12 @@ def _strip_done_marker(text: str) -> str:
 
 
 def _strip_turn_control(text: str) -> str:
-    """Remove machine-readable RELAY_STATUS lines from display text."""
+    """Remove machine-readable relay control lines from display text."""
     kept_lines = [
         line
         for line in text.splitlines()
         if not line.strip().startswith("RELAY_STATUS:")
+        and not line.strip().startswith("RELAY_STATE:")
     ]
     return "\n".join(kept_lines).strip()
 
@@ -157,6 +159,7 @@ def _strip_turn_control(text: str) -> str:
 
 _DONE_MARKER = "CONVERSATION_COMPLETE"
 _TURN_STATUS_PREFIX = "RELAY_STATUS:"
+_TURN_STATE_PREFIX = "RELAY_STATE:"
 _VALID_TURN_STATUSES = frozenset({
     "continue",
     "blocked",
@@ -225,6 +228,25 @@ def parse_turn_control(text: str) -> TurnControl:
     return TurnControl()
 
 
+def parse_turn_state(text: str) -> dict[str, object] | None:
+    """Parse the optional machine-readable RELAY_STATE line from agent output."""
+    for raw_line in reversed(text.splitlines()):
+        line = raw_line.strip()
+        if not line.startswith(_TURN_STATE_PREFIX):
+            continue
+
+        payload = line[len(_TURN_STATE_PREFIX):].strip()
+        try:
+            data = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+
+        normalized = normalize_resumable_state(data, source="relay_turn")
+        if normalized is not None:
+            return normalized
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Prompt builder
 # ---------------------------------------------------------------------------
@@ -286,6 +308,9 @@ def build_turn_prompt(
         task,
         "",
         "## Completion Protocol",
+        "",
+        'You may include one optional structured line immediately before the status line:',
+        'RELAY_STATE: {"summary":"...","current_plan":["..."],"assumptions":[],"blockers":[],"intended_edits":["..."],"next_step":"..."}',
         "",
         'End every turn with exactly one machine-readable line in this format:',
         'RELAY_STATUS: {"status":"continue","reason":"...","remaining_work":["..."],"verification":[]}',
@@ -415,6 +440,7 @@ def _store_turn_artifacts(
     prompt_text: str,
     raw_stdout: str,
     raw_stderr: str,
+    state_payload: dict[str, object] | None = None,
 ) -> Path:
     """Write turn prompt and output to the session's turns directory."""
     tdir = turn_dir(repo_root, session_id, turn_number)
@@ -424,6 +450,8 @@ def _store_turn_artifacts(
     (tdir / "output.jsonl").write_text(raw_stdout, encoding="utf-8")
     if raw_stderr.strip():
         (tdir / "stderr.log").write_text(raw_stderr, encoding="utf-8")
+    if state_payload is not None:
+        (tdir / "state.json").write_text(resumable_state_text(state_payload), encoding="utf-8")
 
     return tdir
 
@@ -446,6 +474,82 @@ def _make_summary(text: str, max_len: int = 120) -> str:
 
 def _utc_now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def _build_turn_state(
+    *,
+    task: str,
+    turn_number: int,
+    agent_key: str,
+    display_text: str,
+    started_at: str,
+    finished_at: str,
+    control: TurnControl,
+    explicit_state: dict[str, object] | None,
+) -> dict[str, object]:
+    summary = _make_summary(display_text)
+    remaining_work = list(control.remaining_work)
+    verification = list(control.verification)
+    next_step = (
+        _state_string(explicit_state, "next_step")
+        or (remaining_work[0] if remaining_work else "")
+        or control.reason
+        or summary
+    )
+    state_payload = {
+        "source": "relay_turn",
+        "objective": _state_string(explicit_state, "objective") or task,
+        "summary": _state_string(explicit_state, "summary") or summary,
+        "status": control.status,
+        "reason": _state_string(explicit_state, "reason") or control.reason,
+        "current_plan": _state_list(explicit_state, "current_plan") or remaining_work,
+        "assumptions": _state_list(explicit_state, "assumptions"),
+        "blockers": _state_list(explicit_state, "blockers"),
+        "intended_edits": _state_list(explicit_state, "intended_edits"),
+        "remaining_work": _state_list(explicit_state, "remaining_work") or remaining_work,
+        "verification": _state_list(explicit_state, "verification") or verification,
+        "next_step": next_step,
+        "agent_key": agent_key,
+        "agent_display_name": get_agent_display_name(agent_key),
+        "turn_number": turn_number,
+        "captured_at": finished_at,
+        "metadata": {
+            "started_at": started_at,
+            "finished_at": finished_at,
+        },
+    }
+    normalized = normalize_resumable_state(state_payload, source="relay_turn")
+    if normalized is None:
+        raise RuntimeError("failed to build relay turn state")
+    return normalized
+
+
+def _state_string(state: dict[str, object] | None, key: str) -> str | None:
+    if state is None:
+        return None
+    value = state.get(key)
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped if stripped else None
+
+
+def _state_list(state: dict[str, object] | None, key: str) -> list[str]:
+    if state is None:
+        return []
+    value = state.get(key)
+    if isinstance(value, str):
+        stripped = value.strip()
+        return [stripped] if stripped else []
+    if not isinstance(value, list):
+        return []
+    items: list[str] = []
+    for item in value:
+        if isinstance(item, str):
+            stripped = item.strip()
+            if stripped:
+                items.append(stripped)
+    return items
 
 
 def converse(
@@ -547,6 +651,7 @@ def converse(
             # Normalize output
             raw_text = _normalize_output(current_agent, result.stdout)
             control = parse_turn_control(raw_text)
+            explicit_state = parse_turn_state(raw_text)
             status = control.status
             if status in {"propose_done", "agree_done"} and turn_number < n:
                 status = "continue"
@@ -559,11 +664,22 @@ def converse(
 
             done = status in {"propose_done", "agree_done"}
             display_text = _strip_done_marker(_strip_turn_control(raw_text))
+            turn_state = _build_turn_state(
+                task=task,
+                turn_number=turn_number,
+                agent_key=current_agent,
+                display_text=display_text,
+                started_at=started_at,
+                finished_at=finished_at,
+                control=control,
+                explicit_state=explicit_state,
+            )
 
             # Store artifacts
             _store_turn_artifacts(
                 repo_root, session_id, turn_number,
                 prompt_text, result.stdout, result.stderr,
+                state_payload=turn_state,
             )
 
             # Build turn result

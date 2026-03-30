@@ -160,6 +160,7 @@ def relay(
                 proposed_edits_file=effective_proposed_edits_file,
                 provider_source_agent=provider_capture.source_agent,
                 provider_hook_name=provider_capture.hook_name,
+                provider_resumable_state=provider_capture.resumable_state,
                 provider_transcript=provider_capture.transcript,
                 provider_session_metadata=provider_capture.session_metadata,
                 provider_warnings=list(provider_capture.warnings),

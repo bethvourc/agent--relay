@@ -16,6 +16,7 @@ from agent_relay.converse import (
     detect_done_signal,
     normalize_claude_output,
     normalize_codex_output,
+    parse_turn_state,
     parse_turn_control,
     _make_summary,
     _normalize_output,
@@ -166,6 +167,15 @@ class ParseTurnControlTests(TestCase):
         control = parse_turn_control("Task is done.\nCONVERSATION_COMPLETE")
         self.assertEqual(control.status, "propose_done")
 
+    def test_parses_optional_structured_turn_state(self) -> None:
+        state = parse_turn_state(
+            'Work summary\nRELAY_STATE: {"summary":"Reviewed auth flow","current_plan":["patch auth middleware"],"next_step":"edit src/auth.py"}\nRELAY_STATUS: {"status":"continue","reason":"Need to patch middleware","remaining_work":["patch auth middleware"],"verification":[]}'
+        )
+        assert state is not None
+        self.assertEqual(state["summary"], "Reviewed auth flow")
+        self.assertEqual(state["next_step"], "edit src/auth.py")
+        self.assertEqual(state["current_plan"], ["patch auth middleware"])
+
 
 class BuildTurnPromptTests(TestCase):
     def _make_turn(self, turn_number: int, agent_key: str, text: str) -> TurnResult:
@@ -226,6 +236,7 @@ class BuildTurnPromptTests(TestCase):
             repo_root=Path("/tmp/repo"),
         )
         self.assertIn("RELAY_STATUS:", prompt)
+        self.assertIn("RELAY_STATE:", prompt)
         self.assertIn("propose_done", prompt)
         self.assertIn("agree_done", prompt)
         self.assertIn("NEVER use propose_done or agree_done on your first turn", prompt)
@@ -317,6 +328,10 @@ class StripDoneMarkerTests(TestCase):
 class StripTurnControlTests(TestCase):
     def test_removes_status_line(self) -> None:
         text = 'Hello\nRELAY_STATUS: {"status":"continue","reason":"more work","remaining_work":["tests"],"verification":[]}'
+        self.assertEqual(_strip_turn_control(text), "Hello")
+
+    def test_removes_state_line(self) -> None:
+        text = 'Hello\nRELAY_STATE: {"summary":"looked around"}\nRELAY_STATUS: {"status":"continue","reason":"more work","remaining_work":["tests"],"verification":[]}'
         self.assertEqual(_strip_turn_control(text), "Hello")
 
     def test_preserves_non_status_text(self) -> None:
@@ -454,3 +469,55 @@ class ConverseCompletionProtocolTests(TestCase):
             [turn.control_status for turn in result.turn_results],
             ["continue", "continue"],
         )
+
+    def test_converse_writes_turn_state_artifacts(self) -> None:
+        outputs = [
+            self._result(
+                'Reviewed the auth flow\nRELAY_STATE: {"summary":"Reviewed the auth flow","current_plan":["patch middleware"],"intended_edits":["src/auth.py"],"next_step":"edit src/auth.py"}\nRELAY_STATUS: {"status":"continue","reason":"Patch middleware","remaining_work":["patch middleware"],"verification":["run auth tests"]}'
+            ),
+            self._result(
+                'Agreed on next step\nRELAY_STATUS: {"status":"blocked","reason":"Waiting for user decision","remaining_work":["confirm auth policy"],"verification":[]}'
+            ),
+        ]
+
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            with patch("agent_relay.converse.require_available"), patch(
+                "agent_relay.converse.start_session",
+            ), patch(
+                "agent_relay.converse.run_agent_turn",
+                side_effect=outputs,
+            ):
+                result = converse(
+                    repo_root,
+                    agents=["claude", "codex"],
+                    task="Stabilize auth handoff",
+                    max_turns=2,
+                )
+
+            first_state = (
+                repo_root
+                / ".agent-relay"
+                / "sessions"
+                / result.session_id
+                / "turns"
+                / "turn-001"
+                / "state.json"
+            )
+            second_state = (
+                repo_root
+                / ".agent-relay"
+                / "sessions"
+                / result.session_id
+                / "turns"
+                / "turn-002"
+                / "state.json"
+            )
+            first_payload = json.loads(first_state.read_text(encoding="utf-8"))
+            second_payload = json.loads(second_state.read_text(encoding="utf-8"))
+
+        self.assertEqual(first_payload["summary"], "Reviewed the auth flow")
+        self.assertEqual(first_payload["intended_edits"], ["src/auth.py"])
+        self.assertEqual(first_payload["next_step"], "edit src/auth.py")
+        self.assertEqual(second_payload["status"], "blocked")
+        self.assertEqual(second_payload["remaining_work"], ["confirm auth policy"])

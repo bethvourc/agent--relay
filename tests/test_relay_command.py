@@ -138,6 +138,12 @@ class RelayCommandTests(TestCase):
             self.init_git_repo(repo_root)
             payload = json.dumps(
                 {
+                    "resumable_state": {
+                        "summary": "Claude exported a resumable migration plan.",
+                        "current_plan": ["Port the auth guard", "run auth regression tests"],
+                        "intended_edits": ["src/auth.py", "tests/test_auth.py"],
+                        "next_step": "Port the auth guard",
+                    },
                     "planning_snapshot": "Provider export says Claude planned the migration order.",
                     "proposed_edits": "\n".join([
                         "diff --git a/src/app.py b/src/app.py",
@@ -180,13 +186,18 @@ class RelayCommandTests(TestCase):
 
             self.assertTrue((checkpoint_root / "captures" / "planning-snapshot.md").exists())
             self.assertTrue((checkpoint_root / "captures" / "proposed-edits.diff").exists())
+            self.assertTrue((checkpoint_root / "captures" / "provider" / "claude-resumable-state.json").exists())
             self.assertTrue((checkpoint_root / "captures" / "provider" / "claude-transcript.md").exists())
             self.assertTrue((checkpoint_root / "captures" / "provider" / "claude-session-metadata.json").exists())
             self.assertTrue((checkpoint_root / "captures" / "provider" / "claude-warnings.md").exists())
             self.assertTrue((handoff_root / "relay" / "inputs" / "planning-snapshot.md").exists())
             self.assertTrue((handoff_root / "relay" / "inputs" / "proposed-edits.diff").exists())
+            self.assertTrue((handoff_root / "relay" / "provider" / "claude-resumable-state.json").exists())
             self.assertTrue((handoff_root / "relay" / "provider" / "claude-transcript.md").exists())
             self.assertTrue((handoff_root / "relay" / "provider" / "claude-session-metadata.json").exists())
+            self.assertIn("## Resumable State", packet_text)
+            self.assertIn("Claude exported a resumable migration plan.", packet_text)
+            self.assertIn("Port the auth guard", packet_text)
             self.assertIn("Provider export says Claude planned the migration order.", packet_text)
             self.assertIn("hello from provider export", packet_text)
             self.assertIn("## Provider Session Export", packet_text)
