@@ -32,6 +32,15 @@ class LaunchSpec:
 
 
 @dataclass(frozen=True)
+class CaptureHookSpec:
+    command: str
+    template: str
+    template_source: str
+    cwd: str
+    hook_name: str
+
+
+@dataclass(frozen=True)
 class AgentAdapter:
     key: str
     display_name: str
@@ -42,6 +51,8 @@ class AgentAdapter:
     launch_instructions_template: str
     resume_packet_target: str
     event_capture_hook_name: str | None = None
+    capture_template_env: str | None = None
+    default_capture_template: str | None = None
 
     def resolve_launch_template(self) -> tuple[str, str]:
         template = os.getenv(self.launch_template_env)
@@ -89,17 +100,56 @@ class AgentAdapter:
             warning=warning,
         )
 
-    def _template_values(self, repo_root: Path, resume_path: Path) -> dict[str, str]:
-        return {
+    def resolve_capture_template(self) -> tuple[str | None, str | None]:
+        if not self.capture_template_env:
+            return None, None
+        template = os.getenv(self.capture_template_env)
+        if template:
+            return template, "env"
+        if self.default_capture_template:
+            return self.default_capture_template, "default"
+        return None, None
+
+    def render_capture_hook_spec(self, repo_root: Path, session_id: str) -> CaptureHookSpec | None:
+        template, source = self.resolve_capture_template()
+        if template is None or source is None or self.event_capture_hook_name is None:
+            return None
+        try:
+            command = template.format(**self._template_values(repo_root, session_id=session_id))
+        except KeyError as exc:
+            raise SystemExit(
+                f"Capture hook template for {self.key} references unknown placeholder: {exc.args[0]}"
+            ) from exc
+        return CaptureHookSpec(
+            command=command,
+            template=template,
+            template_source=source,
+            cwd=str(repo_root),
+            hook_name=self.event_capture_hook_name,
+        )
+
+    def _template_values(
+        self,
+        repo_root: Path,
+        resume_path: Path | None = None,
+        session_id: str | None = None,
+    ) -> dict[str, str]:
+        values = {
             "agent": self.key,
             "agent_name": self.display_name,
             "agent_cli": shlex.quote(self.cli_command),
             "repo_root": shlex.quote(str(repo_root)),
             "repo_root_path": str(repo_root),
-            "resume_path": shlex.quote(str(resume_path)),
-            "resume_path_path": str(resume_path),
             "resume_packet_target": self.resume_packet_target,
+            "session_id": session_id or "",
         }
+        if resume_path is not None:
+            values["resume_path"] = shlex.quote(str(resume_path))
+            values["resume_path_path"] = str(resume_path)
+        else:
+            values["resume_path"] = ""
+            values["resume_path_path"] = ""
+        return values
 
 
 class ClaudeCodeAdapter(AgentAdapter):
@@ -115,7 +165,8 @@ class ClaudeCodeAdapter(AgentAdapter):
                 "Start {agent_name} in {repo_root_path} with the resume packet as its prompt."
             ),
             resume_packet_target="claude",
-            event_capture_hook_name=None,
+            event_capture_hook_name="claude_export",
+            capture_template_env="AGENT_RELAY_CLAUDE_CAPTURE_TEMPLATE",
         )
 
 
@@ -132,7 +183,8 @@ class CodexAdapter(AgentAdapter):
                 "Start {agent_name} in {repo_root_path} with the resume packet as its prompt."
             ),
             resume_packet_target="codex",
-            event_capture_hook_name=None,
+            event_capture_hook_name="codex_export",
+            capture_template_env="AGENT_RELAY_CODEX_CAPTURE_TEMPLATE",
         )
 
 

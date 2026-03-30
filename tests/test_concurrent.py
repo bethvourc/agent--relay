@@ -1,6 +1,7 @@
 """Tests for concurrent agent execution."""
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -100,6 +101,24 @@ class BuildConcurrentPromptTests(TestCase):
         )
         self.assertIn("/tmp/pane-1.txt", prompt)
         self.assertIn("/tmp/pane-2.txt", prompt)
+
+    def test_resolution_prompt_mentions_conflict_artifact(self) -> None:
+        prompt = _build_concurrent_prompt(
+            task="Resolve the conflicted README",
+            slot=0,
+            agent_key="claude",
+            all_agents=["claude"],
+            repo_root=Path("/tmp/repo"),
+            workspace_log=Path("/tmp/log.md"),
+            pane_snapshot_paths=[],
+            phase="resolution",
+            resolution_conflict_artifact_path=Path("/tmp/repo/.agent-relay/concurrent/conflicts.json"),
+            resolution_paths=("README.md",),
+        )
+        self.assertIn("## Resolution Phase", prompt)
+        self.assertIn("conflicts.json", prompt)
+        self.assertIn("README.md", prompt)
+        self.assertIn("baseline version", prompt)
 
     def test_includes_continuation_context_when_requested(self) -> None:
         prompt = _build_concurrent_prompt(
@@ -241,7 +260,14 @@ class RunConcurrentTests(TestCase):
     @staticmethod
     def _phase_and_slot(session_name: str) -> tuple[str, int]:
         slot = int(session_name.rsplit("-", 1)[-1])
-        phase = "planning" if "-planning-" in session_name else "implementation"
+        if "-planning-" in session_name:
+            phase = "planning"
+        elif "-resolution-" in session_name:
+            phase = "resolution"
+        elif "-review-" in session_name:
+            phase = "review"
+        else:
+            phase = "implementation"
         return phase, slot
 
     def _run(
@@ -249,10 +275,18 @@ class RunConcurrentTests(TestCase):
         *,
         planning_contents: dict[int, str],
         implementation_contents: dict[int, str] | None = None,
+        resolution_contents: dict[int, str] | None = None,
+        review_contents: dict[int, str] | None = None,
         planning_exit_codes: dict[int, int | None] | None = None,
         implementation_exit_codes: dict[int, int | None] | None = None,
+        resolution_exit_codes: dict[int, int | None] | None = None,
+        review_exit_codes: dict[int, int | None] | None = None,
         baseline_files: dict[str, str] | None = None,
         worktree_overrides: dict[int, dict[str, str | None]] | None = None,
+        resolution_worktree_overrides: dict[int, dict[str, str | None]] | None = None,
+        continue_from_session_id: str | None = None,
+        prior_conflict_artifact: dict[str, object] | None = None,
+        prior_conflict_files: dict[str, str | bytes] | None = None,
         pane_dead,
         session_exists,
         max_time_seconds: int = 600,
@@ -260,20 +294,72 @@ class RunConcurrentTests(TestCase):
         repo_root: Path | None = None,
     ) -> ConcurrentResult:
         implementation_contents = implementation_contents or {}
+        resolution_contents = resolution_contents or {}
+        review_contents = review_contents or {}
         planning_exit_codes = planning_exit_codes or {}
         implementation_exit_codes = implementation_exit_codes or {}
+        resolution_exit_codes = resolution_exit_codes or {}
+        review_exit_codes = review_exit_codes or {}
         baseline_files = baseline_files or {
             "README.md": "baseline readme\n",
             "tests/test_concurrent.py": "baseline tests\n",
         }
         worktree_overrides = worktree_overrides or {}
+        resolution_worktree_overrides = resolution_worktree_overrides or {}
+        prior_conflict_files = prior_conflict_files or {}
         def run_in_repo(repo_root: Path) -> ConcurrentResult:
             for relative_path, content in baseline_files.items():
                 target = repo_root / relative_path
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(content, encoding="utf-8")
 
+            if continue_from_session_id and prior_conflict_artifact is not None:
+                artifact_dir = repo_root / ".agent-relay" / "sessions" / continue_from_session_id / "concurrent"
+                (artifact_dir / "conflicts").mkdir(parents=True, exist_ok=True)
+                for relative_path in baseline_files:
+                    source = repo_root / relative_path
+                    if source.exists():
+                        destination = artifact_dir / "conflicts" / "repo" / relative_path
+                        destination.parent.mkdir(parents=True, exist_ok=True)
+                        destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+                for relative_path, content in prior_conflict_files.items():
+                    destination = artifact_dir / relative_path
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    if isinstance(content, bytes):
+                        destination.write_bytes(content)
+                    else:
+                        destination.write_text(content, encoding="utf-8")
+                (artifact_dir / "conflicts.json").write_text(
+                    json.dumps(prior_conflict_artifact),
+                    encoding="utf-8",
+                )
+
             worktree_paths: dict[int, Path] = {}
+
+            def fake_create_worktree_at(
+                worktree_path: Path,
+                slot: int,
+                baseline_paths,
+                overrides: dict[int, dict[str, str | None]],
+            ) -> Path:
+                for relative_path in baseline_paths:
+                    source = repo_root / relative_path
+                    destination = worktree_path / relative_path
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+                for relative_path, content in overrides.get(slot, {}).items():
+                    destination = worktree_path / relative_path
+                    if content is None:
+                        if destination.exists():
+                            destination.unlink()
+                        continue
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    if isinstance(content, bytes):
+                        destination.write_bytes(content)
+                    else:
+                        destination.write_text(content, encoding="utf-8")
+                worktree_paths[slot] = worktree_path
+                return worktree_path
 
             def fake_create_worktree(
                 _repo_root: Path,
@@ -283,26 +369,25 @@ class RunConcurrentTests(TestCase):
                 baseline_paths,
             ) -> Path:
                 worktree_path = repo_root / f"worktree-{session_id}-{slot:02d}"
-                for relative_path in baseline_paths:
-                    source = repo_root / relative_path
-                    destination = worktree_path / relative_path
-                    destination.parent.mkdir(parents=True, exist_ok=True)
-                    destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
-                for relative_path, content in worktree_overrides.get(slot, {}).items():
-                    destination = worktree_path / relative_path
-                    if content is None:
-                        if destination.exists():
-                            destination.unlink()
-                        continue
-                    destination.parent.mkdir(parents=True, exist_ok=True)
-                    destination.write_text(content, encoding="utf-8")
-                worktree_paths[slot] = worktree_path
-                return worktree_path
+                return fake_create_worktree_at(worktree_path, slot, baseline_paths, worktree_overrides)
+
+            def fake_create_resolution_worktree(
+                _repo_root: Path,
+                *,
+                session_id: str,
+                slot: int,
+                baseline_paths,
+            ) -> Path:
+                worktree_path = repo_root / f"resolver-{session_id}-{slot:02d}"
+                return fake_create_worktree_at(worktree_path, slot, baseline_paths, resolution_worktree_overrides)
 
             with patch("agent_relay.concurrent._require_tmux"), patch(
                 "agent_relay.concurrent.require_available"
             ), patch(
                 "agent_relay.concurrent.start_session"
+            ), patch(
+                "agent_relay.concurrent.is_session",
+                return_value=True if continue_from_session_id else False,
             ), patch(
                 "agent_relay.concurrent._current_repo_file_paths",
                 return_value=tuple(sorted(baseline_files)),
@@ -315,6 +400,9 @@ class RunConcurrentTests(TestCase):
             ), patch(
                 "agent_relay.concurrent._create_agent_worktree",
                 side_effect=fake_create_worktree,
+            ), patch(
+                "agent_relay.concurrent._create_resolution_worktree",
+                side_effect=fake_create_resolution_worktree,
             ), patch(
                 "agent_relay.concurrent._cleanup_worktrees",
             ), patch(
@@ -331,6 +419,10 @@ class RunConcurrentTests(TestCase):
                 side_effect=lambda session_name, _slot: (
                     planning_contents.get(self._phase_and_slot(session_name)[1], "")
                     if self._phase_and_slot(session_name)[0] == "planning"
+                    else resolution_contents.get(self._phase_and_slot(session_name)[1], "")
+                    if self._phase_and_slot(session_name)[0] == "resolution"
+                    else review_contents.get(self._phase_and_slot(session_name)[1], "")
+                    if self._phase_and_slot(session_name)[0] == "review"
                     else implementation_contents.get(self._phase_and_slot(session_name)[1], "")
                 ),
             ), patch(
@@ -338,6 +430,10 @@ class RunConcurrentTests(TestCase):
                 side_effect=lambda path: (
                     planning_exit_codes.get(int(path.parent.name.split("-")[-1]), None)
                     if path.name == "planning-exit-code.txt"
+                    else resolution_exit_codes.get(int(path.parent.name.split("-")[-1]), None)
+                    if path.name == "resolution-exit-code.txt"
+                    else review_exit_codes.get(int(path.parent.name.split("-")[-1]), None)
+                    if path.name == "review-exit-code.txt"
                     else implementation_exit_codes.get(int(path.parent.name.split("-")[-1]), None)
                 ),
             ):
@@ -345,6 +441,7 @@ class RunConcurrentTests(TestCase):
                     repo_root,
                     agents=["claude", "codex"],
                     task="Finish the task",
+                    continue_from_session_id=continue_from_session_id,
                     max_time_seconds=max_time_seconds,
                     on_agent_start=on_agent_start,
                 )
@@ -598,6 +695,178 @@ class RunConcurrentTests(TestCase):
                 "alpha from slot0\nbeta\ngamma from slot1\n",
             )
             self.assertEqual(result.outcomes[1].merged_paths, ("README.md",))
+
+    def test_merge_conflict_runs_resolution_phase_and_resolves_file(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            result = self._run(
+                planning_contents={
+                    0: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Shared docs","claims":[{"path":"README.md","role":"shared"}],"remaining_work":["docs"],"verification":[]}',
+                    1: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Shared docs too","claims":[{"path":"README.md","role":"shared"}],"remaining_work":["docs"],"verification":[]}',
+                },
+                implementation_contents={
+                    0: 'Done\nRELAY_STATUS: {"status":"done","reason":"Intro change","remaining_work":[],"verification":["review"]}',
+                    1: 'Done\nRELAY_STATUS: {"status":"done","reason":"Conflicting change","remaining_work":[],"verification":["review"]}',
+                },
+                resolution_contents={
+                    0: 'Resolved\nRELAY_STATUS: {"status":"done","reason":"Chose final README","remaining_work":[],"verification":["manual review"]}',
+                },
+                review_contents={
+                    0: 'Reviewed\nRELAY_STATUS: {"status":"done","reason":"Resolution looks correct","remaining_work":[],"verification":["manual review"]}',
+                },
+                baseline_files={
+                    "README.md": "shared line\n",
+                    "tests/test_concurrent.py": "baseline tests\n",
+                },
+                worktree_overrides={
+                    0: {"README.md": "slot zero line\n"},
+                    1: {"README.md": "slot one line\n"},
+                },
+                resolution_worktree_overrides={
+                    0: {"README.md": "resolved line\n"},
+                },
+                planning_exit_codes={0: 0, 1: 0},
+                implementation_exit_codes={0: 0, 1: 0},
+                resolution_exit_codes={0: 0},
+                review_exit_codes={1: 0},
+                pane_dead=lambda _session, _slot: True,
+                session_exists=lambda _session: True,
+                repo_root=repo_root,
+            )
+            self.assertEqual(result.stop_reason, "all_done")
+            self.assertEqual((repo_root / "README.md").read_text(encoding="utf-8"), "resolved line\n")
+            self.assertIsNotNone(result.conflict_artifact_path)
+            self.assertTrue(Path(result.conflict_artifact_path).exists())
+            self.assertTrue(all(not outcome.merge_conflicts for outcome in result.outcomes))
+
+    def test_failed_resolution_preserves_merge_conflict_and_artifact(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            result = self._run(
+                planning_contents={
+                    0: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Shared docs","claims":[{"path":"README.md","role":"shared"}],"remaining_work":["docs"],"verification":[]}',
+                    1: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Shared docs too","claims":[{"path":"README.md","role":"shared"}],"remaining_work":["docs"],"verification":[]}',
+                },
+                implementation_contents={
+                    0: 'Done\nRELAY_STATUS: {"status":"done","reason":"Intro change","remaining_work":[],"verification":["review"]}',
+                    1: 'Done\nRELAY_STATUS: {"status":"done","reason":"Conflicting change","remaining_work":[],"verification":["review"]}',
+                },
+                resolution_contents={
+                    0: 'Blocked\nRELAY_STATUS: {"status":"blocked","reason":"Need human decision","remaining_work":["manual choice"],"verification":[]}',
+                },
+                baseline_files={
+                    "README.md": "shared line\n",
+                    "tests/test_concurrent.py": "baseline tests\n",
+                },
+                worktree_overrides={
+                    0: {"README.md": "slot zero line\n"},
+                    1: {"README.md": "slot one line\n"},
+                },
+                planning_exit_codes={0: 0, 1: 0},
+                implementation_exit_codes={0: 0, 1: 0},
+                resolution_exit_codes={0: 0},
+                pane_dead=lambda _session, _slot: True,
+                session_exists=lambda _session: True,
+                repo_root=repo_root,
+            )
+            self.assertEqual(result.stop_reason, "manual_resolution_required")
+            self.assertIsNotNone(result.conflict_artifact_path)
+            artifact = Path(result.conflict_artifact_path)
+            self.assertTrue(artifact.exists())
+            self.assertIn('"status": "manual_resolution_required"', artifact.read_text(encoding="utf-8"))
+            self.assertTrue(any(outcome.merge_conflicts for outcome in result.outcomes))
+
+    def test_continue_from_conflict_artifact_starts_resolution_and_review(self) -> None:
+        prior_artifact = {
+            "session_id": "prior-session",
+            "status": "manual_resolution_required",
+            "paths": [
+                {
+                    "path": "README.md",
+                    "base_version": {"exists": True, "path": "conflicts/base/README.md"},
+                    "repo_version": {"exists": True, "path": "conflicts/repo/README.md"},
+                    "contributors": [
+                        {"slot": 0, "agent": "claude", "version_path": "conflicts/slot-00/README.md"},
+                        {"slot": 1, "agent": "codex", "version_path": "conflicts/slot-01/README.md"},
+                    ],
+                }
+            ],
+        }
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            result = self._run(
+                planning_contents={},
+                implementation_contents={},
+                resolution_contents={
+                    0: 'Resolved\nRELAY_STATUS: {"status":"done","reason":"Chose final README","remaining_work":[],"verification":["manual review"]}',
+                },
+                review_contents={
+                    0: 'Reviewed\nRELAY_STATUS: {"status":"done","reason":"Resolution looks correct","remaining_work":[],"verification":["manual review"]}',
+                },
+                baseline_files={
+                    "README.md": "current repo draft\n",
+                    "tests/test_concurrent.py": "baseline tests\n",
+                },
+                resolution_worktree_overrides={
+                    0: {"README.md": "resolved from continuation\n"},
+                },
+                resolution_exit_codes={0: 0},
+                review_exit_codes={1: 0},
+                continue_from_session_id="prior-session",
+                prior_conflict_artifact=prior_artifact,
+                prior_conflict_files={
+                    "conflicts/base/README.md": "base version\n",
+                    "conflicts/slot-00/README.md": "slot zero version\n",
+                    "conflicts/slot-01/README.md": "slot one version\n",
+                },
+                pane_dead=lambda _session, _slot: True,
+                session_exists=lambda _session: True,
+                repo_root=repo_root,
+            )
+            self.assertEqual(result.stop_reason, "all_done")
+            self.assertEqual((repo_root / "README.md").read_text(encoding="utf-8"), "resolved from continuation\n")
+            self.assertEqual([outcome.phase for outcome in result.outcomes], ["resolution", "review"])
+            self.assertTrue(all(outcome.control_status == "done" for outcome in result.outcomes))
+
+    def test_continue_from_binary_conflict_artifact_requires_manual_resolution(self) -> None:
+        prior_artifact = {
+            "session_id": "prior-session",
+            "status": "merge_conflict",
+            "paths": [
+                {
+                    "path": "assets/logo.bin",
+                    "base_version": {"exists": True, "path": "conflicts/base/assets/logo.bin"},
+                    "repo_version": {"exists": True, "path": "conflicts/repo/assets/logo.bin"},
+                    "contributors": [
+                        {"slot": 0, "agent": "claude", "version_path": "conflicts/slot-00/assets/logo.bin"},
+                    ],
+                }
+            ],
+        }
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            result = self._run(
+                planning_contents={},
+                implementation_contents={},
+                baseline_files={
+                    "assets/logo.bin": "text placeholder\n",
+                    "tests/test_concurrent.py": "baseline tests\n",
+                },
+                continue_from_session_id="prior-session",
+                prior_conflict_artifact=prior_artifact,
+                prior_conflict_files={
+                    "conflicts/base/assets/logo.bin": b"\x00\x01base",
+                    "conflicts/slot-00/assets/logo.bin": b"\x00\x02slot",
+                },
+                pane_dead=lambda _session, _slot: True,
+                session_exists=lambda _session: True,
+                repo_root=repo_root,
+            )
+            self.assertEqual(result.stop_reason, "manual_resolution_required")
+            self.assertEqual(result.outcomes, ())
+            self.assertIsNotNone(result.conflict_artifact_path)
+            artifact = Path(result.conflict_artifact_path)
+            self.assertIn('"manual_paths": [', artifact.read_text(encoding="utf-8"))
 
     def test_owner_and_reviewer_claims_can_overlap_but_reviewer_cannot_edit(self) -> None:
         with TemporaryDirectory() as tmpdir:

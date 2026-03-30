@@ -80,9 +80,10 @@ class ConcurrentResult:
     tmux_sessions: tuple[str, ...]
     continued_from_session_id: str | None
     claim_ledger_path: str | None
-    stop_reason: str   # "all_done" | "incomplete" | "max_time" | "agent_error" | "interrupted" | "scope_violation" | "merge_conflict"
+    stop_reason: str   # "all_done" | "incomplete" | "max_time" | "agent_error" | "interrupted" | "scope_violation" | "merge_conflict" | "manual_resolution_required"
     elapsed_seconds: float
     outcomes: tuple[AgentOutcome, ...]
+    conflict_artifact_path: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +102,15 @@ class PhaseRunResult:
     stop_reason: str  # "completed" | "max_time" | "interrupted"
     tmux_sessions: tuple[str, ...]
     outcomes: tuple[AgentOutcome, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ResolutionWorkflowResult:
+    stop_reason: str  # "resolved" | "manual_resolution_required" | "max_time" | "interrupted"
+    conflict_artifact_path: Path | None
+    additional_worktree_paths: tuple[Path, ...]
+    phase_outcomes: tuple[AgentOutcome, ...]
+    resolved_paths: tuple[str, ...] = field(default_factory=tuple)
 
 
 # ---------------------------------------------------------------------------
@@ -187,12 +197,41 @@ def _baseline_snapshot_dir(repo_root: Path, session_id: str) -> Path:
     return concurrent_dir(repo_root, session_id) / "baseline"
 
 
+def _resolution_baseline_snapshot_dir(repo_root: Path, session_id: str) -> Path:
+    return concurrent_dir(repo_root, session_id) / "resolution-baseline"
+
+
+def _conflict_artifact_dir(repo_root: Path, session_id: str) -> Path:
+    return concurrent_dir(repo_root, session_id) / "conflicts"
+
+
+def _conflict_artifact_path(repo_root: Path, session_id: str) -> Path:
+    return concurrent_dir(repo_root, session_id) / "conflicts.json"
+
+
+def _continued_conflict_artifact_source(repo_root: Path, session_id: str | None) -> Path | None:
+    if session_id is None:
+        return None
+    path = _conflict_artifact_path(repo_root, session_id)
+    payload = _load_conflict_artifact(path) if path.exists() else None
+    if payload is None:
+        return None
+    status = str(payload.get("status", "")).strip().lower()
+    if status in {"merge_conflict", "manual_resolution_required", "resolution_retry_pending"}:
+        return path
+    return None
+
+
 def _worktree_root(repo_root: Path, session_id: str) -> Path:
     return Path(tempfile.gettempdir()) / "agent-relay-worktrees" / repo_root.name / session_id
 
 
 def _agent_worktree_path(repo_root: Path, session_id: str, slot: int) -> Path:
     return _worktree_root(repo_root, session_id) / f"agent-{slot:02d}"
+
+
+def _resolution_worktree_path(repo_root: Path, session_id: str, slot: int) -> Path:
+    return _worktree_root(repo_root, session_id) / f"resolver-{slot:02d}"
 
 
 def _worktree_coordination_dir(worktree_path: Path) -> Path:
@@ -210,6 +249,14 @@ def _worktree_workspace_log_path(worktree_path: Path) -> Path:
 
 def _worktree_claim_ledger_path(worktree_path: Path) -> Path:
     return _worktree_coordination_dir(worktree_path) / "claims.json"
+
+
+def _worktree_conflict_artifact_path(worktree_path: Path) -> Path:
+    return _worktree_coordination_dir(worktree_path) / "conflicts.json"
+
+
+def _worktree_conflict_artifact_dir(worktree_path: Path) -> Path:
+    return _worktree_coordination_dir(worktree_path) / "conflicts"
 
 
 def _worktree_continued_workspace_log_path(worktree_path: Path) -> Path:
@@ -283,6 +330,12 @@ def _remove_path(path: Path) -> None:
         shutil.rmtree(path)
     elif path.exists() or path.is_symlink():
         path.unlink()
+
+
+def _copy_directory(source: Path, destination: Path) -> None:
+    if destination.exists():
+        shutil.rmtree(destination)
+    shutil.copytree(source, destination, symlinks=True)
 
 
 def _normalize_claim_path(raw_path: str) -> str:
@@ -564,6 +617,24 @@ def _write_claim_ledger(
     write_json_atomic(path, payload)
 
 
+def _write_conflict_resolution_ledger(
+    path: Path,
+    *,
+    session_id: str,
+    continued_from_session_id: str | None,
+    conflict_artifact_path: Path,
+    conflict_paths: Sequence[str],
+) -> None:
+    write_json_atomic(path, {
+        "session_id": session_id,
+        "continued_from_session_id": continued_from_session_id,
+        "status": "resolution_continuation",
+        "generated_at": utc_timestamp(),
+        "conflict_artifact_path": str(conflict_artifact_path),
+        "paths": list(conflict_paths),
+    })
+
+
 def _classify_planning_result(
     session_id: str,
     continued_from_session_id: str | None,
@@ -663,6 +734,42 @@ def _create_agent_worktree(
     return worktree_path
 
 
+def _create_resolution_worktree(
+    repo_root: Path,
+    *,
+    session_id: str,
+    slot: int,
+    baseline_paths: Sequence[str],
+) -> Path:
+    worktree_path = _resolution_worktree_path(repo_root, session_id, slot)
+    worktree_path.parent.mkdir(parents=True, exist_ok=True)
+    if worktree_path.exists():
+        shutil.rmtree(worktree_path)
+    result = _git(
+        repo_root,
+        "worktree",
+        "add",
+        "--detach",
+        "--force",
+        str(worktree_path),
+        "HEAD",
+        check=False,
+    )
+    if result.returncode != 0:
+        message = result.stderr.strip() or result.stdout.strip() or "git worktree add failed"
+        raise SystemExit(f"Unable to create isolated resolution worktree: {message}")
+
+    baseline_set = set(baseline_paths)
+    for tracked_path in _git_ls_files(worktree_path):
+        if tracked_path not in baseline_set:
+            _remove_path(worktree_path / tracked_path)
+    for relative_path in baseline_paths:
+        source = repo_root / relative_path
+        if source.exists() or source.is_symlink():
+            _copy_file_like(source, worktree_path / relative_path)
+    return worktree_path
+
+
 def _build_baseline_manifest(repo_root: Path, relative_paths: Sequence[str]) -> dict[str, str]:
     manifest: dict[str, str] = {}
     for relative_path in relative_paths:
@@ -679,6 +786,23 @@ def _create_baseline_snapshot(
     relative_paths: Sequence[str],
 ) -> Path:
     snapshot_dir = _baseline_snapshot_dir(repo_root, session_id)
+    if snapshot_dir.exists():
+        shutil.rmtree(snapshot_dir)
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    for relative_path in relative_paths:
+        source = repo_root / relative_path
+        if source.exists() or source.is_symlink():
+            _copy_file_like(source, snapshot_dir / relative_path)
+    return snapshot_dir
+
+
+def _create_resolution_baseline_snapshot(
+    repo_root: Path,
+    *,
+    session_id: str,
+    relative_paths: Sequence[str],
+) -> Path:
+    snapshot_dir = _resolution_baseline_snapshot_dir(repo_root, session_id)
     if snapshot_dir.exists():
         shutil.rmtree(snapshot_dir)
     snapshot_dir.mkdir(parents=True, exist_ok=True)
@@ -918,6 +1042,333 @@ def _postprocess_implementation_outcomes(
     return tuple(processed), None
 
 
+def _copy_conflict_version(
+    *,
+    root: Path,
+    relative_path: str,
+    artifact_dir: Path,
+    bucket: str,
+) -> str | None:
+    source = root / relative_path
+    if not source.exists() and not source.is_symlink():
+        return None
+    destination = artifact_dir / bucket / relative_path
+    _copy_file_like(source, destination)
+    return (Path("conflicts") / bucket / relative_path).as_posix()
+
+
+def _build_conflict_artifact(
+    repo_root: Path,
+    *,
+    session_id: str,
+    outcomes: Sequence[AgentOutcome],
+    worktree_paths: Sequence[Path],
+    baseline_root: Path,
+) -> Path | None:
+    conflict_paths = tuple(sorted({
+        path
+        for outcome in outcomes
+        for path in outcome.merge_conflicts
+    }))
+    if not conflict_paths:
+        return None
+
+    artifact_dir = _conflict_artifact_dir(repo_root, session_id)
+    artifact_path = _conflict_artifact_path(repo_root, session_id)
+    if artifact_dir.exists():
+        shutil.rmtree(artifact_dir)
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+
+    worktree_by_slot = dict(enumerate(worktree_paths))
+    payload_paths: list[dict[str, object]] = []
+    for relative_path in conflict_paths:
+        contributors: list[dict[str, object]] = []
+        for outcome in outcomes:
+            if relative_path not in outcome.changed_paths:
+                continue
+            worktree_path = worktree_by_slot.get(outcome.slot)
+            if worktree_path is None:
+                continue
+            version_rel = _copy_conflict_version(
+                root=worktree_path,
+                relative_path=relative_path,
+                artifact_dir=artifact_dir,
+                bucket=f"slot-{outcome.slot:02d}",
+            )
+            contributors.append({
+                "slot": outcome.slot,
+                "agent": outcome.agent_key,
+                "claim_specs": [
+                    {"path": spec.path, "role": spec.role}
+                    for spec in outcome.claim_specs
+                    if _path_matches_claim_spec(relative_path, spec, repo_root)
+                ],
+                "exists": version_rel is not None,
+                "version_path": version_rel,
+            })
+
+        payload_paths.append({
+            "path": relative_path,
+            "base_version": {
+                "exists": (baseline_root / relative_path).exists() or (baseline_root / relative_path).is_symlink(),
+                "path": _copy_conflict_version(
+                    root=baseline_root,
+                    relative_path=relative_path,
+                    artifact_dir=artifact_dir,
+                    bucket="base",
+                ),
+            },
+            "repo_version": {
+                "exists": (repo_root / relative_path).exists() or (repo_root / relative_path).is_symlink(),
+                "path": _copy_conflict_version(
+                    root=repo_root,
+                    relative_path=relative_path,
+                    artifact_dir=artifact_dir,
+                    bucket="repo",
+                ),
+            },
+            "contributors": contributors,
+        })
+
+    write_json_atomic(artifact_path, {
+        "session_id": session_id,
+        "generated_at": utc_timestamp(),
+        "status": "merge_conflict",
+        "paths": payload_paths,
+    })
+    return artifact_path
+
+
+def _load_conflict_artifact(path: Path) -> dict[str, object] | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _write_conflict_artifact_payload(path: Path, payload: dict[str, object]) -> None:
+    write_json_atomic(path, payload)
+
+
+def _extract_conflict_paths_from_artifact(path: Path) -> tuple[str, ...]:
+    payload = _load_conflict_artifact(path)
+    if payload is None:
+        return ()
+    items = payload.get("paths")
+    if not isinstance(items, list):
+        return ()
+    paths = [
+        str(item.get("path", "")).strip()
+        for item in items
+        if isinstance(item, dict) and str(item.get("path", "")).strip()
+    ]
+    return tuple(sorted(dict.fromkeys(paths)))
+
+
+def _read_bytes_if_possible(path: Path) -> bytes | None:
+    try:
+        return path.read_bytes()
+    except (FileNotFoundError, OSError):
+        return None
+
+
+def _looks_like_text_file(path: Path) -> bool:
+    payload = _read_bytes_if_possible(path)
+    if payload is None:
+        return True
+    if b"\x00" in payload:
+        return False
+    try:
+        payload.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
+def _artifact_entry_version_paths(artifact_path: Path, entry: dict[str, object]) -> tuple[Path, ...]:
+    version_paths: list[Path] = []
+    for field_name in ("base_version", "repo_version"):
+        value = entry.get(field_name)
+        if isinstance(value, dict):
+            rel = value.get("path")
+            if isinstance(rel, str) and rel.strip():
+                version_paths.append((artifact_path.parent / rel).resolve())
+    contributors = entry.get("contributors")
+    if isinstance(contributors, list):
+        for contributor in contributors:
+            if not isinstance(contributor, dict):
+                continue
+            rel = contributor.get("version_path")
+            if isinstance(rel, str) and rel.strip():
+                version_paths.append((artifact_path.parent / rel).resolve())
+    return tuple(version_paths)
+
+
+def _non_text_conflict_paths(artifact_path: Path) -> tuple[str, ...]:
+    payload = _load_conflict_artifact(artifact_path)
+    if payload is None:
+        return ()
+    paths = payload.get("paths")
+    if not isinstance(paths, list):
+        return ()
+    non_text: list[str] = []
+    for entry in paths:
+        if not isinstance(entry, dict):
+            continue
+        relative_path = str(entry.get("path", "")).strip()
+        if not relative_path:
+            continue
+        version_paths = _artifact_entry_version_paths(artifact_path, entry)
+        if any(not _looks_like_text_file(version_path) for version_path in version_paths):
+            non_text.append(relative_path)
+    return tuple(sorted(dict.fromkeys(non_text)))
+
+
+def _refresh_conflict_artifact_repo_versions(repo_root: Path, artifact_path: Path) -> None:
+    payload = _load_conflict_artifact(artifact_path)
+    if payload is None:
+        return
+    paths = payload.get("paths")
+    if not isinstance(paths, list):
+        return
+    artifact_dir = artifact_path.parent / "conflicts"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    for entry in paths:
+        if not isinstance(entry, dict):
+            continue
+        relative_path = str(entry.get("path", "")).strip()
+        if not relative_path:
+            continue
+        repo_version = entry.setdefault("repo_version", {})
+        if not isinstance(repo_version, dict):
+            repo_version = {}
+            entry["repo_version"] = repo_version
+        source = repo_root / relative_path
+        destination = artifact_dir / "repo" / relative_path
+        if source.exists() or source.is_symlink():
+            _copy_file_like(source, destination)
+            repo_version["exists"] = True
+            repo_version["path"] = (Path("conflicts") / "repo" / relative_path).as_posix()
+        else:
+            _remove_path(destination)
+            repo_version["exists"] = False
+            repo_version["path"] = None
+    _write_conflict_artifact_payload(artifact_path, payload)
+
+
+def _set_conflict_artifact_status(
+    artifact_path: Path,
+    *,
+    status: str,
+    note: str = "",
+    manual_paths: Sequence[str] = (),
+    attempted_slots: Sequence[int] = (),
+) -> None:
+    payload = _load_conflict_artifact(artifact_path)
+    if payload is None:
+        return
+    payload["status"] = status
+    payload["updated_at"] = utc_timestamp()
+    if note:
+        payload["note"] = note
+    if manual_paths:
+        payload["manual_paths"] = list(manual_paths)
+    if attempted_slots:
+        payload["attempted_slots"] = list(attempted_slots)
+    _write_conflict_artifact_payload(artifact_path, payload)
+
+
+def _import_conflict_artifact(
+    repo_root: Path,
+    *,
+    session_id: str,
+    source_artifact_path: Path,
+) -> Path:
+    source_dir = source_artifact_path.parent / "conflicts"
+    target_dir = _conflict_artifact_dir(repo_root, session_id)
+    target_path = _conflict_artifact_path(repo_root, session_id)
+    if source_dir.exists():
+        _copy_directory(source_dir, target_dir)
+    else:
+        target_dir.mkdir(parents=True, exist_ok=True)
+    payload = _load_conflict_artifact(source_artifact_path) or {
+        "session_id": session_id,
+        "generated_at": utc_timestamp(),
+        "status": "merge_conflict",
+        "paths": [],
+    }
+    payload["session_id"] = session_id
+    payload["continued_from_conflict_artifact"] = str(source_artifact_path)
+    _write_conflict_artifact_payload(target_path, payload)
+    _refresh_conflict_artifact_repo_versions(repo_root, target_path)
+    return target_path
+
+
+def _sync_conflict_artifact_to_worktree(
+    *,
+    worktree_path: Path,
+    artifact_path: Path,
+    artifact_dir: Path,
+) -> Path:
+    destination_dir = _worktree_conflict_artifact_dir(worktree_path)
+    destination_path = _worktree_conflict_artifact_path(worktree_path)
+    _copy_directory(artifact_dir, destination_dir)
+    write_text_atomic(
+        destination_path,
+        artifact_path.read_text(encoding="utf-8"),
+    )
+    return destination_path
+
+
+def _select_resolution_agent(outcomes: Sequence[AgentOutcome]) -> AgentOutcome | None:
+    candidates = [outcome for outcome in outcomes if outcome.merge_conflicts]
+    if not candidates:
+        return None
+    return min(candidates, key=lambda outcome: (outcome.slot, outcome.agent_key))
+
+
+def _mark_resolved_conflicts(
+    outcomes: Sequence[AgentOutcome],
+    *,
+    resolved_paths: Sequence[str],
+) -> tuple[AgentOutcome, ...]:
+    resolved = set(resolved_paths)
+    processed: list[AgentOutcome] = []
+    for outcome in outcomes:
+        merged_paths = tuple(sorted(set(outcome.merged_paths) | (set(outcome.merge_conflicts) & resolved)))
+        merge_conflicts = tuple(sorted(path for path in outcome.merge_conflicts if path not in resolved))
+        processed.append(replace(
+            outcome,
+            merged_paths=merged_paths,
+            merge_conflicts=merge_conflicts,
+        ))
+    return tuple(processed)
+
+
+def _candidate_resolution_slots(
+    agents: Sequence[str],
+    outcomes: Sequence[AgentOutcome],
+) -> tuple[int, ...]:
+    conflicting_slots = [
+        outcome.slot
+        for outcome in sorted(outcomes, key=lambda outcome: outcome.slot)
+        if outcome.merge_conflicts
+    ]
+    ordered: list[int] = []
+    for slot in conflicting_slots + list(range(len(agents))):
+        if slot not in ordered:
+            ordered.append(slot)
+    return tuple(ordered)
+
+
+def _reviewer_slot(agents: Sequence[str], *, resolver_slot: int) -> int | None:
+    for slot in range(len(agents)):
+        if slot != resolver_slot:
+            return slot
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Concurrent prompt builder
 # ---------------------------------------------------------------------------
@@ -965,6 +1416,8 @@ def _build_concurrent_prompt(
     continued_session_root: Path | None = None,
     claim_ledger_path: Path | None = None,
     accepted_claims_by_slot: dict[int, tuple[ClaimSpec, ...]] | None = None,
+    resolution_conflict_artifact_path: Path | None = None,
+    resolution_paths: Sequence[str] = (),
 ) -> str:
     agent_name = get_agent_display_name(agent_key)
     others = [(i, a) for i, a in enumerate(all_agents) if i != slot]
@@ -1011,6 +1464,43 @@ def _build_concurrent_prompt(
             "- Claims must be repo-relative file paths or directory paths. Use a trailing / for directory claims.",
             "- If you post multiple RELAY_STATUS lines during the session, the last one wins.",
         ]
+    elif phase == "resolution":
+        phase_lines = [
+            "## Resolution Phase",
+            "- This phase exists because concurrent implementation produced merge conflicts the relay could not safely reconcile.",
+            "- Resolve only the conflicted paths listed below. Do not broaden scope beyond those paths.",
+        ]
+        if resolution_conflict_artifact_path is not None:
+            phase_lines.append(f"- Conflict artifact: {resolution_conflict_artifact_path}")
+        if resolution_paths:
+            phase_lines.append("- Conflicted paths: " + ", ".join(resolution_paths))
+        phase_lines.extend([
+            "- The conflict artifact contains the baseline version, current repo version, and each contributing slot's version for every conflicted path.",
+            "- Choose the best final content for each conflicted path, then update those files in your isolated resolution worktree.",
+            "- If the correct resolution is to keep the current repo version for a path, leave it unchanged and explain that in your reason.",
+            '- End with a machine-readable status line:',
+            '  RELAY_STATUS: {"status":"done","reason":"Resolved conflicted paths","claims":[],"remaining_work":[],"verification":["manual review"]}',
+            "- Allowed statuses: continue, blocked, done, error",
+            "- Use done only when every conflicted path has been reviewed.",
+            "- If you post multiple RELAY_STATUS lines during the session, the last one wins.",
+        ])
+    elif phase == "review":
+        phase_lines = [
+            "## Review Phase",
+            "- Review the resolver's final content for the conflicted paths listed below.",
+            "- Do not edit files in this phase. This is inspection-only.",
+        ]
+        if resolution_conflict_artifact_path is not None:
+            phase_lines.append(f"- Conflict artifact: {resolution_conflict_artifact_path}")
+        if resolution_paths:
+            phase_lines.append("- Resolved paths to review: " + ", ".join(resolution_paths))
+        phase_lines.extend([
+            '- End with a machine-readable status line:',
+            '  RELAY_STATUS: {"status":"done","reason":"Resolution looks correct","claims":[],"remaining_work":[],"verification":["manual review"]}',
+            "- Allowed statuses: done, blocked, error",
+            "- Use blocked if the resolution still needs human judgment.",
+            "- If you post multiple RELAY_STATUS lines during the session, the last one wins.",
+        ])
     else:
         phase_lines = [
             "## Implementation Phase",
@@ -1285,6 +1775,342 @@ def _run_concurrent_phase(
     )
 
 
+def _run_review_phase(
+    repo_root: Path,
+    *,
+    session_id: str,
+    task: str,
+    reviewer_slot: int,
+    agents: Sequence[str],
+    agent_dirs: Sequence[Path],
+    wlog: WorkspaceLog,
+    deadline_timestamp: float,
+    continue_from_session_id: str | None,
+    continued_workspace_log: Path | None,
+    conflict_artifact_path: Path,
+    conflict_paths: Sequence[str],
+    on_agent_start: Callable[[int, str, str], None] | None = None,
+    on_agent_done: Callable[[AgentOutcome], None] | None = None,
+) -> tuple[str, AgentOutcome, tuple[Path, ...]]:
+    review_baseline_paths = _current_repo_file_paths(repo_root)
+    review_baseline_manifest = _build_baseline_manifest(repo_root, review_baseline_paths)
+    review_worktree = _create_resolution_worktree(
+        repo_root,
+        session_id=session_id,
+        slot=reviewer_slot,
+        baseline_paths=review_baseline_paths,
+    )
+    _sync_worktree_coordination_files(
+        worktree_paths=(review_worktree,),
+        pane_snapshot_paths=(),
+        workspace_log_path=wlog.path,
+        continued_workspace_log_path=continued_workspace_log,
+    )
+    local_conflict_artifact_path = _sync_conflict_artifact_to_worktree(
+        worktree_path=review_worktree,
+        artifact_path=conflict_artifact_path,
+        artifact_dir=_conflict_artifact_dir(repo_root, session_id),
+    )
+    prompt_text = _build_concurrent_prompt(
+        task=task,
+        slot=0,
+        agent_key=agents[reviewer_slot],
+        all_agents=[agents[reviewer_slot]],
+        repo_root=review_worktree,
+        workspace_log=_worktree_workspace_log_path(review_worktree),
+        pane_snapshot_paths=(),
+        phase="review",
+        continued_from_session_id=continue_from_session_id,
+        continued_workspace_log=(
+            _worktree_continued_workspace_log_path(review_worktree)
+            if continue_from_session_id is not None
+            else None
+        ),
+        continued_session_root=None,
+        resolution_conflict_artifact_path=local_conflict_artifact_path,
+        resolution_paths=conflict_paths,
+    )
+    prompt_path = agent_dirs[reviewer_slot] / "review-prompt.md"
+    prompt_path.write_text(prompt_text, encoding="utf-8")
+    exit_code_path = agent_dirs[reviewer_slot] / "review-exit-code.txt"
+    phase_result = _run_concurrent_phase(
+        session_id=session_id,
+        phase="review",
+        agents=[agents[reviewer_slot]],
+        commands=[_build_shell_command(agents[reviewer_slot], prompt_path, review_worktree, exit_code_path)],
+        worktree_paths=(review_worktree,),
+        exit_code_paths=(exit_code_path,),
+        pane_snapshot_paths=(),
+        wlog=wlog,
+        deadline_timestamp=deadline_timestamp,
+        continued_workspace_log_path=continued_workspace_log,
+        on_agent_start=on_agent_start,
+        on_agent_done=on_agent_done,
+    )
+    review_outcome = phase_result.outcomes[0]
+    if phase_result.stop_reason != "completed":
+        return phase_result.stop_reason, review_outcome, (review_worktree,)
+    _current_manifest, changed_paths = _changed_paths_from_manifest(review_worktree, review_baseline_manifest)
+    processed_outcome = replace(
+        review_outcome,
+        worktree_path=str(review_worktree),
+        changed_paths=changed_paths,
+    )
+    if processed_outcome.exit_code != 0 or processed_outcome.control_status == "error":
+        return "manual_resolution_required", processed_outcome, (review_worktree,)
+    if processed_outcome.changed_paths:
+        return "manual_resolution_required", processed_outcome, (review_worktree,)
+    if processed_outcome.control_status != "done":
+        return "manual_resolution_required", processed_outcome, (review_worktree,)
+    return "approved", processed_outcome, (review_worktree,)
+
+
+def _attempt_resolution_phase(
+    repo_root: Path,
+    *,
+    session_id: str,
+    task: str,
+    agents: Sequence[str],
+    outcomes: Sequence[AgentOutcome],
+    worktree_paths: Sequence[Path],
+    baseline_root: Path | None,
+    agent_dirs: Sequence[Path],
+    wlog: WorkspaceLog,
+    deadline_timestamp: float,
+    continue_from_session_id: str | None,
+    continued_workspace_log: Path | None,
+    source_conflict_artifact_path: Path | None = None,
+    candidate_slots: Sequence[int] | None = None,
+    max_rounds: int = 3,
+    on_agent_start: Callable[[int, str, str], None] | None = None,
+    on_agent_done: Callable[[AgentOutcome], None] | None = None,
+) -> ResolutionWorkflowResult:
+    if source_conflict_artifact_path is None:
+        if baseline_root is None:
+            return ResolutionWorkflowResult(
+                stop_reason="manual_resolution_required",
+                conflict_artifact_path=None,
+                additional_worktree_paths=(),
+                phase_outcomes=(),
+            )
+        conflict_artifact_path = _build_conflict_artifact(
+            repo_root,
+            session_id=session_id,
+            outcomes=outcomes,
+            worktree_paths=worktree_paths,
+            baseline_root=baseline_root,
+        )
+    else:
+        conflict_artifact_path = source_conflict_artifact_path
+        _refresh_conflict_artifact_repo_versions(repo_root, conflict_artifact_path)
+    if conflict_artifact_path is None:
+        return ResolutionWorkflowResult(
+            stop_reason="manual_resolution_required",
+            conflict_artifact_path=None,
+            additional_worktree_paths=(),
+            phase_outcomes=(),
+        )
+
+    conflict_paths = _extract_conflict_paths_from_artifact(conflict_artifact_path)
+    if not conflict_paths:
+        _set_conflict_artifact_status(
+            conflict_artifact_path,
+            status="manual_resolution_required",
+            note="Conflict artifact did not contain any paths to resolve.",
+        )
+        return ResolutionWorkflowResult(
+            stop_reason="manual_resolution_required",
+            conflict_artifact_path=conflict_artifact_path,
+            additional_worktree_paths=(),
+            phase_outcomes=(),
+        )
+
+    non_text_paths = _non_text_conflict_paths(conflict_artifact_path)
+    if non_text_paths:
+        _set_conflict_artifact_status(
+            conflict_artifact_path,
+            status="manual_resolution_required",
+            note="One or more conflicted files are non-text and require human resolution.",
+            manual_paths=non_text_paths,
+        )
+        return ResolutionWorkflowResult(
+            stop_reason="manual_resolution_required",
+            conflict_artifact_path=conflict_artifact_path,
+            additional_worktree_paths=(),
+            phase_outcomes=(),
+        )
+
+    if candidate_slots is None:
+        candidate_slots = _candidate_resolution_slots(agents, outcomes)
+    attempted_slots: list[int] = []
+    phase_outcomes: list[AgentOutcome] = []
+    additional_worktree_paths: list[Path] = []
+
+    for resolver_slot in list(candidate_slots)[:max_rounds]:
+        attempted_slots.append(resolver_slot)
+        _refresh_conflict_artifact_repo_versions(repo_root, conflict_artifact_path)
+        resolution_baseline_paths = _current_repo_file_paths(repo_root)
+        resolution_baseline_manifest = _build_baseline_manifest(repo_root, resolution_baseline_paths)
+        resolution_baseline_root = _create_resolution_baseline_snapshot(
+            repo_root,
+            session_id=session_id,
+            relative_paths=resolution_baseline_paths,
+        )
+        resolution_worktree = _create_resolution_worktree(
+            repo_root,
+            session_id=session_id,
+            slot=resolver_slot,
+            baseline_paths=resolution_baseline_paths,
+        )
+        additional_worktree_paths.append(resolution_worktree)
+        _sync_worktree_coordination_files(
+            worktree_paths=(resolution_worktree,),
+            pane_snapshot_paths=(),
+            workspace_log_path=wlog.path,
+            continued_workspace_log_path=continued_workspace_log,
+        )
+        local_conflict_artifact_path = _sync_conflict_artifact_to_worktree(
+            worktree_path=resolution_worktree,
+            artifact_path=conflict_artifact_path,
+            artifact_dir=_conflict_artifact_dir(repo_root, session_id),
+        )
+        prompt_text = _build_concurrent_prompt(
+            task=task,
+            slot=0,
+            agent_key=agents[resolver_slot],
+            all_agents=[agents[resolver_slot]],
+            repo_root=resolution_worktree,
+            workspace_log=_worktree_workspace_log_path(resolution_worktree),
+            pane_snapshot_paths=(),
+            phase="resolution",
+            continued_from_session_id=continue_from_session_id,
+            continued_workspace_log=(
+                _worktree_continued_workspace_log_path(resolution_worktree)
+                if continue_from_session_id is not None
+                else None
+            ),
+            continued_session_root=None,
+            accepted_claims_by_slot={0: tuple(ClaimSpec(path=path, role="owner") for path in conflict_paths)},
+            resolution_conflict_artifact_path=local_conflict_artifact_path,
+            resolution_paths=conflict_paths,
+        )
+        prompt_path = agent_dirs[resolver_slot] / "resolution-prompt.md"
+        prompt_path.write_text(prompt_text, encoding="utf-8")
+        exit_code_path = agent_dirs[resolver_slot] / "resolution-exit-code.txt"
+        phase_result = _run_concurrent_phase(
+            session_id=session_id,
+            phase="resolution",
+            agents=[agents[resolver_slot]],
+            commands=[_build_shell_command(agents[resolver_slot], prompt_path, resolution_worktree, exit_code_path)],
+            worktree_paths=(resolution_worktree,),
+            exit_code_paths=(exit_code_path,),
+            pane_snapshot_paths=(),
+            wlog=wlog,
+            deadline_timestamp=deadline_timestamp,
+            continued_workspace_log_path=continued_workspace_log,
+            on_agent_start=on_agent_start,
+            on_agent_done=on_agent_done,
+        )
+        if phase_result.stop_reason != "completed":
+            return ResolutionWorkflowResult(
+                stop_reason=phase_result.stop_reason,
+                conflict_artifact_path=conflict_artifact_path,
+                additional_worktree_paths=tuple(additional_worktree_paths),
+                phase_outcomes=tuple(phase_outcomes + list(phase_result.outcomes)),
+            )
+
+        resolution_outcomes, resolution_enforcement = _postprocess_implementation_outcomes(
+            repo_root,
+            outcomes=phase_result.outcomes,
+            worktree_paths=(resolution_worktree,),
+            baseline_root=resolution_baseline_root,
+            baseline_manifest=resolution_baseline_manifest,
+            accepted_claims_by_slot={0: tuple(ClaimSpec(path=path, role="owner") for path in conflict_paths)},
+            merge_mode="completed",
+        )
+        resolution_outcome = resolution_outcomes[0]
+        phase_outcomes.append(resolution_outcome)
+
+        if (
+            resolution_outcome.exit_code == 0
+            and resolution_outcome.control_status == "done"
+            and resolution_enforcement is None
+        ):
+            reviewer_slot = _reviewer_slot(agents, resolver_slot=resolver_slot)
+            if reviewer_slot is not None:
+                review_status, review_outcome, review_worktrees = _run_review_phase(
+                    repo_root,
+                    session_id=session_id,
+                    task=task,
+                    reviewer_slot=reviewer_slot,
+                    agents=agents,
+                    agent_dirs=agent_dirs,
+                    wlog=wlog,
+                    deadline_timestamp=deadline_timestamp,
+                    continue_from_session_id=continue_from_session_id,
+                    continued_workspace_log=continued_workspace_log,
+                    conflict_artifact_path=conflict_artifact_path,
+                    conflict_paths=conflict_paths,
+                    on_agent_start=on_agent_start,
+                    on_agent_done=on_agent_done,
+                )
+                additional_worktree_paths.extend(review_worktrees)
+                phase_outcomes.append(review_outcome)
+                if review_status in {"max_time", "interrupted"}:
+                    return ResolutionWorkflowResult(
+                        stop_reason=review_status,
+                        conflict_artifact_path=conflict_artifact_path,
+                        additional_worktree_paths=tuple(additional_worktree_paths),
+                        phase_outcomes=tuple(phase_outcomes),
+                    )
+                if review_status != "approved":
+                    _set_conflict_artifact_status(
+                        conflict_artifact_path,
+                        status="manual_resolution_required",
+                        note="Automated review did not approve the resolver output.",
+                        attempted_slots=attempted_slots,
+                    )
+                    return ResolutionWorkflowResult(
+                        stop_reason="manual_resolution_required",
+                        conflict_artifact_path=conflict_artifact_path,
+                        additional_worktree_paths=tuple(additional_worktree_paths),
+                        phase_outcomes=tuple(phase_outcomes),
+                    )
+            _set_conflict_artifact_status(
+                conflict_artifact_path,
+                status="resolved",
+                note="Conflict paths were resolved and approved.",
+                attempted_slots=attempted_slots,
+            )
+            return ResolutionWorkflowResult(
+                stop_reason="resolved",
+                conflict_artifact_path=conflict_artifact_path,
+                additional_worktree_paths=tuple(additional_worktree_paths),
+                phase_outcomes=tuple(phase_outcomes),
+                resolved_paths=tuple(conflict_paths),
+            )
+
+        _set_conflict_artifact_status(
+            conflict_artifact_path,
+            status="resolution_retry_pending",
+            note=f"Resolver slot {resolver_slot} ended with status {resolution_outcome.control_status or 'unknown'}; trying another resolver if available.",
+            attempted_slots=attempted_slots,
+        )
+
+    _set_conflict_artifact_status(
+        conflict_artifact_path,
+        status="manual_resolution_required",
+        note="Automated resolver attempts were exhausted without an approved resolution.",
+        attempted_slots=attempted_slots,
+    )
+    return ResolutionWorkflowResult(
+        stop_reason="manual_resolution_required",
+        conflict_artifact_path=conflict_artifact_path,
+        additional_worktree_paths=tuple(additional_worktree_paths),
+        phase_outcomes=tuple(phase_outcomes),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
@@ -1342,6 +2168,8 @@ def run_concurrent(
     wlog_path = workspace_log_path(repo_root, session_id)
     wlog = WorkspaceLog(wlog_path)
     claim_ledger_path = _claims_ledger_path(repo_root, session_id)
+    conflict_artifact_path: Path | None = None
+    continued_conflict_artifact = _continued_conflict_artifact_source(repo_root, continue_from_session_id)
 
     # Prepare per-agent files up front so prompts can reference other sessions.
     pane_snapshot_paths: list[Path] = []
@@ -1353,6 +2181,67 @@ def run_concurrent(
         pane_snapshot_path = agent_dir / "pane.txt"
         pane_snapshot_paths.append(pane_snapshot_path)
         write_text_atomic(pane_snapshot_path, "")
+
+    additional_worktree_paths: tuple[Path, ...] = ()
+    worktree_paths: tuple[Path, ...] = ()
+    if continued_conflict_artifact is not None:
+        conflict_artifact_path = _import_conflict_artifact(
+            repo_root,
+            session_id=session_id,
+            source_artifact_path=continued_conflict_artifact,
+        )
+        _write_conflict_resolution_ledger(
+            claim_ledger_path,
+            session_id=session_id,
+            continued_from_session_id=continue_from_session_id,
+            conflict_artifact_path=conflict_artifact_path,
+            conflict_paths=_extract_conflict_paths_from_artifact(conflict_artifact_path),
+        )
+        resolution_result = _attempt_resolution_phase(
+            repo_root,
+            session_id=session_id,
+            task=task,
+            agents=agents,
+            outcomes=(),
+            worktree_paths=(),
+            baseline_root=None,
+            agent_dirs=agent_dirs,
+            wlog=wlog,
+            deadline_timestamp=deadline_timestamp,
+            continue_from_session_id=continue_from_session_id,
+            continued_workspace_log=continued_workspace_log,
+            source_conflict_artifact_path=conflict_artifact_path,
+            candidate_slots=tuple(range(len(agents))),
+            on_agent_start=on_agent_start,
+            on_agent_done=on_agent_done,
+        )
+        conflict_artifact_path = resolution_result.conflict_artifact_path
+        additional_worktree_paths = resolution_result.additional_worktree_paths
+        outcomes = resolution_result.phase_outcomes
+        tmux_sessions = tuple(dict.fromkeys(
+            outcome.tmux_session
+            for outcome in outcomes
+            if outcome.tmux_session
+        ))
+        stop_reason = "all_done" if resolution_result.stop_reason == "resolved" else resolution_result.stop_reason
+        should_preserve_worktrees = any(
+            set(outcome.changed_paths) != set(outcome.merged_paths)
+            for outcome in outcomes
+        )
+        if not should_preserve_worktrees:
+            _cleanup_worktrees(repo_root, additional_worktree_paths)
+        elapsed = (datetime.now(UTC) - start_time).total_seconds()
+        return ConcurrentResult(
+            session_id=session_id,
+            agents=tuple(agents),
+            tmux_sessions=tuple(tmux_sessions),
+            continued_from_session_id=continue_from_session_id,
+            claim_ledger_path=str(claim_ledger_path),
+            stop_reason=stop_reason,
+            elapsed_seconds=round(elapsed, 1),
+            outcomes=tuple(outcomes),
+            conflict_artifact_path=str(conflict_artifact_path) if conflict_artifact_path is not None else None,
+        )
 
     baseline_paths = _current_repo_file_paths(repo_root)
     baseline_manifest = _build_baseline_manifest(repo_root, baseline_paths)
@@ -1517,6 +2406,33 @@ def run_concurrent(
                 base_stop_reason = _classify_stop_reason("all_done", outcomes)
                 if base_stop_reason == "agent_error":
                     stop_reason = base_stop_reason
+                elif enforcement_stop_reason == "merge_conflict":
+                    resolution_result = _attempt_resolution_phase(
+                        repo_root,
+                        session_id=session_id,
+                        task=task,
+                        agents=agents,
+                        outcomes=outcomes,
+                        worktree_paths=worktree_paths,
+                        baseline_root=baseline_root,
+                        agent_dirs=agent_dirs,
+                        wlog=wlog,
+                        deadline_timestamp=deadline_timestamp,
+                        continue_from_session_id=continue_from_session_id,
+                        continued_workspace_log=continued_workspace_log,
+                        on_agent_start=on_agent_start,
+                        on_agent_done=on_agent_done,
+                    )
+                    conflict_artifact_path = resolution_result.conflict_artifact_path
+                    additional_worktree_paths = resolution_result.additional_worktree_paths
+                    if resolution_result.stop_reason == "resolved":
+                        outcomes = _mark_resolved_conflicts(
+                            outcomes,
+                            resolved_paths=resolution_result.resolved_paths,
+                        )
+                        stop_reason = base_stop_reason
+                    else:
+                        stop_reason = resolution_result.stop_reason
                 elif enforcement_stop_reason is not None:
                     stop_reason = enforcement_stop_reason
                 else:
@@ -1529,7 +2445,7 @@ def run_concurrent(
         for outcome in outcomes
     )
     if not should_preserve_worktrees:
-        _cleanup_worktrees(repo_root, worktree_paths)
+        _cleanup_worktrees(repo_root, (*worktree_paths, *additional_worktree_paths))
 
     elapsed = (datetime.now(UTC) - start_time).total_seconds()
 
@@ -1542,4 +2458,5 @@ def run_concurrent(
         stop_reason=stop_reason,
         elapsed_seconds=round(elapsed, 1),
         outcomes=tuple(outcomes),
+        conflict_artifact_path=str(conflict_artifact_path) if conflict_artifact_path is not None else None,
     )

@@ -13,7 +13,7 @@ from agent_relay.resume_options import EVIDENCE_DEPTHS, ResumeRenderOptions
 from agent_relay.errors import CorruptionError
 from agent_relay.hashing import sha256_path, sha256_text
 from agent_relay.integrity import require_session_mutable
-from agent_relay.layout import object_dir
+from agent_relay.layout import object_dir, turns_dir, workspace_log_path
 from agent_relay.lifecycle import (
     LifecycleState,
     LifecycleViolation,
@@ -38,6 +38,7 @@ from agent_relay.storage import (
     load_session_view,
 )
 from agent_relay.tx import JournalCommitRequest, SessionTransaction
+from agent_relay.workspace_log import WorkspaceLog
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +107,47 @@ class LoadedHandoff:
     launch_spec: StoredLaunchSpec
 
 
+@dataclass(frozen=True, slots=True)
+class RelayArtifact:
+    relative_path: str
+    content: str
+
+
+@dataclass(frozen=True, slots=True)
+class RelayTurnSummary:
+    turn_number: int
+    summary: str
+    prompt_path: str
+    output_path: str
+    stderr_path: str | None = None
+    excerpt: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RelayConversationContext:
+    artifacts: tuple[RelayArtifact, ...]
+    turn_summaries: tuple[RelayTurnSummary, ...]
+    workspace_log_path: str | None = None
+    workspace_log_excerpt: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class SupplementalCheckpointContext:
+    artifacts: tuple[RelayArtifact, ...]
+    planning_snapshot: str | None = None
+    planning_snapshot_path: str | None = None
+    proposed_edits: str | None = None
+    proposed_edits_path: str | None = None
+    provider_source_agent: str | None = None
+    provider_hook_name: str | None = None
+    provider_transcript: str | None = None
+    provider_transcript_path: str | None = None
+    provider_session_metadata: str | None = None
+    provider_session_metadata_path: str | None = None
+    provider_warnings: tuple[str, ...] = ()
+    provider_warnings_path: str | None = None
+
+
 def handoff_id_now() -> str:
     return _id_now("ho")
 
@@ -140,15 +182,28 @@ def create_handoff_for_command(
     packet_path = object_dir(repo_root, session_id, "handoff", handoff_id) / "packet.md"
     adapter = get_agent_adapter(to_agent)
     launch_spec = adapter.render_launch_spec(repo_root, packet_path)
+    resume_options = ResumeRenderOptions(evidence_depth=evidence_depth)
+    supplemental_context = _collect_checkpoint_supplemental_context(
+        repo_root,
+        session_id,
+        checkpoint,
+    )
+    relay_context = _collect_relay_conversation_context(
+        repo_root,
+        session_id,
+        options=resume_options,
+    )
     packet_text = _render_resume_packet(
         view,
         checkpoint,
         target_agent=to_agent,
         handoff_reason=reason,
         prepared_at=prepared_at,
-        options=ResumeRenderOptions(evidence_depth=evidence_depth),
+        options=resume_options,
         repo_root=repo_root,
         session_id=session_id,
+        supplemental_context=supplemental_context,
+        relay_context=relay_context,
     )
     packet_sha = sha256_text(packet_text)
     packet_sha_text = packet_sha + "\n"
@@ -168,11 +223,19 @@ def create_handoff_for_command(
         sort_keys=True,
     ) + "\n"
 
+    relay_artifact_files = tuple(
+        _manifest_file_for_text(artifact.relative_path, artifact.content)
+        for artifact in relay_context.artifacts
+    )
+    supplemental_artifact_files = tuple(
+        _manifest_file_for_text(artifact.relative_path, artifact.content)
+        for artifact in supplemental_context.artifacts
+    )
     files = (
         _manifest_file_for_text("packet.md", packet_text),
         _manifest_file_for_text("packet.sha256", packet_sha_text),
         _manifest_file_for_text("launch-spec.json", launch_spec_text),
-    )
+    ) + relay_artifact_files + supplemental_artifact_files
     manifest = HandoffManifest(
         schema_version=SCHEMA_VERSION,
         kind="handoff_manifest",
@@ -205,13 +268,22 @@ def create_handoff_for_command(
         operation=f"handoff:prepare:{handoff_id}",
         owner=owner,
     ) as tx:
+        file_contents = {
+            "packet.md": packet_text,
+            "packet.sha256": packet_sha_text,
+            "launch-spec.json": launch_spec_text,
+        }
+        file_contents.update({
+            artifact.relative_path: artifact.content
+            for artifact in relay_context.artifacts
+        })
+        file_contents.update({
+            artifact.relative_path: artifact.content
+            for artifact in supplemental_context.artifacts
+        })
         tx.stage_manifest_object(
             manifest,
-            file_contents={
-                "packet.md": packet_text,
-                "packet.sha256": packet_sha_text,
-                "launch-spec.json": launch_spec_text,
-            },
+            file_contents=file_contents,
         )
         tx.commit(
             JournalCommitRequest(
@@ -650,6 +722,8 @@ def _render_resume_packet(
     options: ResumeRenderOptions,
     repo_root: Path,
     session_id: str,
+    supplemental_context: SupplementalCheckpointContext,
+    relay_context: RelayConversationContext,
 ) -> str:
     if get_agent_adapter(target_agent).resume_packet_target == "claude":
         title = "# Claude Code Resume Packet"
@@ -707,6 +781,9 @@ def _render_resume_packet(
     _append_section(lines, "Research notes:", checkpoint.research_notes)
     _append_section(lines, "Implementation notes:", checkpoint.implementation_notes)
     _append_section(lines, "Touched files:", checkpoint.touched_files)
+    _append_supplemental_checkpoint_context(lines, supplemental_context, options)
+    _append_provider_export_context(lines, supplemental_context, options)
+    _append_relay_conversation(lines, relay_context, options)
     _append_recent_handoffs(lines, view)
     _append_checkpoint_artifacts(lines, checkpoint, options, repo_root=repo_root, session_id=session_id)
     return "\n".join(lines) + "\n"
@@ -733,6 +810,468 @@ def _append_recent_handoffs(lines: list[str], view: DerivedSessionView) -> None:
         target = get_agent_display_name(handoff.to_agent)
         lines.append(f"- {handoff.prepared_at}: {source} -> {target} ({handoff.reason})")
     lines.append("")
+
+
+def _append_relay_conversation(
+    lines: list[str],
+    context: RelayConversationContext,
+    options: ResumeRenderOptions,
+) -> None:
+    if not context.turn_summaries and not context.workspace_log_excerpt:
+        return
+
+    lines.append("## Prior Relay Conversation")
+    lines.append("")
+    lines.append("Agent Relay bundled recent relay-owned conversation artifacts with this handoff.")
+    lines.append("")
+
+    if context.turn_summaries:
+        lines.append("Recent turns:")
+        for turn in context.turn_summaries:
+            lines.append(f"- Turn {turn.turn_number}: {turn.summary}")
+            artifact_paths = [turn.output_path, turn.prompt_path]
+            if turn.stderr_path is not None:
+                artifact_paths.append(turn.stderr_path)
+            lines.append(f"- Turn {turn.turn_number} artifacts: {', '.join(artifact_paths)}")
+            if options.evidence_depth == "full" and turn.excerpt:
+                lines.append(f"Turn {turn.turn_number} excerpt:")
+                lines.append("```text")
+                lines.append(turn.excerpt)
+                lines.append("```")
+                lines.append("")
+        if options.evidence_depth != "full":
+            lines.append("")
+
+    if context.workspace_log_excerpt:
+        lines.append("Workspace activity excerpt:")
+        for item in context.workspace_log_excerpt:
+            lines.append(f"- {item}")
+        if context.workspace_log_path is not None:
+            lines.append(f"- Full workspace log: {context.workspace_log_path}")
+        lines.append("")
+
+
+def _append_supplemental_checkpoint_context(
+    lines: list[str],
+    context: SupplementalCheckpointContext,
+    options: ResumeRenderOptions,
+) -> None:
+    if options.evidence_depth == "minimal":
+        return
+    if context.planning_snapshot is None and context.proposed_edits is None:
+        return
+
+    planning_limit = 2_000 if options.evidence_depth == "standard" else 8_000
+    proposed_limit = 3_000 if options.evidence_depth == "standard" else 10_000
+
+    lines.append("## Explicit Handoff Inputs")
+    lines.append("")
+
+    if context.planning_snapshot is not None:
+        lines.append("Planning snapshot:")
+        if context.planning_snapshot_path is not None:
+            lines.append(f"- Artifact: {context.planning_snapshot_path}")
+        lines.append("- This snapshot may describe planning that never became a working-tree diff.")
+        lines.append("```text")
+        lines.append(_excerpt_relay_text(context.planning_snapshot, max_chars=planning_limit) or "")
+        lines.append("```")
+        lines.append("")
+
+    if context.proposed_edits is not None:
+        lines.append("Captured proposed edits:")
+        if context.proposed_edits_path is not None:
+            lines.append(f"- Artifact: {context.proposed_edits_path}")
+        lines.append("- These edits were captured outside the working tree and may not be applied yet.")
+        fence = "diff" if _looks_like_patch(context.proposed_edits) else "text"
+        lines.append(f"```{fence}")
+        lines.append(_excerpt_relay_text(context.proposed_edits, max_chars=proposed_limit) or "")
+        lines.append("```")
+        lines.append("")
+
+
+def _append_provider_export_context(
+    lines: list[str],
+    context: SupplementalCheckpointContext,
+    options: ResumeRenderOptions,
+) -> None:
+    if options.evidence_depth == "minimal":
+        return
+    if (
+        context.provider_transcript is None
+        and context.provider_session_metadata is None
+        and not context.provider_warnings
+    ):
+        return
+
+    transcript_limit = 2_500 if options.evidence_depth == "standard" else 10_000
+    metadata_limit = 2_500 if options.evidence_depth == "standard" else 10_000
+    source_label = _safe_agent_display_name(context.provider_source_agent or "provider")
+
+    lines.append("## Provider Session Export")
+    lines.append("")
+    lines.append(f"- Source agent: {source_label}")
+    if context.provider_hook_name:
+        lines.append(f"- Capture hook: {context.provider_hook_name}")
+    lines.append("")
+
+    if context.provider_warnings:
+        lines.append("Warnings:")
+        for warning in context.provider_warnings:
+            lines.append(f"- {warning}")
+        if context.provider_warnings_path is not None:
+            lines.append(f"- Artifact: {context.provider_warnings_path}")
+        lines.append("")
+
+    if context.provider_transcript is not None:
+        lines.append("Exported transcript:")
+        if context.provider_transcript_path is not None:
+            lines.append(f"- Artifact: {context.provider_transcript_path}")
+        lines.append("```text")
+        lines.append(_excerpt_relay_text(context.provider_transcript, max_chars=transcript_limit) or "")
+        lines.append("```")
+        lines.append("")
+
+    if context.provider_session_metadata is not None:
+        lines.append("Exported session metadata:")
+        if context.provider_session_metadata_path is not None:
+            lines.append(f"- Artifact: {context.provider_session_metadata_path}")
+        fence = "json" if _looks_like_json(context.provider_session_metadata) else "text"
+        lines.append(f"```{fence}")
+        lines.append(_excerpt_relay_text(context.provider_session_metadata, max_chars=metadata_limit) or "")
+        lines.append("```")
+        lines.append("")
+
+
+def _collect_relay_conversation_context(
+    repo_root: Path,
+    session_id: str,
+    *,
+    options: ResumeRenderOptions,
+) -> RelayConversationContext:
+    if options.evidence_depth == "minimal":
+        return RelayConversationContext(artifacts=(), turn_summaries=())
+
+    if options.evidence_depth == "full":
+        max_turns = 6
+        max_workspace_entries = 8
+    else:
+        max_turns = 3
+        max_workspace_entries = 4
+
+    artifacts: list[RelayArtifact] = []
+    turn_summaries: list[RelayTurnSummary] = []
+
+    turns_root = turns_dir(repo_root, session_id)
+    if turns_root.exists():
+        turn_dirs = sorted(path for path in turns_root.glob("turn-*") if path.is_dir())
+        for turn_path in turn_dirs[-max_turns:]:
+            turn_number = _parse_turn_number(turn_path.name)
+            prompt_file = turn_path / "prompt.md"
+            output_file = turn_path / "output.jsonl"
+            stderr_file = turn_path / "stderr.log"
+
+            prompt_relative = f"relay/turns/{turn_path.name}/prompt.md"
+            output_relative = f"relay/turns/{turn_path.name}/output.jsonl"
+            stderr_relative = (
+                f"relay/turns/{turn_path.name}/stderr.log"
+                if stderr_file.exists()
+                else None
+            )
+
+            if prompt_file.exists():
+                artifacts.append(RelayArtifact(
+                    relative_path=prompt_relative,
+                    content=prompt_file.read_text(encoding="utf-8", errors="replace"),
+                ))
+            if output_file.exists():
+                raw_output = output_file.read_text(encoding="utf-8", errors="replace")
+                artifacts.append(RelayArtifact(
+                    relative_path=output_relative,
+                    content=raw_output,
+                ))
+                normalized_output = _normalize_relay_output(raw_output)
+            else:
+                raw_output = ""
+                normalized_output = ""
+            stderr_text = ""
+            if stderr_file.exists():
+                stderr_text = stderr_file.read_text(encoding="utf-8", errors="replace")
+                if stderr_relative is not None:
+                    artifacts.append(RelayArtifact(
+                        relative_path=stderr_relative,
+                        content=stderr_text,
+                    ))
+
+            summary_source = normalized_output or stderr_text or raw_output
+            turn_summaries.append(
+                RelayTurnSummary(
+                    turn_number=turn_number,
+                    summary=_summarize_relay_text(summary_source),
+                    prompt_path=prompt_relative,
+                    output_path=output_relative,
+                    stderr_path=stderr_relative,
+                    excerpt=_excerpt_relay_text(normalized_output or stderr_text or raw_output),
+                )
+            )
+
+    workspace_relative_path: str | None = None
+    workspace_excerpt: tuple[str, ...] = ()
+    log_path = workspace_log_path(repo_root, session_id)
+    if log_path.exists():
+        workspace_relative_path = "relay/workspace-log.md"
+        artifacts.append(RelayArtifact(
+            relative_path=workspace_relative_path,
+            content=log_path.read_text(encoding="utf-8", errors="replace"),
+        ))
+        workspace_log = WorkspaceLog(log_path)
+        entries = workspace_log.read_all()
+        if entries:
+            workspace_excerpt = tuple(
+                f"[{entry.timestamp}] {_safe_agent_display_name(entry.agent_key)} ({entry.entry_type}): "
+                f"{_summarize_relay_text(entry.summary, max_len=120)}"
+                for entry in entries[-max_workspace_entries:]
+            )
+        else:
+            workspace_excerpt = tuple(
+                _tail_non_empty_lines(
+                    log_path.read_text(encoding="utf-8", errors="replace"),
+                    max_lines=max_workspace_entries,
+                )
+            )
+
+    return RelayConversationContext(
+        artifacts=tuple(artifacts),
+        turn_summaries=tuple(turn_summaries),
+        workspace_log_path=workspace_relative_path,
+        workspace_log_excerpt=workspace_excerpt,
+    )
+
+
+def _collect_checkpoint_supplemental_context(
+    repo_root: Path,
+    session_id: str,
+    checkpoint: CheckpointManifest,
+) -> SupplementalCheckpointContext:
+    checkpoint_dir = object_dir(repo_root, session_id, "checkpoint", checkpoint.object_id)
+    manifest_path = checkpoint_dir / "captures" / "manifest.json"
+    if not manifest_path.exists():
+        return SupplementalCheckpointContext(artifacts=())
+
+    try:
+        manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return SupplementalCheckpointContext(artifacts=())
+    if not isinstance(manifest_data, dict):
+        return SupplementalCheckpointContext(artifacts=())
+
+    artifacts: list[RelayArtifact] = []
+    planning_snapshot = _load_checkpoint_capture_text(
+        checkpoint_dir,
+        manifest_data.get("planning_snapshot_file"),
+    )
+    proposed_edits = _load_checkpoint_capture_text(
+        checkpoint_dir,
+        manifest_data.get("proposed_edits_file"),
+    )
+    provider_transcript = _load_checkpoint_capture_text(
+        checkpoint_dir,
+        manifest_data.get("provider_transcript_file"),
+    )
+    provider_session_metadata = _load_checkpoint_capture_text(
+        checkpoint_dir,
+        manifest_data.get("provider_session_metadata_file"),
+    )
+    provider_warnings_text = _load_checkpoint_capture_text(
+        checkpoint_dir,
+        manifest_data.get("provider_warnings_file"),
+    )
+    provider_warnings = _parse_warning_bullets(provider_warnings_text)
+
+    planning_snapshot_path = None
+    proposed_edits_path = None
+    provider_transcript_path = None
+    provider_session_metadata_path = None
+    provider_warnings_path = None
+    if planning_snapshot is not None:
+        planning_snapshot_path = "relay/inputs/planning-snapshot.md"
+        artifacts.append(RelayArtifact(
+            relative_path=planning_snapshot_path,
+            content=_ensure_trailing_newline(planning_snapshot),
+        ))
+    if proposed_edits is not None:
+        proposed_ext = ".diff" if _looks_like_patch(proposed_edits) else ".md"
+        proposed_edits_path = f"relay/inputs/proposed-edits{proposed_ext}"
+        artifacts.append(RelayArtifact(
+            relative_path=proposed_edits_path,
+            content=_ensure_trailing_newline(proposed_edits),
+        ))
+    if provider_transcript is not None:
+        provider_source_agent = _capture_manifest_text(manifest_data.get("provider_source_agent"))
+        provider_suffix = (provider_source_agent or "provider").replace("/", "-")
+        provider_transcript_path = f"relay/provider/{provider_suffix}-transcript.md"
+        artifacts.append(RelayArtifact(
+            relative_path=provider_transcript_path,
+            content=_ensure_trailing_newline(provider_transcript),
+        ))
+    if provider_session_metadata is not None:
+        provider_source_agent = _capture_manifest_text(manifest_data.get("provider_source_agent"))
+        provider_suffix = (provider_source_agent or "provider").replace("/", "-")
+        metadata_ext = ".json" if _looks_like_json(provider_session_metadata) else ".md"
+        provider_session_metadata_path = f"relay/provider/{provider_suffix}-session-metadata{metadata_ext}"
+        artifacts.append(RelayArtifact(
+            relative_path=provider_session_metadata_path,
+            content=_ensure_trailing_newline(provider_session_metadata),
+        ))
+    if provider_warnings:
+        provider_source_agent = _capture_manifest_text(manifest_data.get("provider_source_agent"))
+        provider_suffix = (provider_source_agent or "provider").replace("/", "-")
+        provider_warnings_path = f"relay/provider/{provider_suffix}-warnings.md"
+        artifacts.append(RelayArtifact(
+            relative_path=provider_warnings_path,
+            content=_ensure_trailing_newline("\n".join(f"- {warning}" for warning in provider_warnings)),
+        ))
+
+    return SupplementalCheckpointContext(
+        artifacts=tuple(artifacts),
+        planning_snapshot=planning_snapshot,
+        planning_snapshot_path=planning_snapshot_path,
+        proposed_edits=proposed_edits,
+        proposed_edits_path=proposed_edits_path,
+        provider_source_agent=_capture_manifest_text(manifest_data.get("provider_source_agent")),
+        provider_hook_name=_capture_manifest_text(manifest_data.get("provider_hook_name")),
+        provider_transcript=provider_transcript,
+        provider_transcript_path=provider_transcript_path,
+        provider_session_metadata=provider_session_metadata,
+        provider_session_metadata_path=provider_session_metadata_path,
+        provider_warnings=provider_warnings,
+        provider_warnings_path=provider_warnings_path,
+    )
+
+
+def _load_checkpoint_capture_text(checkpoint_dir: Path, relative_path: object) -> str | None:
+    if not isinstance(relative_path, str) or not relative_path.strip():
+        return None
+    candidate = checkpoint_dir / relative_path
+    if not candidate.exists() or not candidate.is_file():
+        return None
+    return candidate.read_text(encoding="utf-8", errors="replace").strip()
+
+
+def _capture_manifest_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped if stripped else None
+
+
+def _parse_turn_number(dirname: str) -> int:
+    suffix = dirname.removeprefix("turn-")
+    try:
+        return int(suffix)
+    except ValueError:
+        return 0
+
+
+def _normalize_relay_output(raw_output: str) -> str:
+    texts: list[str] = []
+    for raw_line in raw_output.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+
+        item = event.get("item")
+        if event.get("type") == "item.completed" and isinstance(item, dict) and item.get("type") == "agent_message":
+            text = item.get("text", "")
+            if isinstance(text, str) and text.strip():
+                texts.append(text.strip())
+
+        message = event.get("message") if isinstance(event.get("message"), dict) else event
+        if isinstance(message, dict) and message.get("role") == "assistant":
+            for block in message.get("content", []):
+                if isinstance(block, dict) and block.get("type") in {"text", "output_text"}:
+                    text = block.get("text", "")
+                    if isinstance(text, str) and text.strip():
+                        texts.append(text.strip())
+
+    if texts:
+        return _strip_relay_control_lines("\n".join(texts))
+    return _strip_relay_control_lines(raw_output.strip())
+
+
+def _strip_relay_control_lines(text: str) -> str:
+    kept_lines = [
+        line
+        for line in text.splitlines()
+        if not line.strip().startswith("RELAY_STATUS:")
+    ]
+    return "\n".join(kept_lines).replace("CONVERSATION_COMPLETE", "").strip()
+
+
+def _summarize_relay_text(text: str, *, max_len: int = 160) -> str:
+    normalized = " ".join(part.strip() for part in text.splitlines() if part.strip())
+    if not normalized:
+        return "(no assistant output captured)"
+    if len(normalized) <= max_len:
+        return normalized
+    return normalized[: max_len - 3] + "..."
+
+
+def _excerpt_relay_text(text: str, *, max_chars: int = 1000) -> str | None:
+    stripped = text.strip()
+    if not stripped:
+        return None
+    if len(stripped) <= max_chars:
+        return stripped
+    return stripped[:max_chars] + "\n... (truncated)"
+
+
+def _tail_non_empty_lines(text: str, *, max_lines: int) -> list[str]:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return lines[-max_lines:]
+
+
+def _parse_warning_bullets(text: str | None) -> tuple[str, ...]:
+    if not text:
+        return ()
+    warnings: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("- "):
+            line = line[2:].strip()
+        if line:
+            warnings.append(line)
+    return tuple(warnings)
+
+
+def _ensure_trailing_newline(text: str) -> str:
+    return text if text.endswith("\n") else text + "\n"
+
+
+def _looks_like_patch(text: str) -> bool:
+    stripped = text.lstrip()
+    if stripped.startswith("diff --git") or stripped.startswith("--- "):
+        return True
+    return "\n+++ " in text or "\n@@ " in text
+
+
+def _looks_like_json(text: str) -> bool:
+    stripped = text.lstrip()
+    return stripped.startswith("{") or stripped.startswith("[")
+
+
+def _safe_agent_display_name(agent_key: str) -> str:
+    try:
+        return get_agent_display_name(agent_key)
+    except SystemExit:
+        return agent_key
 
 
 def _append_checkpoint_artifacts(

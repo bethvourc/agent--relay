@@ -95,6 +95,10 @@ def cmd_relay(args: argparse.Namespace) -> int:
     to_agent = args.to
     from_agent = getattr(args, "from_agent", None)
     task = getattr(args, "task", None)
+    planning_note = getattr(args, "planning_note", None)
+    planning_note_file = getattr(args, "planning_note_file", None)
+    proposed_edits = getattr(args, "proposed_edits", None)
+    proposed_edits_file = getattr(args, "proposed_edits_file", None)
     no_launch = getattr(args, "no_launch", False)
 
     result = do_relay(
@@ -102,6 +106,10 @@ def cmd_relay(args: argparse.Namespace) -> int:
         to_agent=to_agent,
         from_agent=from_agent,
         task=task,
+        planning_note=planning_note,
+        planning_note_file=planning_note_file,
+        proposed_edits=proposed_edits,
+        proposed_edits_file=proposed_edits_file,
         no_launch=no_launch,
         owner="cli:relay",
     )
@@ -464,6 +472,7 @@ def cmd_race(args: argparse.Namespace) -> int:
             "tmux_sessions": list(result.tmux_sessions),
             "continued_from_session_id": result.continued_from_session_id,
             "claim_ledger_path": result.claim_ledger_path,
+            "conflict_artifact_path": result.conflict_artifact_path,
             "stop_reason": result.stop_reason,
             "elapsed_seconds": result.elapsed_seconds,
             "outcomes": [
@@ -515,6 +524,10 @@ def build_parser() -> argparse.ArgumentParser:
         agent_cmd = subparsers.add_parser(agent_key, help=f"Relay to {AGENT_REGISTRY[agent_key].display_name}")
         agent_cmd.add_argument("--from", dest="from_agent", choices=AGENT_NAMES, help="Source agent (auto-detected)")
         agent_cmd.add_argument("--task", "-t", help="What the next agent should do")
+        agent_cmd.add_argument("--planning-note", help="Planning snapshot to preserve even when no code changed")
+        agent_cmd.add_argument("--planning-note-file", help="Path to a planning snapshot file")
+        agent_cmd.add_argument("--proposed-edits", help="UI-only or not-yet-applied proposed edits to preserve")
+        agent_cmd.add_argument("--proposed-edits-file", help="Path to a proposed edits file or diff")
         agent_cmd.add_argument("--no-launch", action="store_true", help="Just create the packet")
         agent_cmd.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
         agent_cmd.add_argument("--repo", help="Repository path (default: cwd)")

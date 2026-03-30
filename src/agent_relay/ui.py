@@ -959,6 +959,7 @@ _STOP_REASON_LABELS = {
     "claim_conflict": "Planning claims conflict",
     "scope_violation": "Agent changed files outside accepted claims",
     "merge_conflict": "Main repo changed before isolated work could merge back",
+    "manual_resolution_required": "Conflict needs manual resolution",
     "max_time": "Time limit reached",
     "interrupted": "Interrupted by user",
     "agent_error": "Agent exited with error",
@@ -1037,6 +1038,7 @@ def render_concurrent_result(console: Console, result: "ConcurrentResult") -> No
         "claim_conflict",
         "scope_violation",
         "merge_conflict",
+        "manual_resolution_required",
     ):
         style = "warning"
         symbol = "◌"
@@ -1052,4 +1054,6 @@ def render_concurrent_result(console: Console, result: "ConcurrentResult") -> No
     line.append(f"{result.elapsed_seconds}s", style="muted")
     console.print(line, highlight=False)
     console.print(f"  [label]Session:[/]  [muted]{result.session_id}[/]", highlight=False)
+    if result.conflict_artifact_path:
+        console.print(f"  [label]Conflicts:[/]  [muted]{result.conflict_artifact_path}[/]", highlight=False)
     console.print()
