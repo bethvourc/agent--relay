@@ -178,7 +178,7 @@ def _banner_body(*, include_tips: bool) -> Text:
         body.append("  •  ", style="banner.border")
         body.append("Sessions:", style="banner.note")
         body.append(" ", style="banner.note")
-        body.append("agent-relay dashboard", style="banner.prompt")
+        body.append("agent-relay status", style="banner.prompt")
     return body
 
 
@@ -1002,6 +1002,7 @@ def render_concurrent_start(
     agents: "Sequence[str]",
     task: str,
     max_time: int,
+    continue_session: str | None = None,
 ) -> None:
     render_banner(console)
     chain = _join_badges([agent_badge(a) for a in agents], "⫲")
@@ -1011,6 +1012,8 @@ def render_concurrent_start(
     line.append(f"concurrent · {max_time}s max", style="muted")
     console.print(line, highlight=False)
     console.print(f"  [label]Task:[/] {task}", highlight=False)
+    if continue_session:
+        console.print(f"  [label]Continuing:[/] {continue_session}", highlight=False)
     console.print("  [muted]Each agent runs in its own tmux session. Attach from separate terminals using the commands below.[/]", highlight=False)
     console.print()
 

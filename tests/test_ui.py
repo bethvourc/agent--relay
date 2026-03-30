@@ -192,15 +192,15 @@ class InspectRenderTests(TestCase):
         self.assertIn("src/main.py", output)
 
 
-class DashboardRenderTests(TestCase):
-    def test_empty_dashboard_shows_help(self) -> None:
+class StatusRenderTests(TestCase):
+    def test_empty_status_shows_help(self) -> None:
         console, buf = make_console()
         render_dashboard(console, [])
         output = buf.getvalue()
         self.assertIn("No sessions found", output)
-        self.assertIn("agent-relay start", output)
+        self.assertIn("agent-relay codex", output)
 
-    def test_dashboard_shows_sessions(self) -> None:
+    def test_status_shows_sessions(self) -> None:
         console, buf = make_console()
         sessions = [
             {
@@ -240,9 +240,12 @@ class ErrorRenderTests(TestCase):
 
 
 class HelpRenderTests(TestCase):
-    def test_help_includes_phase_six_commands(self) -> None:
+    def test_help_includes_current_commands(self) -> None:
         console, buf = make_console()
         render_help(console)
         output = buf.getvalue()
-        self.assertIn("prepare", output)
-        self.assertIn("pause", output)
+        self.assertIn("chat", output)
+        self.assertIn("race", output)
+        self.assertIn("discover", output)
+        self.assertIn("status", output)
+        self.assertIn("clean", output)

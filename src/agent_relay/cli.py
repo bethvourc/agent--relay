@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -29,8 +32,62 @@ from agent_relay.ui import (
 
 
 def _resolve_repo(repo: str | None) -> Path:
-    import os
     return Path(repo or os.getcwd()).resolve()
+
+
+def _should_auto_open_terminals(
+    *,
+    interactive: bool,
+    requested: bool | None,
+) -> bool:
+    if not interactive:
+        return False
+    if requested is not None:
+        return requested
+    env_value = os.getenv("AGENT_RELAY_OPEN_TERMINALS")
+    if env_value is not None:
+        return env_value.strip().lower() in {"1", "true", "yes", "on"}
+    return sys.platform == "darwin"
+
+
+def _open_tmux_session_in_terminal(tmux_session: str) -> str | None:
+    if sys.platform != "darwin":
+        return "Automatic terminal opening is currently only supported on macOS."
+
+    command = f"tmux attach-session -t {tmux_session}"
+    term_program = os.getenv("TERM_PROGRAM", "")
+    if term_program == "iTerm.app":
+        script = "\n".join([
+            'tell application "iTerm"',
+            "activate",
+            "set newWindow to (create window with default profile)",
+            "tell current session of newWindow",
+            f"write text {json.dumps(command)}",
+            "end tell",
+            "end tell",
+        ])
+    else:
+        script = "\n".join([
+            'tell application "Terminal"',
+            "activate",
+            f"do script {json.dumps(command)}",
+            "end tell",
+        ])
+
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        return f"Automatic terminal opening failed: {exc}"
+    if result.returncode == 0:
+        return None
+
+    error = result.stderr.strip() or result.stdout.strip() or "Unknown osascript error"
+    return f"Automatic terminal opening failed: {error}"
 
 
 def cmd_relay(args: argparse.Namespace) -> int:
@@ -339,11 +396,21 @@ def cmd_race(args: argparse.Namespace) -> int:
     repo_root = _resolve_repo(args.repo)
     console = args.console
     interactive = not args.json and not args.quiet
+    auto_open_terminals = _should_auto_open_terminals(
+        interactive=interactive,
+        requested=getattr(args, "open_terminals", None),
+    )
     agents, task = _parse_agents_and_task(args)
     max_time = args.max_time
 
     if interactive:
-        render_concurrent_start(console, agents, task, max_time)
+        render_concurrent_start(
+            console,
+            agents,
+            task,
+            max_time,
+            continue_session=getattr(args, "continue_session", None),
+        )
 
     def on_agent_start(slot: int, agent_key: str, tmux_session: str) -> None:
         if interactive:
@@ -357,6 +424,10 @@ def cmd_race(args: argparse.Namespace) -> int:
                 f"      [muted]Open another terminal to control it:[/] tmux attach-session -t {tmux_session}",
                 highlight=False,
             )
+            if auto_open_terminals:
+                error = _open_tmux_session_in_terminal(tmux_session)
+                if error is not None:
+                    console.print(f"      [warning]{error}[/]", highlight=False)
 
     def on_agent_done(outcome: "AgentOutcome") -> None:  # noqa: F821
         if interactive:
@@ -374,6 +445,7 @@ def cmd_race(args: argparse.Namespace) -> int:
         repo_root,
         agents=agents,
         task=task,
+        continue_from_session_id=getattr(args, "continue_session", None),
         max_time_seconds=max_time,
         owner="cli:race",
         on_agent_start=on_agent_start if interactive else None,
@@ -386,6 +458,7 @@ def cmd_race(args: argparse.Namespace) -> int:
             "session_id": result.session_id,
             "agents": list(result.agents),
             "tmux_sessions": list(result.tmux_sessions),
+            "continued_from_session_id": result.continued_from_session_id,
             "stop_reason": result.stop_reason,
             "elapsed_seconds": result.elapsed_seconds,
             "outcomes": [
@@ -459,7 +532,14 @@ def build_parser() -> argparse.ArgumentParser:
     race = subparsers.add_parser("race", help="Run agents concurrently with live visibility")
     race.add_argument("args", nargs="+", metavar="AGENT_OR_TASK", help="Agents and task (last arg is task, or use -t)")
     race.add_argument("--task", "-t", dest="task_flag", default=None, help="Task (alternative to positional)")
+    race.add_argument("--continue", dest="continue_session", help="Continue from a prior relay session id")
     race.add_argument("--max-time", type=int, default=600, help="Max seconds (default: 600)")
+    race.add_argument(
+        "--open-terminals",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Auto-open a terminal window/tab for each tmux session on supported platforms",
+    )
     race.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
     race.add_argument("--repo", help="Repository path (default: cwd)")
     race.set_defaults(func=cmd_race)

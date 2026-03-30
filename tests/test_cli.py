@@ -7,6 +7,9 @@ import sys
 import tempfile
 from pathlib import Path
 from unittest import TestCase
+from unittest.mock import patch
+
+from agent_relay.cli import _open_tmux_session_in_terminal, _should_auto_open_terminals
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -337,20 +340,20 @@ class AgentRelayCliTests(TestCase):
             self.assertIn("Phase: ready_for_handoff", summary)
             self.assertIn("Hand off to Codex for continuation", summary)
 
-    def test_dashboard_lists_sessions(self) -> None:
+    def test_status_lists_sessions(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             self.start_snapshot_session(tmpdir, agent="claude", task="First task")
             self.start_snapshot_session(tmpdir, agent="codex", task="Second task")
 
-            data = self.run_cli_json("dashboard", "--repo", tmpdir)
-            self.assertEqual(data["command"], "dashboard")
+            data = self.run_cli_json("status", "--repo", tmpdir)
+            self.assertEqual(data["command"], "status")
             self.assertEqual(len(data["sessions"]), 2)
             agents = {s["agent"] for s in data["sessions"]}
             self.assertEqual(agents, {"claude", "codex"})
 
-    def test_dashboard_empty_repo(self) -> None:
+    def test_status_empty_repo(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            data = self.run_cli_json("dashboard", "--repo", tmpdir)
+            data = self.run_cli_json("status", "--repo", tmpdir)
             self.assertEqual(data["sessions"], [])
 
     def test_launch_execute_runs_command_and_updates_state(self) -> None:
@@ -415,3 +418,38 @@ class AgentRelayCliTests(TestCase):
             after_resume = self.run_cli_json("inspect", session_id, "--repo", tmpdir)
             self.assertEqual(after_resume["current_agent"], "codex")
             self.assertEqual(after_resume["current_status"], "active")
+
+
+class RaceCliHelpersTests(TestCase):
+    def test_auto_open_terminals_disabled_when_not_interactive(self) -> None:
+        self.assertFalse(_should_auto_open_terminals(interactive=False, requested=True))
+
+    def test_auto_open_terminals_honors_explicit_request(self) -> None:
+        self.assertTrue(_should_auto_open_terminals(interactive=True, requested=True))
+        self.assertFalse(_should_auto_open_terminals(interactive=True, requested=False))
+
+    @patch.dict("os.environ", {"AGENT_RELAY_OPEN_TERMINALS": "1"}, clear=False)
+    def test_auto_open_terminals_honors_env_override(self) -> None:
+        self.assertTrue(_should_auto_open_terminals(interactive=True, requested=None))
+
+    @patch("sys.platform", "darwin")
+    @patch.dict("os.environ", {}, clear=True)
+    def test_auto_open_terminals_defaults_on_for_macos(self) -> None:
+        self.assertTrue(_should_auto_open_terminals(interactive=True, requested=None))
+
+    @patch("sys.platform", "linux")
+    def test_open_tmux_session_in_terminal_reports_unsupported_platform(self) -> None:
+        self.assertEqual(
+            _open_tmux_session_in_terminal("relay-test-00"),
+            "Automatic terminal opening is currently only supported on macOS.",
+        )
+
+    @patch("sys.platform", "darwin")
+    @patch.dict("os.environ", {"TERM_PROGRAM": "iTerm.app"}, clear=False)
+    @patch("subprocess.run")
+    def test_open_tmux_session_in_terminal_uses_osascript_for_iterm(self, run_mock) -> None:
+        run_mock.return_value = subprocess.CompletedProcess(args=["osascript"], returncode=0, stdout="", stderr="")
+        error = _open_tmux_session_in_terminal("relay-test-00")
+        self.assertIsNone(error)
+        self.assertEqual(run_mock.call_args.args[0][:2], ["osascript", "-e"])
+        self.assertIn('tell application "iTerm"', run_mock.call_args.args[0][2])

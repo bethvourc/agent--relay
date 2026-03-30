@@ -29,55 +29,34 @@ Run the CLI inside the repository whose work you want to hand off:
 ```bash
 cd /path/to/your/repo
 
-SESSION_ID=$(agent-relay start \
-  --agent claude \
-  --task "Prepare the package release" \
-  --repo . \
-  --quiet)
+# One-command relay: hand off to another agent
+agent-relay codex --task "Continue the release prep"
 
-agent-relay checkpoint "$SESSION_ID" \
-  --next-action "Prepare a Codex handoff for packaging cleanup" \
-  --decision "README and publish metadata need to be updated" \
-  --capture-git-changes \
-  --repo .
+# Turn-based conversation between agents
+agent-relay chat c x "Fix the failing tests"
 
-agent-relay prepare "$SESSION_ID" \
-  --next-action "Hand off the release-prep work to Codex" \
-  --validation-status partial \
-  --validation-summary "Packaging and docs still need review" \
-  --repo .
+# Concurrent agents working simultaneously (tmux)
+agent-relay race c x "Build the auth module"
 
-agent-relay failover "$SESSION_ID" \
-  --to-agent codex \
-  --reason "Continue release prep" \
-  --repo .
+# See what agents are available
+agent-relay discover
 
-agent-relay launch "$SESSION_ID" --repo .
-agent-relay inspect "$SESSION_ID" --repo .
+# View sessions
+agent-relay status
 ```
 
-If you want Agent Relay to dispatch the prepared command, use `agent-relay launch <session> --execute`.
+Agent aliases: `c` = Claude, `x` = Codex. Use `agent-relay discover` to see all available agents and aliases.
 
-`launch --execute` only starts the target agent process. Ownership transfers when the new agent accepts the handoff with:
+## Commands
 
-```bash
-agent-relay resume "$SESSION_ID" --repo .
-```
+- `agent-relay <agent>`: relay to an agent (e.g. `agent-relay codex`, `agent-relay claude`)
+- `agent-relay chat <agents> <task>`: turn-based agent conversation
+- `agent-relay race <agents> <task>`: concurrent agents with live visibility (tmux)
+- `agent-relay discover`: show available agents and aliases
+- `agent-relay status`: show sessions in the current repo
+- `agent-relay clean`: remove all sessions
 
-## Command flow
-
-- `start`: create a new session and initial checkpoint
-- `checkpoint`: record progress without changing ownership
-- `pause`: write a final checkpoint and pause the session
-- `prepare`: capture a clean pre-handoff checkpoint
-- `failover`: render a target-specific resume packet and launch metadata
-- `launch`: preview or execute the prepared launch command
-- `resume`: accept a prepared handoff and transfer ownership
-- `repair`: repair session integrity explicitly
-- `inspect`: print the current session view
-- `dashboard` or `list`: show sessions in the current repo
-
-Run `agent-relay --help` for the top-level command list or `agent-relay <command> --help` for command-specific flags.
+Run `agent-relay --help` for the full command list and options.
 
 ## Configuration
 

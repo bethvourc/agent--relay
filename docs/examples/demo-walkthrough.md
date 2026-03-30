@@ -77,8 +77,7 @@ You should see these commands:
 - `resume`
 - `repair`
 - `inspect`
-- `dashboard`
-- `list`
+- `status`
 
 ## 4. Start The Session
 

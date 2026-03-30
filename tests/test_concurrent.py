@@ -82,6 +82,23 @@ class BuildConcurrentPromptTests(TestCase):
         self.assertIn("/tmp/pane-1.txt", prompt)
         self.assertIn("/tmp/pane-2.txt", prompt)
 
+    def test_includes_continuation_context_when_requested(self) -> None:
+        prompt = _build_concurrent_prompt(
+            task="Follow up on the prior review",
+            slot=0,
+            agent_key="claude",
+            all_agents=["claude", "codex"],
+            repo_root=Path("/tmp/repo"),
+            workspace_log=Path("/tmp/log.md"),
+            pane_snapshot_paths=[Path("/tmp/pane-0.txt"), Path("/tmp/pane-1.txt")],
+            continued_from_session_id="20260330-abc123",
+            continued_workspace_log=Path("/tmp/repo/.agent-relay/sessions/20260330-abc123/workspace-log.md"),
+            continued_session_root=Path("/tmp/repo/.agent-relay/sessions/20260330-abc123"),
+        )
+        self.assertIn("## Continuation Context", prompt)
+        self.assertIn("20260330-abc123", prompt)
+        self.assertIn("Do not restart from scratch", prompt)
+
 
 class BuildShellCommandTests(TestCase):
     def test_claude_command_interactive(self) -> None:
@@ -174,6 +191,7 @@ class ConcurrentResultTests(TestCase):
             session_id="test-123",
             agents=("claude", "codex"),
             tmux_sessions=("relay-test-00", "relay-test-01"),
+            continued_from_session_id=None,
             stop_reason="all_done",
             elapsed_seconds=42.5,
             outcomes=(),
@@ -435,3 +453,17 @@ class RunConcurrentTests(TestCase):
                 (1, "codex", f"relay-{result.session_id}-01"),
             ],
         )
+
+    def test_continue_from_missing_session_raises(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            with patch("agent_relay.concurrent._require_tmux"), patch(
+                "agent_relay.concurrent.require_available"
+            ):
+                with self.assertRaises(SystemExit) as ctx:
+                    run_concurrent(
+                        Path(tmpdir),
+                        agents=["claude", "codex"],
+                        task="Continue missing work",
+                        continue_from_session_id="missing-session",
+                    )
+        self.assertIn("Session not found: missing-session", str(ctx.exception))

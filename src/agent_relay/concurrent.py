@@ -27,8 +27,10 @@ from agent_relay.fs import write_text_atomic
 from agent_relay.layout import (
     concurrent_agent_dir,
     concurrent_dir,
+    session_root,
     workspace_log_path,
 )
+from agent_relay.storage import is_session
 from agent_relay.workspace_log import LogEntry, WorkspaceLog, utc_timestamp
 
 
@@ -60,6 +62,7 @@ class ConcurrentResult:
     session_id: str
     agents: tuple[str, ...]
     tmux_sessions: tuple[str, ...]
+    continued_from_session_id: str | None
     stop_reason: str   # "all_done" | "incomplete" | "max_time" | "agent_error" | "interrupted"
     elapsed_seconds: float
     outcomes: tuple[AgentOutcome, ...]
@@ -313,6 +316,8 @@ Your shared workspace is: {repo_root}
 
 ## Task
 
+{continuation_section}
+
 {task}
 """
 
@@ -325,6 +330,9 @@ def _build_concurrent_prompt(
     repo_root: Path,
     workspace_log: Path,
     pane_snapshot_paths: Sequence[Path],
+    continued_from_session_id: str | None = None,
+    continued_workspace_log: Path | None = None,
+    continued_session_root: Path | None = None,
 ) -> str:
     agent_name = get_agent_display_name(agent_key)
     others = [(i, a) for i, a in enumerate(all_agents) if i != slot]
@@ -345,6 +353,19 @@ def _build_concurrent_prompt(
         pane_lines.append(f"  Slot {i} ({name}): {pane_snapshot_paths[i]}")
     pane_snapshot_instructions = "\n".join(pane_lines) if pane_lines else "  No other agent snapshots."
 
+    continuation_lines = []
+    if continued_from_session_id:
+        continuation_lines.extend([
+            "## Continuation Context",
+            f"- This run continues prior relay session: {continued_from_session_id}",
+        ])
+        if continued_workspace_log is not None:
+            continuation_lines.append(f"- Prior workspace log: {continued_workspace_log}")
+        if continued_session_root is not None:
+            continuation_lines.append(f"- Prior session root: {continued_session_root}")
+        continuation_lines.append("- Build on that existing work. Do not restart from scratch.")
+    continuation_section = "\n".join(continuation_lines)
+
     return _CONCURRENT_PREAMBLE.format(
         current_agent_name=agent_name,
         current_agent_key=agent_key,
@@ -353,6 +374,7 @@ def _build_concurrent_prompt(
         repo_root=str(repo_root),
         workspace_log=str(workspace_log),
         pane_snapshot_instructions=pane_snapshot_instructions,
+        continuation_section=continuation_section,
         task=task,
     )
 
@@ -420,6 +442,7 @@ def run_concurrent(
     *,
     agents: Sequence[str],
     task: str,
+    continue_from_session_id: str | None = None,
     max_time_seconds: int = 600,
     owner: str = "cli:race",
     on_agent_start: Callable[[int, str, str], None] | None = None,
@@ -431,10 +454,22 @@ def run_concurrent(
 
     _require_tmux()
     require_available(agents)
+    if continue_from_session_id and not is_session(repo_root, continue_from_session_id):
+        raise SystemExit(f"Session not found: {continue_from_session_id}")
 
     session_id = datetime.now(UTC).strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(3)
     tmux_sessions = [_tmux_session_name(session_id, slot) for slot in range(len(agents))]
     agent_names = [get_agent_display_name(a) for a in agents]
+    continued_workspace_log = (
+        workspace_log_path(repo_root, continue_from_session_id)
+        if continue_from_session_id is not None
+        else None
+    )
+    continued_session_root = (
+        session_root(repo_root, continue_from_session_id)
+        if continue_from_session_id is not None
+        else None
+    )
 
     start_session(
         repo_root,
@@ -483,6 +518,9 @@ def run_concurrent(
             repo_root=repo_root,
             workspace_log=wlog_path,
             pane_snapshot_paths=pane_snapshot_paths,
+            continued_from_session_id=continue_from_session_id,
+            continued_workspace_log=continued_workspace_log,
+            continued_session_root=continued_session_root,
         )
         prompt_path = prompt_paths[slot]
         prompt_path.write_text(prompt_text, encoding="utf-8")
@@ -632,6 +670,7 @@ def run_concurrent(
         session_id=session_id,
         agents=tuple(agents),
         tmux_sessions=tuple(tmux_sessions),
+        continued_from_session_id=continue_from_session_id,
         stop_reason=stop_reason,
         elapsed_seconds=round(elapsed, 1),
         outcomes=tuple(outcomes),
