@@ -479,6 +479,10 @@ def cmd_race(args: argparse.Namespace) -> int:
                     "completion_status": o.control_status,
                     "completion_reason": o.control_reason,
                     "claims": list(o.claims),
+                    "claim_specs": [
+                        {"path": claim.path, "role": claim.role}
+                        for claim in o.claim_specs
+                    ],
                     "changed_paths": list(o.changed_paths),
                     "merged_paths": list(o.merged_paths),
                     "merge_conflicts": list(o.merge_conflicts),

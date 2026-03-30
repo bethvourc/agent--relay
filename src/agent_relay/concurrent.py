@@ -41,6 +41,12 @@ from agent_relay.workspace_log import LogEntry, WorkspaceLog, utc_timestamp
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True, slots=True)
+class ClaimSpec:
+    path: str
+    role: str = "owner"
+
+
+@dataclass(frozen=True, slots=True)
 class AgentOutcome:
     slot: int
     agent_key: str
@@ -58,6 +64,7 @@ class AgentOutcome:
     control_status: str = "continue"
     control_reason: str = ""
     claims: tuple[str, ...] = field(default_factory=tuple)
+    claim_specs: tuple[ClaimSpec, ...] = field(default_factory=tuple)
     changed_paths: tuple[str, ...] = field(default_factory=tuple)
     merged_paths: tuple[str, ...] = field(default_factory=tuple)
     merge_conflicts: tuple[str, ...] = field(default_factory=tuple)
@@ -83,6 +90,7 @@ class ConcurrentControl:
     status: str = "continue"
     reason: str = ""
     claims: tuple[str, ...] = field(default_factory=tuple)
+    claim_specs: tuple[ClaimSpec, ...] = field(default_factory=tuple)
     remaining_work: tuple[str, ...] = field(default_factory=tuple)
     verification: tuple[str, ...] = field(default_factory=tuple)
 
@@ -108,6 +116,7 @@ _VALID_CONTROL_STATUSES = frozenset({
     "error",
     "planning",
 })
+_VALID_CLAIM_ROLES = frozenset({"owner", "reviewer", "shared"})
 
 def _require_tmux() -> str:
     """Return tmux path or raise SystemExit."""
@@ -172,6 +181,10 @@ def _tmux_session_name(session_id: str, slot: int, *, phase: str) -> str:
 
 def _claims_ledger_path(repo_root: Path, session_id: str) -> Path:
     return concurrent_dir(repo_root, session_id) / "claims.json"
+
+
+def _baseline_snapshot_dir(repo_root: Path, session_id: str) -> Path:
+    return concurrent_dir(repo_root, session_id) / "baseline"
 
 
 def _worktree_root(repo_root: Path, session_id: str) -> Path:
@@ -272,6 +285,56 @@ def _remove_path(path: Path) -> None:
         path.unlink()
 
 
+def _normalize_claim_path(raw_path: str) -> str:
+    text = raw_path.strip()
+    if not text:
+        return ""
+    if text.startswith("./"):
+        text = text[2:]
+    if text == ".":
+        return ""
+    if text.endswith("/"):
+        stripped = text.rstrip("/")
+        return f"{stripped}/" if stripped else ""
+    return text.rstrip("/")
+
+
+def _normalize_claim_spec(path: str, role: str) -> ClaimSpec | None:
+    normalized_path = _normalize_claim_path(path)
+    normalized_role = role.strip().lower()
+    if not normalized_path or normalized_role not in _VALID_CLAIM_ROLES:
+        return None
+    return ClaimSpec(path=normalized_path, role=normalized_role)
+
+
+def _parse_claim_specs(value: object) -> tuple[ClaimSpec, ...]:
+    items: list[ClaimSpec] = []
+    raw_items: list[object]
+    if isinstance(value, (list, tuple)):
+        raw_items = list(value)
+    elif value is None:
+        raw_items = []
+    else:
+        raw_items = [value]
+
+    for item in raw_items:
+        if isinstance(item, str):
+            spec = _normalize_claim_spec(item, "owner")
+        elif isinstance(item, dict):
+            path = item.get("path", item.get("claim", ""))
+            role = item.get("role", "owner")
+            spec = _normalize_claim_spec(str(path), str(role))
+        else:
+            spec = None
+        if spec is not None:
+            items.append(spec)
+
+    deduped: dict[str, ClaimSpec] = {}
+    for spec in items:
+        deduped[spec.path.casefold()] = spec
+    return tuple(sorted(deduped.values(), key=lambda spec: spec.path.casefold()))
+
+
 def _coerce_string_tuple(value: object) -> tuple[str, ...]:
     if isinstance(value, str):
         stripped = value.strip()
@@ -287,21 +350,6 @@ def _coerce_string_tuple(value: object) -> tuple[str, ...]:
     return ()
 
 
-def _normalize_claims(claims: tuple[str, ...]) -> tuple[str, ...]:
-    seen: set[str] = set()
-    normalized: list[str] = []
-    for claim in claims:
-        stripped = claim.strip()
-        if not stripped:
-            continue
-        key = stripped.casefold()
-        if key in seen:
-            continue
-        seen.add(key)
-        normalized.append(stripped)
-    return tuple(normalized)
-
-
 def _has_legacy_done_line(text: str) -> bool:
     return any(line.strip().upper() == _DONE_MARKER for line in text.splitlines())
 
@@ -314,6 +362,10 @@ def _strip_concurrent_control(text: str) -> str:
         and line.strip().upper() != _DONE_MARKER
     ]
     return "\n".join(kept_lines).strip()
+
+
+def _claim_paths(claim_specs: Sequence[ClaimSpec]) -> tuple[str, ...]:
+    return tuple(spec.path for spec in claim_specs)
 
 
 def parse_concurrent_control(text: str) -> ConcurrentControl:
@@ -335,10 +387,12 @@ def parse_concurrent_control(text: str) -> ConcurrentControl:
         if status not in _VALID_CONTROL_STATUSES:
             continue
 
+        claim_specs = _parse_claim_specs(data.get("claims"))
         return ConcurrentControl(
             status=status,
             reason=str(data.get("reason", "")).strip(),
-            claims=_normalize_claims(_coerce_string_tuple(data.get("claims"))),
+            claims=_claim_paths(claim_specs),
+            claim_specs=claim_specs,
             remaining_work=_coerce_string_tuple(data.get("remaining_work")),
             verification=_coerce_string_tuple(data.get("verification")),
         )
@@ -405,6 +459,7 @@ def _build_outcome(
         control_status=control.status,
         control_reason=control.reason,
         claims=control.claims,
+        claim_specs=control.claim_specs,
         remaining_work=control.remaining_work,
         verification=control.verification,
     )
@@ -431,24 +486,48 @@ def _classify_stop_reason(
     return "incomplete"
 
 
-def _find_claim_conflicts(outcomes: Sequence[AgentOutcome]) -> list[dict[str, object]]:
-    claims_to_slots: dict[str, list[int]] = {}
-    claim_display: dict[str, str] = {}
-    for outcome in outcomes:
-        for claim in outcome.claims:
-            key = claim.casefold()
-            claims_to_slots.setdefault(key, []).append(outcome.slot)
-            claim_display.setdefault(key, claim)
+def _claim_targets_overlap(left: ClaimSpec, right: ClaimSpec) -> bool:
+    left_path = left.path.rstrip("/")
+    right_path = right.path.rstrip("/")
+    left_is_dir = left.path.endswith("/")
+    right_is_dir = right.path.endswith("/")
+    if left_path == right_path:
+        return True
+    if left_is_dir and (right_path.startswith(left_path + "/")):
+        return True
+    if right_is_dir and (left_path.startswith(right_path + "/")):
+        return True
+    return False
 
+
+def _claim_specs_can_coexist(left: ClaimSpec, right: ClaimSpec) -> bool:
+    if not _claim_targets_overlap(left, right):
+        return True
+    if "reviewer" in {left.role, right.role}:
+        return True
+    if left.role == right.role == "shared":
+        return True
+    return False
+
+
+def _find_claim_conflicts(outcomes: Sequence[AgentOutcome]) -> list[dict[str, object]]:
     conflicts: list[dict[str, object]] = []
-    for key, slots in sorted(claims_to_slots.items()):
-        unique_slots = sorted(set(slots))
-        if len(unique_slots) < 2:
-            continue
-        conflicts.append({
-            "claim": claim_display[key],
-            "slots": unique_slots,
-        })
+    for index, left_outcome in enumerate(outcomes):
+        for right_outcome in outcomes[index + 1:]:
+            for left_claim in left_outcome.claim_specs:
+                for right_claim in right_outcome.claim_specs:
+                    if _claim_specs_can_coexist(left_claim, right_claim):
+                        continue
+                    conflicts.append({
+                        "left_slot": left_outcome.slot,
+                        "left_agent": left_outcome.agent_key,
+                        "left_claim": left_claim.path,
+                        "left_role": left_claim.role,
+                        "right_slot": right_outcome.slot,
+                        "right_agent": right_outcome.agent_key,
+                        "right_claim": right_claim.path,
+                        "right_role": right_claim.role,
+                    })
     return conflicts
 
 
@@ -471,6 +550,10 @@ def _write_claim_ledger(
                 "slot": outcome.slot,
                 "agent": outcome.agent_key,
                 "claims": list(outcome.claims),
+                "claim_specs": [
+                    {"path": spec.path, "role": spec.role}
+                    for spec in outcome.claim_specs
+                ],
                 "reason": outcome.control_reason,
                 "status": outcome.control_status,
             }
@@ -486,8 +569,8 @@ def _classify_planning_result(
     continued_from_session_id: str | None,
     claim_ledger_path: Path,
     outcomes: Sequence[AgentOutcome],
-) -> tuple[str, dict[int, tuple[str, ...]]]:
-    accepted_claims = {outcome.slot: outcome.claims for outcome in outcomes}
+) -> tuple[str, dict[int, tuple[ClaimSpec, ...]]]:
+    accepted_claims = {outcome.slot: outcome.claim_specs for outcome in outcomes}
     if any(outcome.exit_code is None for outcome in outcomes):
         _write_claim_ledger(
             claim_ledger_path,
@@ -510,7 +593,7 @@ def _classify_planning_result(
         )
         return "planning_incomplete", accepted_claims
     if any(
-        outcome.control_status != "planning" or not outcome.claims
+        outcome.control_status != "planning" or not outcome.claim_specs
         for outcome in outcomes
     ):
         _write_claim_ledger(
@@ -589,6 +672,75 @@ def _build_baseline_manifest(repo_root: Path, relative_paths: Sequence[str]) -> 
     return dict(sorted(manifest.items()))
 
 
+def _create_baseline_snapshot(
+    repo_root: Path,
+    *,
+    session_id: str,
+    relative_paths: Sequence[str],
+) -> Path:
+    snapshot_dir = _baseline_snapshot_dir(repo_root, session_id)
+    if snapshot_dir.exists():
+        shutil.rmtree(snapshot_dir)
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    for relative_path in relative_paths:
+        source = repo_root / relative_path
+        if source.exists() or source.is_symlink():
+            _copy_file_like(source, snapshot_dir / relative_path)
+    return snapshot_dir
+
+
+def _prune_stale_worktrees(repo_root: Path, *, max_age_seconds: int = 7 * 24 * 60 * 60) -> None:
+    root = _worktree_root(repo_root, "stale-scan").parent
+    if not root.exists():
+        return
+    cutoff = time.time() - max_age_seconds
+    for candidate in root.iterdir():
+        try:
+            if candidate.stat().st_mtime < cutoff:
+                shutil.rmtree(candidate, ignore_errors=True)
+        except FileNotFoundError:
+            continue
+
+
+def _cleanup_worktrees(repo_root: Path, worktree_paths: Sequence[Path]) -> None:
+    for worktree_path in worktree_paths:
+        _git(repo_root, "worktree", "remove", "--force", str(worktree_path), check=False)
+        shutil.rmtree(worktree_path, ignore_errors=True)
+
+
+def _read_text_if_possible(path: Path) -> str | None:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (FileNotFoundError, UnicodeDecodeError, OSError):
+        return None
+
+
+def _merge_shared_text_change(destination: Path, baseline_path: Path, source: Path) -> bool:
+    current_text = _read_text_if_possible(destination)
+    baseline_text = _read_text_if_possible(baseline_path)
+    source_text = _read_text_if_possible(source)
+    if current_text is None or baseline_text is None or source_text is None:
+        return False
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_root = Path(tmpdir)
+        current_path = tmp_root / "current.txt"
+        base_path = tmp_root / "base.txt"
+        other_path = tmp_root / "other.txt"
+        current_path.write_text(current_text, encoding="utf-8")
+        base_path.write_text(baseline_text, encoding="utf-8")
+        other_path.write_text(source_text, encoding="utf-8")
+        result = subprocess.run(
+            ["git", "merge-file", "-p", str(current_path), str(base_path), str(other_path)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            return False
+        write_text_atomic(destination, result.stdout)
+    return True
+
+
 def _sync_worktree_coordination_files(
     *,
     worktree_paths: Sequence[Path],
@@ -637,6 +789,30 @@ def _path_matches_claim(relative_path: str, claim: str, repo_root: Path) -> bool
     return normalized_path == normalized_claim
 
 
+def _path_matches_claim_spec(relative_path: str, claim_spec: ClaimSpec, repo_root: Path) -> bool:
+    return _path_matches_claim(relative_path, claim_spec.path, repo_root)
+
+
+def _editable_claim_specs(claim_specs: Sequence[ClaimSpec]) -> tuple[ClaimSpec, ...]:
+    return tuple(spec for spec in claim_specs if spec.role in {"owner", "shared"})
+
+
+def _shared_collaboration_enabled(
+    relative_path: str,
+    accepted_claims_by_slot: dict[int, tuple[ClaimSpec, ...]],
+    repo_root: Path,
+) -> bool:
+    shared_slots = [
+        slot
+        for slot, claim_specs in accepted_claims_by_slot.items()
+        if any(
+            spec.role == "shared" and _path_matches_claim_spec(relative_path, spec, repo_root)
+            for spec in claim_specs
+        )
+    ]
+    return len(shared_slots) >= 2
+
+
 def _changed_paths_from_manifest(
     worktree_path: Path,
     baseline_manifest: dict[str, str],
@@ -654,17 +830,25 @@ def _merge_worktree_changes(
     repo_root: Path,
     *,
     worktree_path: Path,
+    baseline_root: Path,
     baseline_manifest: dict[str, str],
     changed_paths: Sequence[str],
+    accepted_claims_by_slot: dict[int, tuple[ClaimSpec, ...]],
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     merged_paths: list[str] = []
     merge_conflicts: list[str] = []
     for relative_path in changed_paths:
         destination = repo_root / relative_path
         source = worktree_path / relative_path
+        baseline_path = baseline_root / relative_path
         baseline_hash = baseline_manifest.get(relative_path)
         current_hash = _path_hash_or_none(destination)
         if current_hash != baseline_hash:
+            if _shared_collaboration_enabled(relative_path, accepted_claims_by_slot, repo_root):
+                merged = _merge_shared_text_change(destination, baseline_path, source)
+                if merged:
+                    merged_paths.append(relative_path)
+                    continue
             merge_conflicts.append(relative_path)
             continue
         if source.exists() or source.is_symlink():
@@ -680,9 +864,10 @@ def _postprocess_implementation_outcomes(
     *,
     outcomes: Sequence[AgentOutcome],
     worktree_paths: Sequence[Path],
+    baseline_root: Path,
     baseline_manifest: dict[str, str],
-    accepted_claims_by_slot: dict[int, tuple[str, ...]],
-    allow_merge: bool,
+    accepted_claims_by_slot: dict[int, tuple[ClaimSpec, ...]],
+    merge_mode: str,
 ) -> tuple[tuple[AgentOutcome, ...], str | None]:
     worktree_by_slot = dict(enumerate(worktree_paths))
     processed: list[AgentOutcome] = []
@@ -691,26 +876,35 @@ def _postprocess_implementation_outcomes(
         if worktree_path is None:
             processed.append(outcome)
             continue
-        effective_claims = accepted_claims_by_slot.get(outcome.slot, outcome.claims)
+        effective_claims = accepted_claims_by_slot.get(outcome.slot, outcome.claim_specs)
+        editable_claims = _editable_claim_specs(effective_claims)
         _current_manifest, changed_paths = _changed_paths_from_manifest(worktree_path, baseline_manifest)
         scope_violations = tuple(sorted(
             path
             for path in changed_paths
-            if not any(_path_matches_claim(path, claim, repo_root) for claim in effective_claims)
+            if not any(_path_matches_claim_spec(path, claim, repo_root) for claim in editable_claims)
         ))
         merged_paths: tuple[str, ...] = ()
         merge_conflicts: tuple[str, ...] = ()
-        if allow_merge and outcome.exit_code == 0 and not scope_violations:
+        should_merge = False
+        if merge_mode == "completed":
+            should_merge = outcome.exit_code == 0
+        elif merge_mode == "partial":
+            should_merge = True
+        if should_merge and not scope_violations:
             merge_conflicts, merged_paths = _merge_worktree_changes(
                 repo_root,
                 worktree_path=worktree_path,
+                baseline_root=baseline_root,
                 baseline_manifest=baseline_manifest,
                 changed_paths=changed_paths,
+                accepted_claims_by_slot=accepted_claims_by_slot,
             )
         processed.append(replace(
             outcome,
             worktree_path=str(worktree_path),
-            claims=effective_claims,
+            claims=_claim_paths(effective_claims),
+            claim_specs=effective_claims,
             changed_paths=changed_paths,
             merged_paths=merged_paths,
             merge_conflicts=merge_conflicts,
@@ -770,7 +964,7 @@ def _build_concurrent_prompt(
     continued_workspace_log: Path | None = None,
     continued_session_root: Path | None = None,
     claim_ledger_path: Path | None = None,
-    accepted_claims_by_slot: dict[int, tuple[str, ...]] | None = None,
+    accepted_claims_by_slot: dict[int, tuple[ClaimSpec, ...]] | None = None,
 ) -> str:
     agent_name = get_agent_display_name(agent_key)
     others = [(i, a) for i, a in enumerate(all_agents) if i != slot]
@@ -810,9 +1004,10 @@ def _build_concurrent_prompt(
             "- This is the planning phase. Do not make implementation changes in this phase unless you are only prototyping inside your isolated worktree.",
             "- Inspect the repo, snapshot files, and shared log, then decide who owns what before implementation begins.",
             '- End with a machine-readable status line:',
-            '  RELAY_STATUS: {"status":"planning","reason":"...","claims":["README.md","src/agent_relay/"],"remaining_work":["implement your claimed slice"],"verification":[]}',
+            '  RELAY_STATUS: {"status":"planning","reason":"...","claims":[{"path":"README.md","role":"owner"},{"path":"src/agent_relay/","role":"reviewer"}],"remaining_work":["implement your claimed slice"],"verification":[]}',
             "- Allowed statuses: planning, blocked, error",
             "- Use planning only if claims is non-empty and concrete.",
+            "- Claim roles: owner = exclusive editor, shared = multiple agents may edit and the relay will try to merge, reviewer = inspect/review only and must not edit that scope.",
             "- Claims must be repo-relative file paths or directory paths. Use a trailing / for directory claims.",
             "- If you post multiple RELAY_STATUS lines during the session, the last one wins.",
         ]
@@ -825,15 +1020,21 @@ def _build_concurrent_prompt(
             phase_lines.append(f"- Accepted claim ledger: {claim_ledger_path}")
         own_claims = accepted_claims_by_slot.get(slot, ()) if accepted_claims_by_slot else ()
         phase_lines.append(
-            f"- Your accepted claims: {', '.join(own_claims) if own_claims else 'None recorded'}"
+            "- Your accepted claims: "
+            + (
+                ", ".join(f"{claim.role}:{claim.path}" for claim in own_claims)
+                if own_claims
+                else "None recorded"
+            )
         )
         if accepted_claims_by_slot:
             phase_lines.append("- Accepted claims for all slots:")
             for other_slot, claims in sorted(accepted_claims_by_slot.items()):
                 agent_label = get_agent_display_name(all_agents[other_slot])
-                claim_text = ", ".join(claims) if claims else "None recorded"
+                claim_text = ", ".join(f"{claim.role}:{claim.path}" for claim in claims) if claims else "None recorded"
                 phase_lines.append(f"  Slot {other_slot} ({agent_label}): {claim_text}")
         phase_lines.extend([
+            "- Only owner and shared claims may be edited. Reviewer claims are review-only.",
             "- Stay within your accepted claims. If you discover a scope problem, report it with blocked instead of freelancing into another slot's work.",
             '- End with a machine-readable status line:',
             '  RELAY_STATUS: {"status":"continue","reason":"...","claims":[],"remaining_work":["..."],"verification":[]}',
@@ -1110,6 +1311,7 @@ def run_concurrent(
     require_available(agents)
     if continue_from_session_id and not is_session(repo_root, continue_from_session_id):
         raise SystemExit(f"Session not found: {continue_from_session_id}")
+    _prune_stale_worktrees(repo_root)
 
     start_time = datetime.now(UTC)
     deadline_timestamp = start_time.timestamp() + max_time_seconds
@@ -1154,6 +1356,11 @@ def run_concurrent(
 
     baseline_paths = _current_repo_file_paths(repo_root)
     baseline_manifest = _build_baseline_manifest(repo_root, baseline_paths)
+    baseline_root = _create_baseline_snapshot(
+        repo_root,
+        session_id=session_id,
+        relative_paths=baseline_paths,
+    )
     worktree_paths = tuple(
         _create_agent_worktree(
             repo_root,
@@ -1291,13 +1498,19 @@ def run_concurrent(
                 on_agent_start=on_agent_start,
                 on_agent_done=on_agent_done,
             )
+            merge_mode = "none"
+            if implementation_phase.stop_reason == "completed":
+                merge_mode = "completed"
+            elif implementation_phase.stop_reason in {"max_time", "interrupted"}:
+                merge_mode = "partial"
             outcomes, enforcement_stop_reason = _postprocess_implementation_outcomes(
                 repo_root,
                 outcomes=implementation_phase.outcomes,
                 worktree_paths=worktree_paths,
+                baseline_root=baseline_root,
                 baseline_manifest=baseline_manifest,
                 accepted_claims_by_slot=accepted_claims,
-                allow_merge=implementation_phase.stop_reason == "completed",
+                merge_mode=merge_mode,
             )
             tmux_sessions = implementation_phase.tmux_sessions
             if implementation_phase.stop_reason == "completed":
@@ -1310,6 +1523,13 @@ def run_concurrent(
                     stop_reason = base_stop_reason
             else:
                 stop_reason = implementation_phase.stop_reason
+
+    should_preserve_worktrees = any(
+        set(outcome.changed_paths) != set(outcome.merged_paths)
+        for outcome in outcomes
+    )
+    if not should_preserve_worktrees:
+        _cleanup_worktrees(repo_root, worktree_paths)
 
     elapsed = (datetime.now(UTC) - start_time).total_seconds()
 

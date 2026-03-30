@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 from agent_relay.concurrent import (
     AgentOutcome,
+    ClaimSpec,
     ConcurrentControl,
     ConcurrentResult,
     _build_concurrent_prompt,
@@ -80,6 +81,8 @@ class BuildConcurrentPromptTests(TestCase):
         self.assertIn("## Planning Phase", prompt)
         self.assertIn('"status":"planning"', prompt)
         self.assertIn("claims", prompt)
+        self.assertIn("owner = exclusive editor", prompt)
+        self.assertIn("reviewer = inspect/review only", prompt)
 
     def test_snapshot_instructions_per_slot(self) -> None:
         prompt = _build_concurrent_prompt(
@@ -149,6 +152,19 @@ class ParseConcurrentControlTests(TestCase):
                 verification=("pytest",),
             ),
         )
+
+    def test_parses_claim_objects_with_roles(self) -> None:
+        control = parse_concurrent_control(
+            'Plan\nRELAY_STATUS: {"status":"planning","reason":"Split work","claims":[{"path":"README.md","role":"owner"},{"path":"src/agent_relay/","role":"reviewer"}],"remaining_work":["implement"],"verification":[]}'
+        )
+        self.assertEqual(
+            control.claim_specs,
+            (
+                ClaimSpec(path="README.md", role="owner"),
+                ClaimSpec(path="src/agent_relay/", role="reviewer"),
+            ),
+        )
+        self.assertEqual(control.claims, ("README.md", "src/agent_relay/"))
 
     def test_legacy_marker_requires_standalone_line(self) -> None:
         control = parse_concurrent_control("Notes\nCONVERSATION_COMPLETE")
@@ -299,6 +315,8 @@ class RunConcurrentTests(TestCase):
             ), patch(
                 "agent_relay.concurrent._create_agent_worktree",
                 side_effect=fake_create_worktree,
+            ), patch(
+                "agent_relay.concurrent._cleanup_worktrees",
             ), patch(
                 "agent_relay.concurrent._tmux",
                 return_value=subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="", stderr=""),
@@ -548,6 +566,65 @@ class RunConcurrentTests(TestCase):
             self.assertEqual((repo_root / "README.md").read_text(encoding="utf-8"), "baseline readme\n")
             self.assertFalse((repo_root / "src" / "unexpected.py").exists())
 
+    def test_shared_claims_can_collaboratively_merge_same_file(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            result = self._run(
+                planning_contents={
+                    0: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Shared docs","claims":[{"path":"README.md","role":"shared"}],"remaining_work":["docs"],"verification":[]}',
+                    1: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Shared docs too","claims":[{"path":"README.md","role":"shared"}],"remaining_work":["docs"],"verification":[]}',
+                },
+                implementation_contents={
+                    0: 'Done\nRELAY_STATUS: {"status":"done","reason":"Updated intro","remaining_work":[],"verification":["review"]}',
+                    1: 'Done\nRELAY_STATUS: {"status":"done","reason":"Updated outro","remaining_work":[],"verification":["review"]}',
+                },
+                baseline_files={
+                    "README.md": "alpha\nbeta\ngamma\n",
+                    "tests/test_concurrent.py": "baseline tests\n",
+                },
+                worktree_overrides={
+                    0: {"README.md": "alpha from slot0\nbeta\ngamma\n"},
+                    1: {"README.md": "alpha\nbeta\ngamma from slot1\n"},
+                },
+                planning_exit_codes={0: 0, 1: 0},
+                implementation_exit_codes={0: 0, 1: 0},
+                pane_dead=lambda _session, _slot: True,
+                session_exists=lambda _session: True,
+                repo_root=repo_root,
+            )
+            self.assertEqual(result.stop_reason, "all_done")
+            self.assertEqual(
+                (repo_root / "README.md").read_text(encoding="utf-8"),
+                "alpha from slot0\nbeta\ngamma from slot1\n",
+            )
+            self.assertEqual(result.outcomes[1].merged_paths, ("README.md",))
+
+    def test_owner_and_reviewer_claims_can_overlap_but_reviewer_cannot_edit(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            result = self._run(
+                planning_contents={
+                    0: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Own docs","claims":[{"path":"README.md","role":"owner"}],"remaining_work":["docs"],"verification":[]}',
+                    1: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Review docs","claims":[{"path":"README.md","role":"reviewer"}],"remaining_work":["review"],"verification":[]}',
+                },
+                implementation_contents={
+                    0: 'Done\nRELAY_STATUS: {"status":"done","reason":"Updated docs","remaining_work":[],"verification":["review"]}',
+                    1: 'Done\nRELAY_STATUS: {"status":"done","reason":"Reviewed","remaining_work":[],"verification":["review"]}',
+                },
+                worktree_overrides={
+                    0: {"README.md": "claimed change\n"},
+                    1: {"README.md": "reviewer change\n"},
+                },
+                planning_exit_codes={0: 0, 1: 0},
+                implementation_exit_codes={0: 0, 1: 0},
+                pane_dead=lambda _session, _slot: True,
+                session_exists=lambda _session: True,
+                repo_root=repo_root,
+            )
+            self.assertEqual(result.stop_reason, "scope_violation")
+            self.assertIn("README.md", result.outcomes[1].scope_violations)
+            self.assertEqual((repo_root / "README.md").read_text(encoding="utf-8"), "claimed change\n")
+
     def test_killed_tmux_session_is_interrupted(self) -> None:
         result = self._run(
             planning_contents={},
@@ -592,6 +669,8 @@ class RunConcurrentTests(TestCase):
                 "agent_relay.concurrent._create_agent_worktree",
                 side_effect=fake_create_worktree,
             ), patch(
+                "agent_relay.concurrent._cleanup_worktrees",
+            ), patch(
                 "agent_relay.concurrent._tmux",
                 return_value=subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="", stderr=""),
             ), patch(
@@ -621,6 +700,90 @@ class RunConcurrentTests(TestCase):
                     max_time_seconds=1,
                 )
         self.assertEqual(result.stop_reason, "max_time")
+
+    def test_timeout_partially_merges_in_scope_changes(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            baseline_files = {
+                "README.md": "baseline readme\n",
+                "tests/test_concurrent.py": "baseline tests\n",
+            }
+            for relative_path, content in baseline_files.items():
+                target = repo_root / relative_path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content, encoding="utf-8")
+
+            def fake_create_worktree(
+                _repo_root: Path,
+                *,
+                session_id: str,
+                slot: int,
+                baseline_paths,
+            ) -> Path:
+                worktree_path = repo_root / f"worktree-{session_id}-{slot:02d}"
+                for relative_path in baseline_paths:
+                    source = repo_root / relative_path
+                    destination = worktree_path / relative_path
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+                if slot == 0:
+                    (worktree_path / "README.md").write_text("timed out draft\n", encoding="utf-8")
+                return worktree_path
+
+            with patch("agent_relay.concurrent._require_tmux"), patch(
+                "agent_relay.concurrent.require_available"
+            ), patch(
+                "agent_relay.concurrent.start_session"
+            ), patch(
+                "agent_relay.concurrent._current_repo_file_paths",
+                return_value=tuple(sorted(baseline_files)),
+            ), patch(
+                "agent_relay.concurrent._build_baseline_manifest",
+                side_effect=lambda _repo_root, _relative_paths: {
+                    relative_path: sha256_path(repo_root / relative_path)
+                    for relative_path in baseline_files
+                },
+            ), patch(
+                "agent_relay.concurrent._create_agent_worktree",
+                side_effect=fake_create_worktree,
+            ), patch(
+                "agent_relay.concurrent._cleanup_worktrees",
+            ), patch(
+                "agent_relay.concurrent._tmux",
+                return_value=subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="", stderr=""),
+            ), patch(
+                "agent_relay.concurrent._tmux_session_exists",
+                return_value=True,
+            ), patch(
+                "agent_relay.concurrent._tmux_pane_dead",
+                side_effect=lambda session_name, _slot: "-planning-" in session_name,
+            ), patch(
+                "agent_relay.concurrent._tmux_capture_pane",
+                side_effect=lambda session_name, _slot: (
+                    (
+                        'Plan\nRELAY_STATUS: {"status":"planning","reason":"Docs","claims":[{"path":"README.md","role":"owner"}],"remaining_work":["docs"],"verification":[]}'
+                        if session_name.endswith("-00")
+                        else 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Tests","claims":[{"path":"tests/test_concurrent.py","role":"owner"}],"remaining_work":["tests"],"verification":[]}'
+                    )
+                    if "-planning-" in session_name
+                    else 'Still running\nRELAY_STATUS: {"status":"continue","reason":"Need more time","remaining_work":["polish"],"verification":[]}'
+                ),
+            ), patch(
+                "agent_relay.concurrent._read_exit_code",
+                side_effect=lambda path: 0 if path.name == "planning-exit-code.txt" else None,
+            ), patch(
+                "time.time",
+                side_effect=[0, 0, 10**20, 10**20, 10**20],
+            ):
+                result = run_concurrent(
+                    repo_root,
+                    agents=["claude", "codex"],
+                    task="Finish the task",
+                    max_time_seconds=1,
+                )
+            self.assertEqual(result.stop_reason, "max_time")
+            self.assertEqual(result.outcomes[0].merged_paths, ("README.md",))
+            self.assertEqual((repo_root / "README.md").read_text(encoding="utf-8"), "timed out draft\n")
 
     def test_inline_done_marker_text_does_not_count(self) -> None:
         result = self._run(
@@ -673,6 +836,8 @@ class RunConcurrentTests(TestCase):
             ), patch(
                 "agent_relay.concurrent._create_agent_worktree",
                 side_effect=fake_create_worktree,
+            ), patch(
+                "agent_relay.concurrent._cleanup_worktrees",
             ), patch(
                 "agent_relay.concurrent._tmux",
                 return_value=subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="", stderr=""),
@@ -776,6 +941,8 @@ class RunConcurrentTests(TestCase):
                 "agent_relay.concurrent._create_agent_worktree",
                 side_effect=fake_create_worktree,
             ), patch(
+                "agent_relay.concurrent._cleanup_worktrees",
+            ), patch(
                 "agent_relay.concurrent._tmux",
                 return_value=subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="", stderr=""),
             ), patch(
@@ -805,6 +972,18 @@ class RunConcurrentTests(TestCase):
                 ledger = Path(result.claim_ledger_path)
                 self.assertTrue(ledger.exists())
                 self.assertIn('"status": "claim_conflict"', ledger.read_text(encoding="utf-8"))
+
+    def test_overlapping_owner_and_shared_claims_conflict(self) -> None:
+        result = self._run(
+            planning_contents={
+                0: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Own src","claims":[{"path":"src/","role":"owner"}],"remaining_work":["src"],"verification":[]}',
+                1: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Shared file","claims":[{"path":"src/agent_relay/concurrent.py","role":"shared"}],"remaining_work":["src"],"verification":[]}',
+            },
+            planning_exit_codes={0: 0, 1: 0},
+            pane_dead=lambda _session, _slot: True,
+            session_exists=lambda _session: True,
+        )
+        self.assertEqual(result.stop_reason, "claim_conflict")
 
     def test_planning_requires_nonempty_claims(self) -> None:
         result = self._run(
