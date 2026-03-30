@@ -18,7 +18,8 @@ from typing import Callable
 
 from agent_relay.agents import AGENT_REGISTRY, get_agent_adapter, get_agent_display_name, require_available
 from agent_relay.bootstrap import start_session
-from agent_relay.layout import turn_dir, turns_dir, workspace_log_path
+from agent_relay.layout import session_root, turn_dir, turns_dir, workspace_log_path
+from agent_relay.storage import is_session
 from agent_relay.workspace_log import LogEntry, WorkspaceLog, utc_timestamp
 
 
@@ -51,6 +52,7 @@ class ConverseResult:
     turns_completed: int
     stop_reason: str   # "max_turns" | "all_done" | "done_signal" | "interrupted" | "agent_error"
     turn_results: tuple[TurnResult, ...]
+    continued_from_session_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

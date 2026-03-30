@@ -955,6 +955,10 @@ _STOP_REASON_LABELS = {
     "done_signal": "Task completed",
     "all_done": "All agents completed",
     "incomplete": "Agents exited without completion",
+    "planning_incomplete": "Planning phase did not produce valid claims",
+    "claim_conflict": "Planning claims conflict",
+    "scope_violation": "Agent changed files outside accepted claims",
+    "merge_conflict": "Main repo changed before isolated work could merge back",
     "max_time": "Time limit reached",
     "interrupted": "Interrupted by user",
     "agent_error": "Agent exited with error",
@@ -1014,7 +1018,7 @@ def render_concurrent_start(
     console.print(f"  [label]Task:[/] {task}", highlight=False)
     if continue_session:
         console.print(f"  [label]Continuing:[/] {continue_session}", highlight=False)
-    console.print("  [muted]Each agent runs in its own tmux session. Attach from separate terminals using the commands below.[/]", highlight=False)
+    console.print("  [muted]Each agent runs in its own tmux session and isolated worktree. Attach from separate terminals using the commands below.[/]", highlight=False)
     console.print()
 
 
@@ -1025,7 +1029,15 @@ def render_concurrent_result(console: Console, result: "ConcurrentResult") -> No
     if result.stop_reason == "all_done":
         style = "success"
         symbol = "✔"
-    elif result.stop_reason in ("agent_error", "interrupted", "max_time"):
+    elif result.stop_reason in (
+        "agent_error",
+        "interrupted",
+        "max_time",
+        "planning_incomplete",
+        "claim_conflict",
+        "scope_violation",
+        "merge_conflict",
+    ):
         style = "warning"
         symbol = "◌"
     else:

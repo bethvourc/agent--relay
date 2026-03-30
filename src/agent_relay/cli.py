@@ -439,7 +439,11 @@ def cmd_race(args: argparse.Namespace) -> int:
                 status = f"[warning]{outcome.control_status}[/]"
             else:
                 status = f"[warning]exit {outcome.exit_code}[/]"
-            console.print(f"  [brand]▸[/] Slot {outcome.slot}: [bold]{name}[/] {status} — {outcome.summary}", highlight=False)
+            phase_label = f"[muted]{outcome.phase}[/] " if outcome.phase != "implementation" else ""
+            console.print(
+                f"  [brand]▸[/] Slot {outcome.slot}: [bold]{name}[/] {phase_label}{status} — {outcome.summary}",
+                highlight=False,
+            )
 
     result = run_concurrent(
         repo_root,
@@ -459,6 +463,7 @@ def cmd_race(args: argparse.Namespace) -> int:
             "agents": list(result.agents),
             "tmux_sessions": list(result.tmux_sessions),
             "continued_from_session_id": result.continued_from_session_id,
+            "claim_ledger_path": result.claim_ledger_path,
             "stop_reason": result.stop_reason,
             "elapsed_seconds": result.elapsed_seconds,
             "outcomes": [
@@ -466,11 +471,18 @@ def cmd_race(args: argparse.Namespace) -> int:
                     "slot": o.slot,
                     "agent": o.agent_key,
                     "tmux_session": o.tmux_session,
+                    "phase": o.phase,
+                    "worktree_path": o.worktree_path,
                     "exit_code": o.exit_code,
                     "summary": o.summary,
                     "done_signal": o.done_signal,
                     "completion_status": o.control_status,
                     "completion_reason": o.control_reason,
+                    "claims": list(o.claims),
+                    "changed_paths": list(o.changed_paths),
+                    "merged_paths": list(o.merged_paths),
+                    "merge_conflicts": list(o.merge_conflicts),
+                    "scope_violations": list(o.scope_violations),
                     "remaining_work": list(o.remaining_work),
                     "verification": list(o.verification),
                     "started_at": o.started_at,

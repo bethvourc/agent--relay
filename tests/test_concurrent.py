@@ -17,6 +17,7 @@ from agent_relay.concurrent import (
     run_concurrent,
     _require_tmux,
 )
+from agent_relay.hashing import sha256_path
 
 
 class BuildConcurrentPromptTests(TestCase):
@@ -64,6 +65,21 @@ class BuildConcurrentPromptTests(TestCase):
         )
         self.assertIn("RELAY_STATUS:", prompt)
         self.assertIn("continue, blocked, done, error", prompt)
+
+    def test_planning_prompt_requires_claims(self) -> None:
+        prompt = _build_concurrent_prompt(
+            task="Plan first",
+            slot=0,
+            agent_key="claude",
+            all_agents=["claude", "codex"],
+            repo_root=Path("/tmp/repo"),
+            workspace_log=Path("/tmp/log.md"),
+            pane_snapshot_paths=[Path("/tmp/pane-0.txt"), Path("/tmp/pane-1.txt")],
+            phase="planning",
+        )
+        self.assertIn("## Planning Phase", prompt)
+        self.assertIn('"status":"planning"', prompt)
+        self.assertIn("claims", prompt)
 
     def test_snapshot_instructions_per_slot(self) -> None:
         prompt = _build_concurrent_prompt(
@@ -162,6 +178,7 @@ class AgentOutcomeTests(TestCase):
             slot=0,
             agent_key="claude",
             tmux_session="relay-test-00",
+            phase="implementation",
             exit_code=0,
             raw_stdout="output",
             raw_stderr="",
@@ -178,7 +195,7 @@ class AgentOutcomeTests(TestCase):
 
     def test_none_exit_code_for_killed(self) -> None:
         outcome = AgentOutcome(
-            slot=0, agent_key="claude", tmux_session="relay-test-00", exit_code=None,
+            slot=0, agent_key="claude", tmux_session="relay-test-00", phase="planning", exit_code=None,
             raw_stdout="", raw_stderr="", text="", summary="",
             done_signal=False, started_at="", finished_at="",
         )
@@ -192,6 +209,7 @@ class ConcurrentResultTests(TestCase):
             agents=("claude", "codex"),
             tmux_sessions=("relay-test-00", "relay-test-01"),
             continued_from_session_id=None,
+            claim_ledger_path=None,
             stop_reason="all_done",
             elapsed_seconds=42.5,
             outcomes=(),
@@ -204,21 +222,83 @@ class ConcurrentResultTests(TestCase):
 
 
 class RunConcurrentTests(TestCase):
+    @staticmethod
+    def _phase_and_slot(session_name: str) -> tuple[str, int]:
+        slot = int(session_name.rsplit("-", 1)[-1])
+        phase = "planning" if "-planning-" in session_name else "implementation"
+        return phase, slot
+
     def _run(
         self,
         *,
-        pane_contents: dict[int, str],
-        exit_codes: dict[int, int | None],
+        planning_contents: dict[int, str],
+        implementation_contents: dict[int, str] | None = None,
+        planning_exit_codes: dict[int, int | None] | None = None,
+        implementation_exit_codes: dict[int, int | None] | None = None,
+        baseline_files: dict[str, str] | None = None,
+        worktree_overrides: dict[int, dict[str, str | None]] | None = None,
         pane_dead,
         session_exists,
         max_time_seconds: int = 600,
         on_agent_start=None,
+        repo_root: Path | None = None,
     ) -> ConcurrentResult:
-        with TemporaryDirectory() as tmpdir:
+        implementation_contents = implementation_contents or {}
+        planning_exit_codes = planning_exit_codes or {}
+        implementation_exit_codes = implementation_exit_codes or {}
+        baseline_files = baseline_files or {
+            "README.md": "baseline readme\n",
+            "tests/test_concurrent.py": "baseline tests\n",
+        }
+        worktree_overrides = worktree_overrides or {}
+        def run_in_repo(repo_root: Path) -> ConcurrentResult:
+            for relative_path, content in baseline_files.items():
+                target = repo_root / relative_path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content, encoding="utf-8")
+
+            worktree_paths: dict[int, Path] = {}
+
+            def fake_create_worktree(
+                _repo_root: Path,
+                *,
+                session_id: str,
+                slot: int,
+                baseline_paths,
+            ) -> Path:
+                worktree_path = repo_root / f"worktree-{session_id}-{slot:02d}"
+                for relative_path in baseline_paths:
+                    source = repo_root / relative_path
+                    destination = worktree_path / relative_path
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+                for relative_path, content in worktree_overrides.get(slot, {}).items():
+                    destination = worktree_path / relative_path
+                    if content is None:
+                        if destination.exists():
+                            destination.unlink()
+                        continue
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_text(content, encoding="utf-8")
+                worktree_paths[slot] = worktree_path
+                return worktree_path
+
             with patch("agent_relay.concurrent._require_tmux"), patch(
                 "agent_relay.concurrent.require_available"
             ), patch(
                 "agent_relay.concurrent.start_session"
+            ), patch(
+                "agent_relay.concurrent._current_repo_file_paths",
+                return_value=tuple(sorted(baseline_files)),
+            ), patch(
+                "agent_relay.concurrent._build_baseline_manifest",
+                side_effect=lambda _repo_root, _relative_paths: {
+                    relative_path: sha256_path(repo_root / relative_path)
+                    for relative_path in baseline_files
+                },
+            ), patch(
+                "agent_relay.concurrent._create_agent_worktree",
+                side_effect=fake_create_worktree,
             ), patch(
                 "agent_relay.concurrent._tmux",
                 return_value=subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="", stderr=""),
@@ -230,32 +310,52 @@ class RunConcurrentTests(TestCase):
                 side_effect=pane_dead,
             ), patch(
                 "agent_relay.concurrent._tmux_capture_pane",
-                side_effect=lambda session_name, _slot: pane_contents.get(int(session_name.rsplit("-", 1)[-1]), ""),
+                side_effect=lambda session_name, _slot: (
+                    planning_contents.get(self._phase_and_slot(session_name)[1], "")
+                    if self._phase_and_slot(session_name)[0] == "planning"
+                    else implementation_contents.get(self._phase_and_slot(session_name)[1], "")
+                ),
             ), patch(
                 "agent_relay.concurrent._read_exit_code",
-                side_effect=lambda path: exit_codes.get(int(path.parent.name.split("-")[-1]), None),
+                side_effect=lambda path: (
+                    planning_exit_codes.get(int(path.parent.name.split("-")[-1]), None)
+                    if path.name == "planning-exit-code.txt"
+                    else implementation_exit_codes.get(int(path.parent.name.split("-")[-1]), None)
+                ),
             ):
                 return run_concurrent(
-                    Path(tmpdir),
+                    repo_root,
                     agents=["claude", "codex"],
                     task="Finish the task",
                     max_time_seconds=max_time_seconds,
                     on_agent_start=on_agent_start,
                 )
 
+        if repo_root is not None:
+            return run_in_repo(repo_root)
+
+        with TemporaryDirectory() as tmpdir:
+            return run_in_repo(Path(tmpdir))
+
     def test_all_done_requires_done_status_from_all_panes(self) -> None:
         result = self._run(
-            pane_contents={
+            planning_contents={
+                0: 'Planning done\nRELAY_STATUS: {"status":"planning","reason":"Own docs","claims":["README.md"],"remaining_work":["implement docs"],"verification":[]}',
+                1: 'Planning done\nRELAY_STATUS: {"status":"planning","reason":"Own tests","claims":["tests/test_concurrent.py"],"remaining_work":["implement tests"],"verification":[]}',
+            },
+            implementation_contents={
                 0: 'Agent 0 finished\nRELAY_STATUS: {"status":"done","reason":"Complete","remaining_work":[],"verification":["review"]}',
                 1: 'Agent 1 finished\nRELAY_STATUS: {"status":"done","reason":"Complete","remaining_work":[],"verification":["tests"]}',
             },
-            exit_codes={0: 0, 1: 0},
+            planning_exit_codes={0: 0, 1: 0},
+            implementation_exit_codes={0: 0, 1: 0},
             pane_dead=lambda _session, _slot: True,
             session_exists=lambda _session: True,
         )
         self.assertEqual(result.stop_reason, "all_done")
         self.assertTrue(all(outcome.done_signal for outcome in result.outcomes))
         self.assertEqual([outcome.control_status for outcome in result.outcomes], ["done", "done"])
+        self.assertTrue(all(outcome.phase == "implementation" for outcome in result.outcomes))
         self.assertEqual(
             [outcome.tmux_session for outcome in result.outcomes],
             [f"relay-{result.session_id}-00", f"relay-{result.session_id}-01"],
@@ -265,11 +365,39 @@ class RunConcurrentTests(TestCase):
         start_session_mock = MagicMock()
         tmux_mock = MagicMock(return_value=subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="", stderr=""))
         with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            (repo_root / "README.md").write_text("baseline\n", encoding="utf-8")
+            baseline_files = ("README.md",)
+
+            def fake_create_worktree(
+                _repo_root: Path,
+                *,
+                session_id: str,
+                slot: int,
+                baseline_paths,
+            ) -> Path:
+                worktree_path = repo_root / f"worktree-{session_id}-{slot:02d}"
+                for relative_path in baseline_paths:
+                    source = repo_root / relative_path
+                    destination = worktree_path / relative_path
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+                return worktree_path
+
             with patch("agent_relay.concurrent._require_tmux"), patch(
                 "agent_relay.concurrent.require_available"
             ), patch(
                 "agent_relay.concurrent.start_session",
                 start_session_mock,
+            ), patch(
+                "agent_relay.concurrent._current_repo_file_paths",
+                return_value=baseline_files,
+            ), patch(
+                "agent_relay.concurrent._build_baseline_manifest",
+                return_value={"README.md": sha256_path(repo_root / "README.md")},
+            ), patch(
+                "agent_relay.concurrent._create_agent_worktree",
+                side_effect=fake_create_worktree,
             ), patch(
                 "agent_relay.concurrent._tmux",
                 tmux_mock,
@@ -281,13 +409,19 @@ class RunConcurrentTests(TestCase):
                 return_value=True,
             ), patch(
                 "agent_relay.concurrent._tmux_capture_pane",
-                side_effect=lambda _session, _slot: 'Done\nRELAY_STATUS: {"status":"done","reason":"Ready","remaining_work":[],"verification":[]}',
+                side_effect=lambda session_name, _slot: (
+                    'Plan\nRELAY_STATUS: {"status":"planning","reason":"Ready","claims":["README.md"],"remaining_work":["implement"],"verification":[]}'
+                    if "-planning-" in session_name and session_name.endswith("-00")
+                    else 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Ready","claims":["tests/test_concurrent.py"],"remaining_work":["implement"],"verification":[]}'
+                    if "-planning-" in session_name
+                    else 'Done\nRELAY_STATUS: {"status":"done","reason":"Ready","remaining_work":[],"verification":[]}'
+                ),
             ), patch(
                 "agent_relay.concurrent._read_exit_code",
                 return_value=0,
             ):
                 run_concurrent(
-                    Path(tmpdir),
+                    repo_root,
                     agents=["claude", "codex"],
                     task="Finish the task",
                 )
@@ -299,7 +433,15 @@ class RunConcurrentTests(TestCase):
             for call in tmux_mock.call_args_list
             if call.args and call.args[0] == "new-session"
         ]
-        self.assertEqual(len(new_session_calls), 2)
+        self.assertEqual(len(new_session_calls), 4)
+        self.assertIn(
+            ("set-option", "-t", f"relay-{session_id}-planning-00", "mouse", "on"),
+            [call.args[:5] for call in tmux_mock.call_args_list if len(call.args) >= 5],
+        )
+        self.assertIn(
+            ("set-option", "-t", f"relay-{session_id}-planning-01", "mouse", "on"),
+            [call.args[:5] for call in tmux_mock.call_args_list if len(call.args) >= 5],
+        )
         self.assertIn(
             ("set-option", "-t", f"relay-{session_id}-00", "mouse", "on"),
             [call.args[:5] for call in tmux_mock.call_args_list if len(call.args) >= 5],
@@ -311,11 +453,16 @@ class RunConcurrentTests(TestCase):
 
     def test_clean_exit_without_done_is_incomplete(self) -> None:
         result = self._run(
-            pane_contents={
+            planning_contents={
+                0: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Docs","claims":["README.md"],"remaining_work":["docs"],"verification":[]}',
+                1: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Tests","claims":["tests/test_concurrent.py"],"remaining_work":["tests"],"verification":[]}',
+            },
+            implementation_contents={
                 0: 'Still work left\nRELAY_STATUS: {"status":"continue","reason":"Docs pending","remaining_work":["docs"],"verification":[]}',
                 1: 'Finished my part\nRELAY_STATUS: {"status":"done","reason":"Code ready","remaining_work":[],"verification":["tests"]}',
             },
-            exit_codes={0: 0, 1: 0},
+            planning_exit_codes={0: 0, 1: 0},
+            implementation_exit_codes={0: 0, 1: 0},
             pane_dead=lambda _session, _slot: True,
             session_exists=lambda _session: True,
         )
@@ -324,11 +471,16 @@ class RunConcurrentTests(TestCase):
 
     def test_nonzero_exit_is_agent_error(self) -> None:
         result = self._run(
-            pane_contents={
+            planning_contents={
+                0: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Code","claims":["src/agent_relay/concurrent.py"],"remaining_work":["code"],"verification":[]}',
+                1: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Review","claims":["tests/test_concurrent.py"],"remaining_work":["tests"],"verification":[]}',
+            },
+            implementation_contents={
                 0: 'Build failed\nRELAY_STATUS: {"status":"error","reason":"Tests failed","remaining_work":["fix tests"],"verification":["pytest failed"]}',
                 1: 'Finished my part\nRELAY_STATUS: {"status":"done","reason":"Ready","remaining_work":[],"verification":["review"]}',
             },
-            exit_codes={0: 1, 1: 0},
+            planning_exit_codes={0: 0, 1: 0},
+            implementation_exit_codes={0: 1, 1: 0},
             pane_dead=lambda _session, _slot: True,
             session_exists=lambda _session: True,
         )
@@ -336,22 +488,109 @@ class RunConcurrentTests(TestCase):
         self.assertEqual(result.outcomes[0].exit_code, 1)
         self.assertEqual(result.outcomes[0].control_status, "error")
 
+    def test_in_scope_changes_merge_back_to_main_repo(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            result = self._run(
+                planning_contents={
+                    0: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Docs","claims":["README.md"],"remaining_work":["docs"],"verification":[]}',
+                    1: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Tests","claims":["tests/test_concurrent.py"],"remaining_work":["tests"],"verification":[]}',
+                },
+                implementation_contents={
+                    0: 'Done\nRELAY_STATUS: {"status":"done","reason":"Updated docs","remaining_work":[],"verification":["review"]}',
+                    1: 'Done\nRELAY_STATUS: {"status":"done","reason":"No changes","remaining_work":[],"verification":["review"]}',
+                },
+                baseline_files={
+                    "README.md": "before\n",
+                    "tests/test_concurrent.py": "baseline tests\n",
+                },
+                worktree_overrides={
+                    0: {"README.md": "after\n"},
+                },
+                planning_exit_codes={0: 0, 1: 0},
+                implementation_exit_codes={0: 0, 1: 0},
+                pane_dead=lambda _session, _slot: True,
+                session_exists=lambda _session: True,
+                repo_root=repo_root,
+            )
+            self.assertEqual(result.stop_reason, "all_done")
+            self.assertEqual((repo_root / "README.md").read_text(encoding="utf-8"), "after\n")
+            self.assertEqual(result.outcomes[0].merged_paths, ("README.md",))
+            self.assertTrue(result.outcomes[0].worktree_path is not None)
+
+    def test_out_of_scope_changes_block_merge(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            result = self._run(
+                planning_contents={
+                    0: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Docs","claims":["README.md"],"remaining_work":["docs"],"verification":[]}',
+                    1: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Tests","claims":["tests/test_concurrent.py"],"remaining_work":["tests"],"verification":[]}',
+                },
+                implementation_contents={
+                    0: 'Done\nRELAY_STATUS: {"status":"done","reason":"Changed docs","remaining_work":[],"verification":["review"]}',
+                    1: 'Done\nRELAY_STATUS: {"status":"done","reason":"Ready","remaining_work":[],"verification":["review"]}',
+                },
+                worktree_overrides={
+                    0: {
+                        "README.md": "claimed change\n",
+                        "src/unexpected.py": "print('oops')\n",
+                    },
+                },
+                planning_exit_codes={0: 0, 1: 0},
+                implementation_exit_codes={0: 0, 1: 0},
+                pane_dead=lambda _session, _slot: True,
+                session_exists=lambda _session: True,
+                repo_root=repo_root,
+            )
+            self.assertEqual(result.stop_reason, "scope_violation")
+            self.assertIn("src/unexpected.py", result.outcomes[0].scope_violations)
+            self.assertEqual(result.outcomes[0].merged_paths, ())
+            self.assertEqual((repo_root / "README.md").read_text(encoding="utf-8"), "baseline readme\n")
+            self.assertFalse((repo_root / "src" / "unexpected.py").exists())
+
     def test_killed_tmux_session_is_interrupted(self) -> None:
         result = self._run(
-            pane_contents={},
-            exit_codes={},
+            planning_contents={},
             pane_dead=lambda _session, _slot: False,
             session_exists=lambda _session: False,
         )
         self.assertEqual(result.stop_reason, "interrupted")
         self.assertTrue(all(outcome.exit_code is None for outcome in result.outcomes))
+        self.assertTrue(all(outcome.phase == "planning" for outcome in result.outcomes))
 
     def test_timeout_is_enforced_without_attached_tmux_client(self) -> None:
         with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            (repo_root / "README.md").write_text("baseline\n", encoding="utf-8")
+
+            def fake_create_worktree(
+                _repo_root: Path,
+                *,
+                session_id: str,
+                slot: int,
+                baseline_paths,
+            ) -> Path:
+                worktree_path = repo_root / f"worktree-{session_id}-{slot:02d}"
+                for relative_path in baseline_paths:
+                    source = repo_root / relative_path
+                    destination = worktree_path / relative_path
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+                return worktree_path
+
             with patch("agent_relay.concurrent._require_tmux"), patch(
                 "agent_relay.concurrent.require_available"
             ), patch(
                 "agent_relay.concurrent.start_session"
+            ), patch(
+                "agent_relay.concurrent._current_repo_file_paths",
+                return_value=("README.md",),
+            ), patch(
+                "agent_relay.concurrent._build_baseline_manifest",
+                return_value={"README.md": sha256_path(repo_root / "README.md")},
+            ), patch(
+                "agent_relay.concurrent._create_agent_worktree",
+                side_effect=fake_create_worktree,
             ), patch(
                 "agent_relay.concurrent._tmux",
                 return_value=subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="", stderr=""),
@@ -364,7 +603,7 @@ class RunConcurrentTests(TestCase):
             ), patch(
                 "agent_relay.concurrent._tmux_capture_pane",
                 side_effect=lambda session_name, _slot: (
-                    'Still running\nRELAY_STATUS: {"status":"continue","reason":"Work in progress","remaining_work":["finish"],"verification":[]}'
+                    'Still running\nRELAY_STATUS: {"status":"planning","reason":"Work in progress","claims":["README.md"],"remaining_work":["finish"],"verification":[]}'
                     if int(session_name.rsplit("-", 1)[-1]) == 0
                     else ""
                 ),
@@ -376,7 +615,7 @@ class RunConcurrentTests(TestCase):
                 return_value=10**20,
             ):
                 result = run_concurrent(
-                    Path(tmpdir),
+                    repo_root,
                     agents=["claude", "codex"],
                     task="Finish the task",
                     max_time_seconds=1,
@@ -385,11 +624,16 @@ class RunConcurrentTests(TestCase):
 
     def test_inline_done_marker_text_does_not_count(self) -> None:
         result = self._run(
-            pane_contents={
+            planning_contents={
+                0: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Docs","claims":["README.md"],"remaining_work":["docs"],"verification":[]}',
+                1: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Tests","claims":["tests/test_concurrent.py"],"remaining_work":["tests"],"verification":[]}',
+            },
+            implementation_contents={
                 0: 'I documented the string CONVERSATION_COMPLETE for later.\nRELAY_STATUS: {"status":"continue","reason":"Not finished","remaining_work":["more work"],"verification":[]}',
                 1: 'Done\nRELAY_STATUS: {"status":"done","reason":"Ready","remaining_work":[],"verification":["review"]}',
             },
-            exit_codes={0: 0, 1: 0},
+            planning_exit_codes={0: 0, 1: 0},
+            implementation_exit_codes={0: 0, 1: 0},
             pane_dead=lambda _session, _slot: True,
             session_exists=lambda _session: True,
         )
@@ -398,10 +642,37 @@ class RunConcurrentTests(TestCase):
 
     def test_pane_snapshots_are_written_locally(self) -> None:
         with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            (repo_root / "README.md").write_text("baseline\n", encoding="utf-8")
+
+            def fake_create_worktree(
+                _repo_root: Path,
+                *,
+                session_id: str,
+                slot: int,
+                baseline_paths,
+            ) -> Path:
+                worktree_path = repo_root / f"worktree-{session_id}-{slot:02d}"
+                for relative_path in baseline_paths:
+                    source = repo_root / relative_path
+                    destination = worktree_path / relative_path
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+                return worktree_path
+
             with patch("agent_relay.concurrent._require_tmux"), patch(
                 "agent_relay.concurrent.require_available"
             ), patch(
                 "agent_relay.concurrent.start_session"
+            ), patch(
+                "agent_relay.concurrent._current_repo_file_paths",
+                return_value=("README.md",),
+            ), patch(
+                "agent_relay.concurrent._build_baseline_manifest",
+                return_value={"README.md": sha256_path(repo_root / "README.md")},
+            ), patch(
+                "agent_relay.concurrent._create_agent_worktree",
+                side_effect=fake_create_worktree,
             ), patch(
                 "agent_relay.concurrent._tmux",
                 return_value=subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="", stderr=""),
@@ -413,35 +684,52 @@ class RunConcurrentTests(TestCase):
                 return_value=True,
             ), patch(
                 "agent_relay.concurrent._tmux_capture_pane",
-                side_effect=lambda session_name, _slot: f"slot {int(session_name.rsplit('-', 1)[-1])} snapshot",
+                side_effect=lambda session_name, _slot: (
+                    (
+                        'Plan\nRELAY_STATUS: {"status":"planning","reason":"Docs","claims":["README.md"],"remaining_work":["docs"],"verification":[]}'
+                        if session_name.endswith("-00")
+                        else 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Tests","claims":["tests/test_concurrent.py"],"remaining_work":["tests"],"verification":[]}'
+                    )
+                    if "-planning-" in session_name
+                    else f"implementation slot {int(session_name.rsplit('-', 1)[-1])} snapshot"
+                ),
             ), patch(
                 "agent_relay.concurrent._read_exit_code",
                 return_value=0,
             ):
                 result = run_concurrent(
-                    Path(tmpdir),
+                    repo_root,
                     agents=["claude", "codex"],
                     task="Finish the task",
                 )
 
-                session_dir = Path(tmpdir) / ".agent-relay" / "sessions" / result.session_id / "concurrent"
+                session_dir = repo_root / ".agent-relay" / "sessions" / result.session_id / "concurrent"
                 self.assertEqual(
                     (session_dir / "agent-00" / "pane.txt").read_text(encoding="utf-8"),
-                    "slot 0 snapshot",
+                    "implementation slot 0 snapshot",
                 )
                 self.assertEqual(
                     (session_dir / "agent-01" / "pane.txt").read_text(encoding="utf-8"),
-                    "slot 1 snapshot",
+                    "implementation slot 1 snapshot",
+                )
+                self.assertEqual(
+                    (repo_root / f"worktree-{result.session_id}-00" / ".agent-relay" / "concurrent" / "slot-01.txt").read_text(encoding="utf-8"),
+                    "implementation slot 1 snapshot",
                 )
 
     def test_on_agent_start_receives_attachable_tmux_session(self) -> None:
         started: list[tuple[int, str, str]] = []
         result = self._run(
-            pane_contents={
+            planning_contents={
+                0: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Docs","claims":["README.md"],"remaining_work":["docs"],"verification":[]}',
+                1: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Tests","claims":["tests/test_concurrent.py"],"remaining_work":["tests"],"verification":[]}',
+            },
+            implementation_contents={
                 0: 'Done\nRELAY_STATUS: {"status":"done","reason":"Ready","remaining_work":[],"verification":[]}',
                 1: 'Done\nRELAY_STATUS: {"status":"done","reason":"Ready","remaining_work":[],"verification":[]}',
             },
-            exit_codes={0: 0, 1: 0},
+            planning_exit_codes={0: 0, 1: 0},
+            implementation_exit_codes={0: 0, 1: 0},
             pane_dead=lambda _session, _slot: True,
             session_exists=lambda _session: True,
             on_agent_start=lambda slot, agent_key, tmux_session: started.append((slot, agent_key, tmux_session)),
@@ -453,6 +741,82 @@ class RunConcurrentTests(TestCase):
                 (1, "codex", f"relay-{result.session_id}-01"),
             ],
         )
+
+    def test_conflicting_planning_claims_block_implementation(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            (repo_root / "README.md").write_text("baseline\n", encoding="utf-8")
+
+            def fake_create_worktree(
+                _repo_root: Path,
+                *,
+                session_id: str,
+                slot: int,
+                baseline_paths,
+            ) -> Path:
+                worktree_path = repo_root / f"worktree-{session_id}-{slot:02d}"
+                for relative_path in baseline_paths:
+                    source = repo_root / relative_path
+                    destination = worktree_path / relative_path
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+                return worktree_path
+
+            with patch("agent_relay.concurrent._require_tmux"), patch(
+                "agent_relay.concurrent.require_available"
+            ), patch(
+                "agent_relay.concurrent.start_session"
+            ), patch(
+                "agent_relay.concurrent._current_repo_file_paths",
+                return_value=("README.md",),
+            ), patch(
+                "agent_relay.concurrent._build_baseline_manifest",
+                return_value={"README.md": sha256_path(repo_root / "README.md")},
+            ), patch(
+                "agent_relay.concurrent._create_agent_worktree",
+                side_effect=fake_create_worktree,
+            ), patch(
+                "agent_relay.concurrent._tmux",
+                return_value=subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="", stderr=""),
+            ), patch(
+                "agent_relay.concurrent._tmux_session_exists",
+                return_value=True,
+            ), patch(
+                "agent_relay.concurrent._tmux_pane_dead",
+                return_value=True,
+            ), patch(
+                "agent_relay.concurrent._tmux_capture_pane",
+                side_effect=lambda session_name, _slot: (
+                    'Plan\nRELAY_STATUS: {"status":"planning","reason":"Own docs","claims":["README.md"],"remaining_work":["docs"],"verification":[]}'
+                    if session_name.endswith("-00")
+                    else 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Also own docs","claims":["README.md"],"remaining_work":["docs"],"verification":[]}'
+                ),
+            ), patch(
+                "agent_relay.concurrent._read_exit_code",
+                return_value=0,
+            ):
+                result = run_concurrent(
+                    repo_root,
+                    agents=["claude", "codex"],
+                    task="Finish the task",
+                )
+                self.assertEqual(result.stop_reason, "claim_conflict")
+                self.assertTrue(all(outcome.phase == "planning" for outcome in result.outcomes))
+                ledger = Path(result.claim_ledger_path)
+                self.assertTrue(ledger.exists())
+                self.assertIn('"status": "claim_conflict"', ledger.read_text(encoding="utf-8"))
+
+    def test_planning_requires_nonempty_claims(self) -> None:
+        result = self._run(
+            planning_contents={
+                0: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Unsure","claims":[],"remaining_work":["docs"],"verification":[]}',
+                1: 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Tests","claims":["tests/test_concurrent.py"],"remaining_work":["tests"],"verification":[]}',
+            },
+            planning_exit_codes={0: 0, 1: 0},
+            pane_dead=lambda _session, _slot: True,
+            session_exists=lambda _session: True,
+        )
+        self.assertEqual(result.stop_reason, "planning_incomplete")
 
     def test_continue_from_missing_session_raises(self) -> None:
         with TemporaryDirectory() as tmpdir:
