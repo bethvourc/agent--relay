@@ -417,7 +417,9 @@ def run_concurrent(
         repo_root,
         session_id=session_id,
         objective=task,
-        workstream_kind="concurrent",
+        # Concurrency is the execution mode; the persisted workstream kind
+        # still needs to satisfy the session schema.
+        workstream_kind="mixed",
         initial_agent=agents[0],
         next_action=f"Race with {', '.join(agent_names)}",
         snapshot_mode=None,

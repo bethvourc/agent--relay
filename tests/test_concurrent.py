@@ -230,6 +230,41 @@ class RunConcurrentTests(TestCase):
         self.assertTrue(all(outcome.done_signal for outcome in result.outcomes))
         self.assertEqual([outcome.control_status for outcome in result.outcomes], ["done", "done"])
 
+    def test_start_session_uses_schema_valid_workstream_kind(self) -> None:
+        start_session_mock = MagicMock()
+        with TemporaryDirectory() as tmpdir:
+            with patch("agent_relay.concurrent._require_tmux"), patch(
+                "agent_relay.concurrent.require_available"
+            ), patch(
+                "agent_relay.concurrent.start_session",
+                start_session_mock,
+            ), patch(
+                "agent_relay.concurrent._tmux",
+                return_value=subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="", stderr=""),
+            ), patch(
+                "agent_relay.concurrent._tmux_session_exists",
+                return_value=True,
+            ), patch(
+                "agent_relay.concurrent._tmux_pane_dead",
+                return_value=True,
+            ), patch(
+                "agent_relay.concurrent._tmux_capture_pane",
+                side_effect=lambda _session, _slot: 'Done\nRELAY_STATUS: {"status":"done","reason":"Ready","remaining_work":[],"verification":[]}',
+            ), patch(
+                "agent_relay.concurrent._read_exit_code",
+                return_value=0,
+            ), patch(
+                "os.isatty",
+                return_value=False,
+            ):
+                run_concurrent(
+                    Path(tmpdir),
+                    agents=["claude", "codex"],
+                    task="Finish the task",
+                )
+
+        self.assertEqual(start_session_mock.call_args.kwargs["workstream_kind"], "mixed")
+
     def test_clean_exit_without_done_is_incomplete(self) -> None:
         result = self._run(
             pane_contents={
