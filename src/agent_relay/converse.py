@@ -276,6 +276,7 @@ def build_turn_prompt(
     turn_number: int,
     repo_root: Path,
     completion_state: CompletionState | None = None,
+    continuation_context: str | None = None,
 ) -> str:
     """Build the prompt for the next agent turn with full conversation history."""
     current_name = get_agent_display_name(current_agent)
@@ -307,6 +308,17 @@ def build_turn_prompt(
         "",
         task,
         "",
+    ]
+
+    if continuation_context:
+        lines.extend([
+            "## Continuation Context",
+            "",
+            continuation_context,
+            "",
+        ])
+
+    lines.extend([
         "## Completion Protocol",
         "",
         'You may include one optional structured line immediately before the status line:',
@@ -558,6 +570,7 @@ def converse(
     agents: Sequence[str],
     task: str,
     max_turns: int = 10,
+    continue_from_session_id: str | None = None,
     owner: str = "cli:converse",
     on_turn_start: Callable[[str, int, int], None] | None = None,
     on_turn_complete: Callable[[TurnResult], None] | None = None,
@@ -569,6 +582,7 @@ def converse(
         agents: Ordered list of agent keys (round-robin). Must have >= 2.
         task: The task prompt for the conversation.
         max_turns: Maximum number of turns before stopping.
+        continue_from_session_id: Optional prior session to continue from.
         owner: Owner string for journal events.
         on_turn_start: Callback(agent_key, turn_number, max_turns) before each turn.
         on_turn_complete: Callback(TurnResult) after each turn.
@@ -578,6 +592,10 @@ def converse(
     """
     if len(agents) < 2:
         raise SystemExit("Converse requires at least 2 agents.")
+
+    # Validate continuation session exists
+    if continue_from_session_id and not is_session(repo_root, continue_from_session_id):
+        raise SystemExit(f"Session not found: {continue_from_session_id}")
 
     # Validate agents are registered and installed
     require_available(agents)
@@ -604,6 +622,46 @@ def converse(
 
     # Initialize workspace log
     wlog = WorkspaceLog(workspace_log_path(repo_root, session_id))
+
+    # Build continuation context from prior session
+    continuation_context: str | None = None
+    if continue_from_session_id:
+        ctx_parts: list[str] = []
+        ctx_parts.append(f"This run continues prior relay session: {continue_from_session_id}")
+        prior_session_dir = session_root(repo_root, continue_from_session_id)
+        ctx_parts.append(f"Prior session root: {prior_session_dir}")
+
+        # Load prior workspace log
+        prior_wlog_path = workspace_log_path(repo_root, continue_from_session_id)
+        if prior_wlog_path.exists():
+            ctx_parts.append(f"Prior workspace log: {prior_wlog_path}")
+
+        # Load latest turn state from prior session for resumable context
+        prior_turns = turns_dir(repo_root, continue_from_session_id)
+        if prior_turns.exists():
+            turn_dirs = sorted(prior_turns.iterdir())
+            for tdir in reversed(turn_dirs):
+                state_file = tdir / "state.json"
+                if state_file.exists():
+                    try:
+                        import json as _json
+                        state_data = _json.loads(state_file.read_text(encoding="utf-8"))
+                        if isinstance(state_data, dict):
+                            summary = state_data.get("summary", "")
+                            next_step = state_data.get("next_step", "")
+                            remaining = state_data.get("remaining_work", [])
+                            if summary:
+                                ctx_parts.append(f"Last agent summary: {summary}")
+                            if next_step:
+                                ctx_parts.append(f"Planned next step: {next_step}")
+                            if remaining:
+                                ctx_parts.append(f"Remaining work: {', '.join(remaining)}")
+                    except (OSError, json.JSONDecodeError):
+                        pass
+                    break
+
+        ctx_parts.append("Build on that existing work. Do not restart from scratch.")
+        continuation_context = "\n".join(f"- {p}" for p in ctx_parts)
 
     turn_history: list[TurnResult] = []
     completion_epoch = 0
@@ -635,6 +693,7 @@ def converse(
                     proposed_turn=proposed_turn,
                     agreeing_slots=tuple(i for i in range(n) if i in agreeing_slots),
                 ),
+                continuation_context=continuation_context if turn_number == 1 else None,
             )
 
             # Write prompt to turn directory
@@ -748,4 +807,5 @@ def converse(
         turns_completed=len(turn_history),
         stop_reason=stop_reason,
         turn_results=tuple(turn_history),
+        continued_from_session_id=continue_from_session_id,
     )

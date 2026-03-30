@@ -254,6 +254,7 @@ class HelpRenderTests(TestCase):
         self.assertIn("discover", output)
         self.assertIn("status", output)
         self.assertIn("clean", output)
+        self.assertIn("resolve", output)
         self.assertIn("inspect-conflicts", output)
 
 
@@ -283,8 +284,8 @@ class ConcurrentRenderTests(TestCase):
         self.assertIn("README.md", output)
         self.assertIn("docs/guide.md", output)
         self.assertIn("Next:", output)
-        self.assertIn("agent-relay race", output)
-        self.assertIn("--continue sess-123", output)
+        self.assertIn("agent-relay resolve", output)
+        self.assertIn("sess-123", output)
 
     def test_concurrent_result_shows_scope_files(self) -> None:
         console, buf = make_console()

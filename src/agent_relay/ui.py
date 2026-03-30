@@ -709,6 +709,7 @@ def render_help(console: Console) -> None:
         console.print("  [brand]agent-relay claude --task \"...\"[/]     With instructions")
         console.print('  [brand]agent-relay chat c x "fix tests"[/]    Turn-based conversation')
         console.print('  [brand]agent-relay race c x "build auth"[/]   Concurrent agents (tmux)')
+        console.print("  [brand]agent-relay resolve [id][/]            Resume a race conflict")
         console.print("  [brand]agent-relay discover[/]                Show available agents")
         console.print("  [brand]agent-relay status[/]                  View sessions")
         console.print("  [brand]agent-relay inspect-conflicts <id>[/]  Inspect race conflicts")
@@ -729,6 +730,7 @@ def render_help(console: Console) -> None:
     examples.add_row('agent-relay chat c x "fix tests"', "Turn-based agent conversation")
     examples.add_row('agent-relay chat c x c "review" -n 6', "3-agent, 6 turns max")
     examples.add_row('agent-relay race c x "build auth"', "Concurrent agents (tmux)")
+    examples.add_row("agent-relay resolve <session>", "Resume an unresolved race conflict")
     examples.add_row("agent-relay inspect-conflicts <session>", "Inspect saved conflict artifacts")
     examples.add_row("agent-relay discover", "Show available agents & aliases")
     examples.add_row("agent-relay status", "View all relay sessions")
@@ -1200,14 +1202,11 @@ def _summarize_paths(paths: tuple[str, ...], *, limit: int = 4) -> str:
 def _concurrent_next_action(result: "ConcurrentResult") -> str | None:  # noqa: F821
     if result.stop_reason == "manual_resolution_required":
         return (
-            f"Inspect the conflict artifact and continue with "
-            f"`agent-relay race --continue {result.session_id} <agents> \"resolve the remaining conflict\"`."
+            f"Inspect the conflict artifact, then continue with "
+            f"`agent-relay resolve {result.session_id}`."
         )
     if result.stop_reason == "merge_conflict":
-        return (
-            f"Continue with `agent-relay race --continue {result.session_id} <agents> "
-            f"\"resolve the merge conflict\"`."
-        )
+        return f"Continue with `agent-relay resolve {result.session_id}`."
     if result.stop_reason == "scope_violation":
         return "Review the out-of-scope files and rerun once claims match the intended edits."
     if result.stop_reason in {"claim_conflict", "planning_incomplete"}:

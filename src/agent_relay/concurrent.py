@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from agent_relay.agents import (
+    AGENT_NAMES,
     get_agent_adapter,
     get_agent_display_name,
     require_available,
@@ -127,6 +128,11 @@ _VALID_CONTROL_STATUSES = frozenset({
     "planning",
 })
 _VALID_CLAIM_ROLES = frozenset({"owner", "reviewer", "shared"})
+_UNRESOLVED_CONFLICT_STATUSES = frozenset({
+    "merge_conflict",
+    "manual_resolution_required",
+    "resolution_retry_pending",
+})
 
 def _require_tmux() -> str:
     """Return tmux path or raise SystemExit."""
@@ -207,6 +213,14 @@ def _conflict_artifact_dir(repo_root: Path, session_id: str) -> Path:
 
 def _conflict_artifact_path(repo_root: Path, session_id: str) -> Path:
     return concurrent_dir(repo_root, session_id) / "conflicts.json"
+
+
+def _claim_ledger_payload(path: Path) -> dict[str, object] | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def _continued_conflict_artifact_source(repo_root: Path, session_id: str | None) -> Path | None:
@@ -1147,6 +1161,94 @@ def _load_conflict_artifact(path: Path) -> dict[str, object] | None:
     return data if isinstance(data, dict) else None
 
 
+def _dedupe_agents(agent_names: Sequence[str]) -> tuple[str, ...]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for agent in agent_names:
+        normalized = str(agent).strip()
+        if not normalized or normalized in seen:
+            continue
+        if normalized not in AGENT_NAMES:
+            continue
+        seen.add(normalized)
+        ordered.append(normalized)
+    return tuple(ordered)
+
+
+def _infer_agents_from_claim_ledger_payload(payload: dict[str, object] | None) -> tuple[str, ...]:
+    if payload is None:
+        return ()
+    claims = payload.get("claims")
+    if not isinstance(claims, list):
+        return ()
+    return _dedupe_agents(
+        str(item.get("agent", "")).strip()
+        for item in claims
+        if isinstance(item, dict)
+    )
+
+
+def _infer_agents_from_conflict_payload(payload: dict[str, object] | None) -> tuple[str, ...]:
+    if payload is None:
+        return ()
+    paths = payload.get("paths")
+    if not isinstance(paths, list):
+        return ()
+    agents: list[str] = []
+    for entry in paths:
+        if not isinstance(entry, dict):
+            continue
+        contributors = entry.get("contributors")
+        if not isinstance(contributors, list):
+            continue
+        for contributor in contributors:
+            if not isinstance(contributor, dict):
+                continue
+            agents.append(str(contributor.get("agent", "")).strip())
+    return _dedupe_agents(agents)
+
+
+def _continued_session_id_from_claim_ledger(payload: dict[str, object] | None) -> str | None:
+    if payload is None:
+        return None
+    value = payload.get("continued_from_session_id")
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def _session_id_from_conflict_artifact_path(path_value: object) -> str | None:
+    if not isinstance(path_value, str):
+        return None
+    normalized = path_value.strip()
+    if not normalized:
+        return None
+    path = Path(normalized)
+    if path.name != "conflicts.json":
+        return None
+    if path.parent.name != "concurrent":
+        return None
+    session_id = path.parent.parent.name.strip()
+    return session_id or None
+
+
+def _continued_session_id_from_conflict_payload(payload: dict[str, object] | None) -> str | None:
+    if payload is None:
+        return None
+    return _session_id_from_conflict_artifact_path(payload.get("continued_from_conflict_artifact"))
+
+
+def _default_resolution_agents(inferred_agents: Sequence[str]) -> tuple[str, ...]:
+    ordered = list(_dedupe_agents(inferred_agents))
+    for agent in AGENT_NAMES:
+        if agent not in ordered:
+            ordered.append(agent)
+        if len(ordered) >= 2:
+            break
+    return tuple(ordered[: max(2, min(len(ordered), len(AGENT_NAMES)))])
+
+
 def _write_conflict_artifact_payload(path: Path, payload: dict[str, object]) -> None:
     write_json_atomic(path, payload)
 
@@ -1396,6 +1498,70 @@ def load_conflict_artifact_summary(repo_root: Path, session_id: str) -> dict[str
         "manual_paths": sorted(manual_paths),
         "attempted_slots": attempted_slots,
         "paths": summaries,
+    }
+
+
+def latest_unresolved_conflict_session_id(repo_root: Path) -> str | None:
+    sessions_dir = repo_root / ".agent-relay" / "sessions"
+    if not sessions_dir.exists():
+        return None
+
+    candidates: list[tuple[str, str]] = []
+    for session_dir in sorted(sessions_dir.iterdir()):
+        if not session_dir.is_dir():
+            continue
+        session_id = session_dir.name
+        payload = _load_conflict_artifact(_conflict_artifact_path(repo_root, session_id))
+        if payload is None:
+            continue
+        status = str(payload.get("status", "")).strip().lower()
+        if status not in _UNRESOLVED_CONFLICT_STATUSES:
+            continue
+        ordering_key = str(payload.get("updated_at") or payload.get("generated_at") or session_id)
+        candidates.append((ordering_key, session_id))
+
+    if not candidates:
+        return None
+    candidates.sort()
+    return candidates[-1][1]
+
+
+def infer_conflict_resolution_context(repo_root: Path, session_id: str) -> dict[str, object]:
+    artifact_path = _conflict_artifact_path(repo_root, session_id)
+    artifact_payload = _load_conflict_artifact(artifact_path)
+    if artifact_payload is None:
+        raise SystemExit(f"No conflict artifact found for session: {session_id}")
+
+    collected_agents: list[str] = list(_infer_agents_from_conflict_payload(artifact_payload))
+    visited = {session_id}
+    next_session_id = _continued_session_id_from_conflict_payload(artifact_payload)
+    current_claim_payload = _claim_ledger_payload(_claims_ledger_path(repo_root, session_id))
+    collected_agents.extend(_infer_agents_from_claim_ledger_payload(current_claim_payload))
+
+    if next_session_id is None:
+        next_session_id = _continued_session_id_from_claim_ledger(current_claim_payload)
+
+    while next_session_id is not None and next_session_id not in visited:
+        visited.add(next_session_id)
+        claim_payload = _claim_ledger_payload(_claims_ledger_path(repo_root, next_session_id))
+        collected_agents.extend(_infer_agents_from_claim_ledger_payload(claim_payload))
+
+        next_artifact_payload = _load_conflict_artifact(_conflict_artifact_path(repo_root, next_session_id))
+        collected_agents.extend(_infer_agents_from_conflict_payload(next_artifact_payload))
+
+        continued_from_claims = _continued_session_id_from_claim_ledger(claim_payload)
+        continued_from_artifact = _continued_session_id_from_conflict_payload(next_artifact_payload)
+        next_session_id = continued_from_claims or continued_from_artifact
+
+    resolved_agents = _default_resolution_agents(collected_agents)
+    status = str(artifact_payload.get("status", "unknown")).strip() or "unknown"
+    note = str(artifact_payload.get("note", "")).strip()
+    return {
+        "session_id": session_id,
+        "status": status,
+        "note": note,
+        "agents": list(resolved_agents),
+        "conflict_artifact_path": str(artifact_path),
     }
 
 

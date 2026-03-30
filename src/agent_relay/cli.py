@@ -112,21 +112,22 @@ def _load_conflict_paths(conflict_artifact_path: str | None) -> list[str]:
 
 def _race_next_action(result: "ConcurrentResult") -> str | None:  # noqa: F821
     if result.stop_reason == "manual_resolution_required":
-        return (
-            f'agent-relay race --continue {result.session_id} <agents> '
-            f'"resolve the remaining conflict"'
-        )
+        return f"agent-relay resolve {result.session_id}"
     if result.stop_reason == "merge_conflict":
-        return (
-            f'agent-relay race --continue {result.session_id} <agents> '
-            f'"resolve the merge conflict"'
-        )
+        return f"agent-relay resolve {result.session_id}"
     if result.stop_reason in {"max_time", "interrupted", "incomplete", "agent_error"}:
         return (
             f'agent-relay race --continue {result.session_id} <agents> '
             f'"continue the task"'
         )
     return None
+
+
+def _default_resolution_task(status: str) -> str:
+    normalized = status.strip().lower()
+    if normalized == "manual_resolution_required":
+        return "Resolve the remaining conflict and review the final merged result."
+    return "Resolve the merge conflict and review the final merged result."
 
 
 def _race_result_metadata(result: "ConcurrentResult") -> dict[str, object]:  # noqa: F821
@@ -167,6 +168,141 @@ def cmd_inspect_conflicts(args: argparse.Namespace) -> int:
         emit_quiet(str(summary.get("conflict_artifact_path", "")))
     else:
         render_conflict_inspect(args.console, summary)
+
+    return 0
+
+
+def cmd_resolve(args: argparse.Namespace) -> int:
+    from agent_relay.concurrent import (
+        infer_conflict_resolution_context,
+        latest_unresolved_conflict_session_id,
+        run_concurrent,
+    )
+
+    repo_root = _resolve_repo(args.repo)
+    console = args.console
+    interactive = not args.json and not args.quiet
+
+    if getattr(args, "latest", False) and getattr(args, "session_id", None):
+        raise SystemExit("Choose either a session id or --latest, not both.")
+
+    target_session_id = getattr(args, "session_id", None)
+    if getattr(args, "latest", False) or target_session_id is None:
+        target_session_id = latest_unresolved_conflict_session_id(repo_root)
+        if target_session_id is None:
+            raise SystemExit("No unresolved conflict sessions found.")
+
+    context = infer_conflict_resolution_context(repo_root, target_session_id)
+    override_agents = getattr(args, "agent_overrides", None) or []
+    agents = [resolve_agent_key(agent) for agent in override_agents] if override_agents else list(context["agents"])
+    if len(agents) < 2:
+        raise SystemExit("Conflict resolution requires at least 2 agents.")
+    task = getattr(args, "task_flag", None) or _default_resolution_task(str(context["status"]))
+    max_time = args.max_time
+    auto_open_terminals = _should_auto_open_terminals(
+        interactive=interactive,
+        requested=getattr(args, "open_terminals", None),
+    )
+
+    if interactive:
+        render_concurrent_start(
+            console,
+            agents,
+            task,
+            max_time,
+            continue_session=target_session_id,
+        )
+
+    def on_agent_start(slot: int, agent_key: str, tmux_session: str) -> None:
+        if interactive:
+            from agent_relay.agents import get_agent_display_name
+            name = get_agent_display_name(agent_key)
+            console.print(
+                f"  [brand]▸[/] Slot {slot}: [bold]{name}[/] started  [muted]({tmux_session})[/]",
+                highlight=False,
+            )
+            console.print(
+                f"      [muted]Open another terminal to control it:[/] tmux attach-session -t {tmux_session}",
+                highlight=False,
+            )
+            if auto_open_terminals:
+                error = _open_tmux_session_in_terminal(tmux_session)
+                if error is not None:
+                    console.print(f"      [warning]{error}[/]", highlight=False)
+
+    def on_agent_done(outcome: "AgentOutcome") -> None:  # noqa: F821
+        if interactive:
+            from agent_relay.agents import get_agent_display_name
+            name = get_agent_display_name(outcome.agent_key)
+            if outcome.exit_code == 0 and outcome.control_status == "done":
+                status = "[success]done[/]"
+            elif outcome.exit_code == 0:
+                status = f"[warning]{outcome.control_status}[/]"
+            else:
+                status = f"[warning]exit {outcome.exit_code}[/]"
+            phase_label = f"[muted]{outcome.phase}[/] " if outcome.phase != "implementation" else ""
+            console.print(
+                f"  [brand]▸[/] Slot {outcome.slot}: [bold]{name}[/] {phase_label}{status} — {outcome.summary}",
+                highlight=False,
+            )
+
+    result = run_concurrent(
+        repo_root,
+        agents=agents,
+        task=task,
+        continue_from_session_id=target_session_id,
+        max_time_seconds=max_time,
+        owner="cli:resolve",
+        on_agent_start=on_agent_start if interactive else None,
+        on_agent_done=on_agent_done if interactive else None,
+    )
+
+    if args.json:
+        emit_json({
+            "command": "resolve",
+            "session_id": result.session_id,
+            "source_session_id": target_session_id,
+            "agents": list(result.agents),
+            "tmux_sessions": list(result.tmux_sessions),
+            "continued_from_session_id": result.continued_from_session_id,
+            "claim_ledger_path": result.claim_ledger_path,
+            "conflict_artifact_path": result.conflict_artifact_path,
+            "stop_reason": result.stop_reason,
+            "elapsed_seconds": result.elapsed_seconds,
+            **_race_result_metadata(result),
+            "outcomes": [
+                {
+                    "slot": o.slot,
+                    "agent": o.agent_key,
+                    "tmux_session": o.tmux_session,
+                    "phase": o.phase,
+                    "worktree_path": o.worktree_path,
+                    "exit_code": o.exit_code,
+                    "summary": o.summary,
+                    "done_signal": o.done_signal,
+                    "completion_status": o.control_status,
+                    "completion_reason": o.control_reason,
+                    "claims": list(o.claims),
+                    "claim_specs": [
+                        {"path": claim.path, "role": claim.role}
+                        for claim in o.claim_specs
+                    ],
+                    "changed_paths": list(o.changed_paths),
+                    "merged_paths": list(o.merged_paths),
+                    "merge_conflicts": list(o.merge_conflicts),
+                    "scope_violations": list(o.scope_violations),
+                    "remaining_work": list(o.remaining_work),
+                    "verification": list(o.verification),
+                    "started_at": o.started_at,
+                    "finished_at": o.finished_at,
+                }
+                for o in result.outcomes
+            ],
+        })
+    elif args.quiet:
+        emit_quiet(result.session_id)
+    else:
+        render_concurrent_result(console, result)
 
     return 0
 
@@ -433,6 +569,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
         agents=agents,
         task=task,
         max_turns=args.max_turns,
+        continue_from_session_id=getattr(args, "continue_session", None),
         owner="cli:chat",
         on_turn_start=on_turn_start if interactive else None,
         on_turn_complete=on_turn_complete if interactive else None,
@@ -446,6 +583,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
             "command": "chat",
             "session_id": result.session_id,
             "agents": list(result.agents),
+            "continued_from_session_id": result.continued_from_session_id,
             "turns_completed": result.turns_completed,
             "stop_reason": result.stop_reason,
             "turns": [
@@ -634,6 +772,7 @@ def build_parser() -> argparse.ArgumentParser:
     chat = subparsers.add_parser("chat", help="Turn-based agent-to-agent conversation")
     chat.add_argument("args", nargs="+", metavar="AGENT_OR_TASK", help="Agents and task (last arg is task, or use -t)")
     chat.add_argument("--task", "-t", dest="task_flag", default=None, help="Task (alternative to positional)")
+    chat.add_argument("--continue", dest="continue_session", help="Continue from a prior relay session id")
     chat.add_argument("--max-turns", "-n", type=int, default=10, help="Maximum turns (default: 10)")
     chat.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
     chat.add_argument("--repo", help="Repository path (default: cwd)")
@@ -654,6 +793,22 @@ def build_parser() -> argparse.ArgumentParser:
     race.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
     race.add_argument("--repo", help="Repository path (default: cwd)")
     race.set_defaults(func=cmd_race)
+
+    resolve = subparsers.add_parser("resolve", help="Resume an unresolved race conflict")
+    resolve.add_argument("session_id", nargs="?", help="Relay session id (defaults to latest unresolved conflict)")
+    resolve.add_argument("--latest", action="store_true", help="Resolve the latest unresolved conflict session")
+    resolve.add_argument("--agent", dest="agent_overrides", action="append", help="Override inferred resolver agents")
+    resolve.add_argument("--task", "-t", dest="task_flag", default=None, help="Resolution task override")
+    resolve.add_argument("--max-time", type=int, default=600, help="Max seconds (default: 600)")
+    resolve.add_argument(
+        "--open-terminals",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Auto-open a terminal window/tab for each tmux session on supported platforms",
+    )
+    resolve.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
+    resolve.add_argument("--repo", help="Repository path (default: cwd)")
+    resolve.set_defaults(func=cmd_resolve)
 
     inspect_conflicts = subparsers.add_parser("inspect-conflicts", help="Inspect saved concurrent conflict artifacts")
     inspect_conflicts.add_argument("session_id", help="Relay session id")

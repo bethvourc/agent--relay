@@ -15,6 +15,8 @@ from agent_relay.concurrent import (
     ConcurrentResult,
     _build_concurrent_prompt,
     _build_shell_command,
+    infer_conflict_resolution_context,
+    latest_unresolved_conflict_session_id,
     parse_concurrent_control,
     run_concurrent,
     _require_tmux,
@@ -192,6 +194,73 @@ class ParseConcurrentControlTests(TestCase):
     def test_inline_marker_is_not_a_done_signal(self) -> None:
         control = parse_concurrent_control("I mentioned CONVERSATION_COMPLETE in my notes.")
         self.assertEqual(control.status, "continue")
+
+
+class ConflictResolutionContextTests(TestCase):
+    def test_infers_agents_from_prior_claims_when_continuing_resolution(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            prior_concurrent = repo_root / ".agent-relay" / "sessions" / "prior-session" / "concurrent"
+            prior_concurrent.mkdir(parents=True, exist_ok=True)
+            (prior_concurrent / "claims.json").write_text(json.dumps({
+                "session_id": "prior-session",
+                "status": "accepted",
+                "claims": [
+                    {"slot": 0, "agent": "claude", "claim_specs": [{"path": "README.md", "role": "shared"}]},
+                    {"slot": 1, "agent": "codex", "claim_specs": [{"path": "README.md", "role": "shared"}]},
+                ],
+            }), encoding="utf-8")
+            (prior_concurrent / "conflicts.json").write_text(json.dumps({
+                "session_id": "prior-session",
+                "status": "manual_resolution_required",
+                "paths": [
+                    {"path": "README.md", "contributors": []},
+                ],
+            }), encoding="utf-8")
+
+            continued_concurrent = repo_root / ".agent-relay" / "sessions" / "continued-session" / "concurrent"
+            continued_concurrent.mkdir(parents=True, exist_ok=True)
+            (continued_concurrent / "claims.json").write_text(json.dumps({
+                "session_id": "continued-session",
+                "status": "resolution_continuation",
+                "continued_from_session_id": "prior-session",
+            }), encoding="utf-8")
+            (continued_concurrent / "conflicts.json").write_text(json.dumps({
+                "session_id": "continued-session",
+                "status": "manual_resolution_required",
+                "continued_from_conflict_artifact": str(prior_concurrent / "conflicts.json"),
+                "paths": [
+                    {"path": "README.md", "contributors": []},
+                ],
+            }), encoding="utf-8")
+
+            context = infer_conflict_resolution_context(repo_root, "continued-session")
+
+        self.assertEqual(context["session_id"], "continued-session")
+        self.assertEqual(context["status"], "manual_resolution_required")
+        self.assertEqual(context["agents"], ["claude", "codex"])
+
+    def test_latest_unresolved_conflict_session_ignores_resolved_artifacts(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            sessions_root = repo_root / ".agent-relay" / "sessions"
+            for session_id, status in (
+                ("20260330-010000-aaa111", "resolved"),
+                ("20260330-020000-bbb222", "manual_resolution_required"),
+                ("20260330-030000-ccc333", "merge_conflict"),
+            ):
+                concurrent_dir = sessions_root / session_id / "concurrent"
+                concurrent_dir.mkdir(parents=True, exist_ok=True)
+                (concurrent_dir / "conflicts.json").write_text(json.dumps({
+                    "session_id": session_id,
+                    "status": status,
+                    "updated_at": f"{session_id}Z",
+                    "paths": [],
+                }), encoding="utf-8")
+
+            latest = latest_unresolved_conflict_session_id(repo_root)
+
+        self.assertEqual(latest, "20260330-030000-ccc333")
 
 
 class RequireTmuxTests(TestCase):

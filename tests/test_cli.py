@@ -9,8 +9,14 @@ from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
 
-from agent_relay.cli import _open_tmux_session_in_terminal, _race_result_metadata, _should_auto_open_terminals
+from agent_relay.cli import (
+    _open_tmux_session_in_terminal,
+    _race_result_metadata,
+    _should_auto_open_terminals,
+    build_parser,
+)
 from agent_relay.concurrent import AgentOutcome, ConcurrentResult
+from agent_relay.ui import create_console
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -543,7 +549,7 @@ class RaceCliHelpersTests(TestCase):
             metadata = _race_result_metadata(result)
             self.assertEqual(metadata["conflict_paths"], ["README.md", "docs/guide.md"])
             self.assertEqual(metadata["scope_violation_paths"], [])
-            self.assertIn("sess-123", metadata["next_action"])
+            self.assertEqual(metadata["next_action"], "agent-relay resolve sess-123")
 
     def test_race_result_metadata_surfaces_scope_violation_paths(self) -> None:
         outcome = AgentOutcome(
@@ -575,3 +581,77 @@ class RaceCliHelpersTests(TestCase):
         self.assertEqual(metadata["conflict_paths"], [])
         self.assertEqual(metadata["scope_violation_paths"], ["src/unexpected.py"])
         self.assertNotIn("next_action", metadata)
+
+    def test_resolve_command_uses_inferred_session_and_agents(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["--json", "resolve", "sess-123", "--repo", str(ROOT)])
+        args.console = create_console(json_mode=True, quiet=False)
+        result = ConcurrentResult(
+            session_id="sess-456",
+            agents=("claude", "codex"),
+            tmux_sessions=("relay-sess-456-00", "relay-sess-456-01"),
+            continued_from_session_id="sess-123",
+            claim_ledger_path=None,
+            stop_reason="all_done",
+            elapsed_seconds=5.0,
+            outcomes=(),
+        )
+        with patch("agent_relay.concurrent.infer_conflict_resolution_context", return_value={
+            "session_id": "sess-123",
+            "status": "manual_resolution_required",
+            "agents": ["claude", "codex"],
+            "conflict_artifact_path": "/tmp/conflicts.json",
+        }), patch(
+            "agent_relay.concurrent.run_concurrent",
+            return_value=result,
+        ) as run_mock, patch(
+            "agent_relay.cli.emit_json",
+        ) as emit_json_mock:
+            exit_code = args.func(args)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(run_mock.call_args.kwargs["agents"], ["claude", "codex"])
+        self.assertEqual(run_mock.call_args.kwargs["continue_from_session_id"], "sess-123")
+        self.assertEqual(
+            run_mock.call_args.kwargs["task"],
+            "Resolve the remaining conflict and review the final merged result.",
+        )
+        payload = emit_json_mock.call_args.args[0]
+        self.assertEqual(payload["command"], "resolve")
+        self.assertEqual(payload["source_session_id"], "sess-123")
+
+    def test_resolve_command_defaults_to_latest_unresolved_session(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["--json", "resolve", "--repo", str(ROOT)])
+        args.console = create_console(json_mode=True, quiet=False)
+        result = ConcurrentResult(
+            session_id="sess-999",
+            agents=("claude", "codex"),
+            tmux_sessions=("relay-sess-999-00", "relay-sess-999-01"),
+            continued_from_session_id="sess-latest",
+            claim_ledger_path=None,
+            stop_reason="all_done",
+            elapsed_seconds=4.0,
+            outcomes=(),
+        )
+        with patch(
+            "agent_relay.concurrent.latest_unresolved_conflict_session_id",
+            return_value="sess-latest",
+        ), patch(
+            "agent_relay.concurrent.infer_conflict_resolution_context",
+            return_value={
+                "session_id": "sess-latest",
+                "status": "merge_conflict",
+                "agents": ["claude", "codex"],
+                "conflict_artifact_path": "/tmp/conflicts.json",
+            },
+        ), patch(
+            "agent_relay.concurrent.run_concurrent",
+            return_value=result,
+        ) as run_mock, patch(
+            "agent_relay.cli.emit_json",
+        ):
+            exit_code = args.func(args)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(run_mock.call_args.kwargs["continue_from_session_id"], "sess-latest")
