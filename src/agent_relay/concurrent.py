@@ -1,13 +1,12 @@
 """Concurrent agent execution orchestrator (tmux-backed).
 
-Runs multiple agents simultaneously in tmux panes, giving them live visibility
-into each other's work. Each agent can read other panes via tmux capture-pane
-and coordinate through a shared workspace log.
+Runs multiple agents simultaneously in separate tmux sessions, giving them live
+visibility into each other's work through relay-managed snapshot files and a
+shared workspace log.
 """
 from __future__ import annotations
 
 import json
-import os
 import secrets
 import shlex
 import shutil
@@ -24,6 +23,7 @@ from agent_relay.agents import (
     require_available,
 )
 from agent_relay.bootstrap import start_session
+from agent_relay.fs import write_text_atomic
 from agent_relay.layout import (
     concurrent_agent_dir,
     concurrent_dir,
@@ -40,6 +40,7 @@ from agent_relay.workspace_log import LogEntry, WorkspaceLog, utc_timestamp
 class AgentOutcome:
     slot: int
     agent_key: str
+    tmux_session: str
     exit_code: int | None   # None if still running / killed
     raw_stdout: str
     raw_stderr: str
@@ -58,6 +59,7 @@ class AgentOutcome:
 class ConcurrentResult:
     session_id: str
     agents: tuple[str, ...]
+    tmux_sessions: tuple[str, ...]
     stop_reason: str   # "all_done" | "incomplete" | "max_time" | "agent_error" | "interrupted"
     elapsed_seconds: float
     outcomes: tuple[AgentOutcome, ...]
@@ -137,6 +139,10 @@ def _tmux_pane_dead(session_name: str, pane_index: int) -> bool:
         check=False,
     )
     return result.stdout.strip() == "1"
+
+
+def _tmux_session_name(session_id: str, slot: int) -> str:
+    return f"relay-{session_id}-{slot:02d}"
 
 
 def _coerce_string_tuple(value: object) -> tuple[str, ...]:
@@ -229,6 +235,7 @@ def _build_outcome(
     *,
     slot: int,
     agent_key: str,
+    tmux_session: str,
     pane_content: str,
     exit_code: int | None,
     started_at: str,
@@ -239,6 +246,7 @@ def _build_outcome(
     return AgentOutcome(
         slot=slot,
         agent_key=agent_key,
+        tmux_session=tmux_session,
         exit_code=exit_code,
         raw_stdout=pane_content,
         raw_stderr="",
@@ -281,19 +289,18 @@ def _classify_stop_reason(
 
 _CONCURRENT_PREAMBLE = """\
 You are participating in a CONCURRENT multi-agent session.
-You are {current_agent_name} ({current_agent_key}), running in pane {pane_index}.
+You are {current_agent_name} ({current_agent_key}), running in slot {slot_index}.
 
 {participants_section}
 
 Your shared workspace is: {repo_root}
-tmux session: {tmux_session}
 
 ## Concurrent Mode Rules
 - You are running AT THE SAME TIME as the other agents — not taking turns.
-- To see what another agent is doing RIGHT NOW, run:
-  tmux capture-pane -t {tmux_session}:0.<pane_number> -p
-  {pane_instructions}
+- The relay writes local pane snapshot files for you. Read those files instead of invoking tmux commands yourself.
+  {pane_snapshot_instructions}
 - A shared activity log is at: {workspace_log}
+- There is no interactive approval loop in concurrent mode. Do not wait for the user to approve commands.
 - Before editing a file, check its current state — another agent may have changed it.
 - Coordinate: decide who handles what. Don't duplicate work.
 - End with a machine-readable status line:
@@ -301,6 +308,7 @@ tmux session: {tmux_session}
 - Allowed statuses: continue, blocked, done, error
 - Use done only when your part is truly complete and remaining_work is [].
 - Use error if you hit a terminal failure you could not resolve.
+- If a command is blocked or denied, adapt your approach and report that in RELAY_STATUS instead of asking for approval.
 - If you post multiple RELAY_STATUS lines during the session, the last one wins.
 
 ## Task
@@ -316,7 +324,7 @@ def _build_concurrent_prompt(
     all_agents: Sequence[str],
     repo_root: Path,
     workspace_log: Path,
-    tmux_session: str,
+    pane_snapshot_paths: Sequence[Path],
 ) -> str:
     agent_name = get_agent_display_name(agent_key)
     others = [(i, a) for i, a in enumerate(all_agents) if i != slot]
@@ -325,43 +333,42 @@ def _build_concurrent_prompt(
     if unique_others:
         lines = ["Other agents running concurrently:"]
         for i, a in others:
-            lines.append(f"- Pane {i}: {get_agent_display_name(a)} ({a})")
+            lines.append(f"- Slot {i}: {get_agent_display_name(a)} ({a})")
         participants_section = "\n".join(lines)
     else:
         participants_section = ""
 
-    # Build pane reading instructions
+    # Build pane snapshot instructions
     pane_lines = []
     for i, a in others:
         name = get_agent_display_name(a)
-        pane_lines.append(f"  Pane {i} ({name}): tmux capture-pane -t {tmux_session}:0.{i} -p")
-    pane_instructions = "\n".join(pane_lines) if pane_lines else ""
+        pane_lines.append(f"  Slot {i} ({name}): {pane_snapshot_paths[i]}")
+    pane_snapshot_instructions = "\n".join(pane_lines) if pane_lines else "  No other agent snapshots."
 
     return _CONCURRENT_PREAMBLE.format(
         current_agent_name=agent_name,
         current_agent_key=agent_key,
-        pane_index=slot,
+        slot_index=slot,
         participants_section=participants_section,
         repo_root=str(repo_root),
         workspace_log=str(workspace_log),
-        tmux_session=tmux_session,
-        pane_instructions=pane_instructions,
+        pane_snapshot_instructions=pane_snapshot_instructions,
         task=task,
     )
 
 
 def _build_agent_command(agent_key: str, prompt_path: Path, repo_root: Path) -> str:
-    """Build the underlying agent command for a pane."""
+    """Build the underlying agent command for a concurrent slot."""
     adapter = get_agent_adapter(agent_key)
     cli = shlex.quote(adapter.cli_command)
     pp = shlex.quote(str(prompt_path))
     rr = shlex.quote(str(repo_root))
 
     if agent_key == "claude":
-        # Interactive mode in pane — no stream-json needed since user watches directly
-        return f'cd {rr} && {cli} -p "$(cat {pp})"'
+        # Concurrent mode must not depend on pane-local approval prompts.
+        return f'cd {rr} && {cli} --permission-mode dontAsk -p "$(cat {pp})"'
     elif agent_key == "codex":
-        return f'cd {rr} && {cli} "$(cat {pp})"'
+        return f'cd {rr} && {cli} -a never -s workspace-write "$(cat {pp})"'
     else:
         return f'cd {rr} && {cli} "$(cat {pp})"'
 
@@ -372,7 +379,7 @@ def _build_shell_command(
     repo_root: Path,
     exit_code_path: Path,
 ) -> str:
-    """Build the pane shell command, persisting the agent's real exit code."""
+    """Build the slot shell command, persisting the agent's real exit code."""
     exit_path = shlex.quote(str(exit_code_path))
     inner = _build_agent_command(agent_key, prompt_path, repo_root)
     script = (
@@ -383,6 +390,22 @@ def _build_shell_command(
         'exit "$code"'
     )
     return f"/bin/sh -lc {shlex.quote(script)}"
+
+
+def _write_pane_snapshot(snapshot_path: Path, pane_content: str) -> None:
+    write_text_atomic(snapshot_path, pane_content)
+
+
+def _refresh_pane_snapshots(
+    tmux_sessions: Sequence[str],
+    snapshot_paths: Sequence[Path],
+) -> None:
+    for session_name, snapshot_path in zip(tmux_sessions, snapshot_paths, strict=False):
+        if _tmux_session_exists(session_name):
+            pane_content = _tmux_capture_pane(session_name, 0)
+        else:
+            pane_content = "(session terminated)"
+        _write_pane_snapshot(snapshot_path, pane_content)
 
 
 # ---------------------------------------------------------------------------
@@ -399,10 +422,10 @@ def run_concurrent(
     task: str,
     max_time_seconds: int = 600,
     owner: str = "cli:race",
-    on_agent_start: Callable[[int, str], None] | None = None,
+    on_agent_start: Callable[[int, str, str], None] | None = None,
     on_agent_done: Callable[[AgentOutcome], None] | None = None,
 ) -> ConcurrentResult:
-    """Run agents concurrently in tmux panes with live visibility."""
+    """Run agents concurrently in separate tmux sessions with shared visibility."""
     if len(agents) < 2:
         raise SystemExit("Concurrent mode requires at least 2 agents.")
 
@@ -410,7 +433,7 @@ def run_concurrent(
     require_available(agents)
 
     session_id = datetime.now(UTC).strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(3)
-    tmux_session = f"relay-{session_id}"
+    tmux_sessions = [_tmux_session_name(session_id, slot) for slot in range(len(agents))]
     agent_names = [get_agent_display_name(a) for a in agents]
 
     start_session(
@@ -432,13 +455,25 @@ def run_concurrent(
     wlog_path = workspace_log_path(repo_root, session_id)
     wlog = WorkspaceLog(wlog_path)
 
-    # Write prompts
+    # Prepare per-agent files up front so prompts can reference other sessions.
     prompt_paths: list[Path] = []
-    commands: list[str] = []
     exit_code_paths: list[Path] = []
+    pane_snapshot_paths: list[Path] = []
+    agent_dirs: list[Path] = []
     for slot, agent_key in enumerate(agents):
         agent_dir = concurrent_agent_dir(repo_root, session_id, slot)
         agent_dir.mkdir(parents=True, exist_ok=True)
+        agent_dirs.append(agent_dir)
+        prompt_paths.append(agent_dir / "prompt.md")
+        exit_code_paths.append(agent_dir / "exit-code.txt")
+        pane_snapshot_path = agent_dir / "pane.txt"
+        pane_snapshot_paths.append(pane_snapshot_path)
+        write_text_atomic(pane_snapshot_path, "")
+
+    # Write prompts and commands
+    commands: list[str] = []
+    for slot, agent_key in enumerate(agents):
+        agent_dir = agent_dirs[slot]
 
         prompt_text = _build_concurrent_prompt(
             task=task,
@@ -447,129 +482,101 @@ def run_concurrent(
             all_agents=agents,
             repo_root=repo_root,
             workspace_log=wlog_path,
-            tmux_session=tmux_session,
+            pane_snapshot_paths=pane_snapshot_paths,
         )
-        prompt_path = agent_dir / "prompt.md"
+        prompt_path = prompt_paths[slot]
         prompt_path.write_text(prompt_text, encoding="utf-8")
-        prompt_paths.append(prompt_path)
-        exit_code_path = agent_dir / "exit-code.txt"
-        exit_code_paths.append(exit_code_path)
 
-        cmd = _build_shell_command(agent_key, prompt_path, repo_root, exit_code_path)
+        cmd = _build_shell_command(agent_key, prompt_path, repo_root, exit_code_paths[slot])
         commands.append(cmd)
 
-    # Create tmux session with first agent
     start_time = datetime.now(UTC)
     started_at = [utc_timestamp() for _ in agents]
+    session_names_by_slot = dict(enumerate(tmux_sessions))
 
-    _tmux(
-        "new-session", "-d",
-        "-s", tmux_session,
-        "-x", "200", "-y", "50",
-        commands[0],
-    )
-    _tmux(
-        "set-window-option",
-        "-t", f"{tmux_session}:0",
-        "remain-on-exit",
-        "on",
-        check=False,
-    )
-
-    wlog.append(LogEntry(
-        timestamp=started_at[0],
-        agent_key=agents[0],
-        agent_slot=0,
-        entry_type="agent_started",
-        summary=f"Started in tmux pane 0.",
-    ))
-    if on_agent_start:
-        on_agent_start(0, agents[0])
-
-    # Add panes for remaining agents
-    for slot in range(1, len(agents)):
+    for slot in range(len(agents)):
+        tmux_session = tmux_sessions[slot]
         _tmux(
-            "split-window", "-t", f"{tmux_session}:{0}",
-            "-h" if slot % 2 == 1 else "-v",
+            "new-session", "-d",
+            "-s", tmux_session,
+            "-x", "200", "-y", "50",
             commands[slot],
         )
-        # Rebalance panes evenly
-        _tmux("select-layout", "-t", f"{tmux_session}:{0}", "tiled", check=False)
+        _tmux(
+            "set-window-option",
+            "-t", f"{tmux_session}:0",
+            "remain-on-exit",
+            "on",
+            check=False,
+        )
+        _tmux(
+            "set-option",
+            "-t", tmux_session,
+            "mouse",
+            "on",
+            check=False,
+        )
 
         wlog.append(LogEntry(
             timestamp=started_at[slot],
             agent_key=agents[slot],
             agent_slot=slot,
             entry_type="agent_started",
-            summary=f"Started in tmux pane {slot}.",
+            summary=f"Started in tmux session {tmux_session}.",
         ))
         if on_agent_start:
-            on_agent_start(slot, agents[slot])
+            on_agent_start(slot, agents[slot], tmux_session)
 
-    # Attach the user's terminal to the tmux session so they can watch
-    # We do this in a subprocess that we don't wait on — instead we poll
-    # for pane completion in the background.
-    #
-    # If we're in a terminal, attach interactively. The user sees all panes.
-    # The polling happens after the user detaches or all panes finish.
+    _refresh_pane_snapshots(tmux_sessions, pane_snapshot_paths)
 
     # Poll for completion
     stop_reason = "all_done"
     finished_slots: dict[int, AgentOutcome] = {}
-    attach_proc: subprocess.Popen[bytes] | None = None
     reported_slots: set[int] = set()
 
     def maybe_report_outcome(outcome: AgentOutcome) -> None:
         if not on_agent_done or outcome.slot in reported_slots:
             return
-        if attach_proc is not None and attach_proc.poll() is None:
-            return
         on_agent_done(outcome)
         reported_slots.add(outcome.slot)
 
     try:
-        # Attach to tmux session (blocks until user detaches or all panes die)
-        if os.isatty(0):
-            attach_proc = subprocess.Popen(
-                ["tmux", "attach-session", "-t", tmux_session],
-            )
-
-        # After detach (or if not a tty), poll until all panes are done or timeout
         deadline = start_time.timestamp() + max_time_seconds
         while len(finished_slots) < len(agents):
             if time.time() > deadline:
                 stop_reason = "max_time"
                 break
 
+            _refresh_pane_snapshots(tmux_sessions, pane_snapshot_paths)
+
             for slot in range(len(agents)):
                 if slot in finished_slots:
                     continue
 
+                tmux_session = session_names_by_slot[slot]
                 if not _tmux_session_exists(tmux_session):
-                    # Session was killed entirely
-                    for s in range(len(agents)):
-                        if s not in finished_slots:
-                            finished_slots[s] = _build_outcome(
-                                slot=s,
-                                agent_key=agents[s],
-                                pane_content="(session terminated)",
-                                exit_code=None,
-                                started_at=started_at[s],
-                                finished_at=utc_timestamp(),
-                            )
+                    finished_slots[slot] = _build_outcome(
+                        slot=slot,
+                        agent_key=agents[slot],
+                        tmux_session=tmux_session,
+                        pane_content="(session terminated)",
+                        exit_code=None,
+                        started_at=started_at[slot],
+                        finished_at=utc_timestamp(),
+                    )
                     stop_reason = "interrupted"
-                    break
+                    continue
 
-                if _tmux_pane_dead(tmux_session, slot):
+                if _tmux_pane_dead(tmux_session, 0):
                     finished_at = utc_timestamp()
-                    # Capture final pane content
-                    pane_content = _tmux_capture_pane(tmux_session, slot)
+                    pane_content = _tmux_capture_pane(tmux_session, 0)
                     agent_key = agents[slot]
                     exit_code = _read_exit_code(exit_code_paths[slot])
 
                     outcome = _build_outcome(
                         slot=slot,
                         agent_key=agent_key,
+                        tmux_session=tmux_session,
                         exit_code=exit_code,
                         pane_content=pane_content,
                         started_at=started_at[slot],
@@ -598,30 +605,22 @@ def run_concurrent(
     for slot in range(len(agents)):
         if slot not in finished_slots:
             pane_content = ""
+            tmux_session = session_names_by_slot[slot]
             if _tmux_session_exists(tmux_session):
-                pane_content = _tmux_capture_pane(tmux_session, slot)
+                pane_content = _tmux_capture_pane(tmux_session, 0)
             finished_slots[slot] = _build_outcome(
                 slot=slot,
                 agent_key=agents[slot],
+                tmux_session=tmux_session,
                 exit_code=None,
                 pane_content=pane_content,
                 started_at=started_at[slot],
                 finished_at=utc_timestamp(),
             )
 
-    # Clean up tmux session
-    if _tmux_session_exists(tmux_session):
-        _tmux("kill-session", "-t", tmux_session, check=False)
-    if attach_proc is not None:
-        try:
-            attach_proc.wait(timeout=1)
-        except subprocess.TimeoutExpired:
-            attach_proc.terminate()
-            try:
-                attach_proc.wait(timeout=1)
-            except subprocess.TimeoutExpired:
-                attach_proc.kill()
-                attach_proc.wait()
+    for tmux_session in tmux_sessions:
+        if _tmux_session_exists(tmux_session):
+            _tmux("kill-session", "-t", tmux_session, check=False)
 
     outcomes = sorted(finished_slots.values(), key=lambda o: o.slot)
     stop_reason = _classify_stop_reason(stop_reason, outcomes)
@@ -632,6 +631,7 @@ def run_concurrent(
     return ConcurrentResult(
         session_id=session_id,
         agents=tuple(agents),
+        tmux_sessions=tuple(tmux_sessions),
         stop_reason=stop_reason,
         elapsed_seconds=round(elapsed, 1),
         outcomes=tuple(outcomes),

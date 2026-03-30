@@ -345,11 +345,18 @@ def cmd_race(args: argparse.Namespace) -> int:
     if interactive:
         render_concurrent_start(console, agents, task, max_time)
 
-    def on_agent_start(slot: int, agent_key: str) -> None:
+    def on_agent_start(slot: int, agent_key: str, tmux_session: str) -> None:
         if interactive:
             from agent_relay.agents import get_agent_display_name
             name = get_agent_display_name(agent_key)
-            console.print(f"  [brand]▸[/] Slot {slot}: [bold]{name}[/] started", highlight=False)
+            console.print(
+                f"  [brand]▸[/] Slot {slot}: [bold]{name}[/] started  [muted]({tmux_session})[/]",
+                highlight=False,
+            )
+            console.print(
+                f"      [muted]Open another terminal to control it:[/] tmux attach-session -t {tmux_session}",
+                highlight=False,
+            )
 
     def on_agent_done(outcome: "AgentOutcome") -> None:  # noqa: F821
         if interactive:
@@ -378,12 +385,14 @@ def cmd_race(args: argparse.Namespace) -> int:
             "command": "race",
             "session_id": result.session_id,
             "agents": list(result.agents),
+            "tmux_sessions": list(result.tmux_sessions),
             "stop_reason": result.stop_reason,
             "elapsed_seconds": result.elapsed_seconds,
             "outcomes": [
                 {
                     "slot": o.slot,
                     "agent": o.agent_key,
+                    "tmux_session": o.tmux_session,
                     "exit_code": o.exit_code,
                     "summary": o.summary,
                     "done_signal": o.done_signal,

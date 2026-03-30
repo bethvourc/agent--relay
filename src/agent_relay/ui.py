@@ -1011,6 +1011,7 @@ def render_concurrent_start(
     line.append(f"concurrent · {max_time}s max", style="muted")
     console.print(line, highlight=False)
     console.print(f"  [label]Task:[/] {task}", highlight=False)
+    console.print("  [muted]Each agent runs in its own tmux session. Attach from separate terminals using the commands below.[/]", highlight=False)
     console.print()
 
 
