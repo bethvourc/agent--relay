@@ -4,7 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from agent_relay.agents import AGENT_NAMES, AGENT_REGISTRY
+from agent_relay.agents import AGENT_NAMES, AGENT_REGISTRY, resolve_agent_key
 from agent_relay.errors import RelayError
 from agent_relay.relay import relay as do_relay
 from agent_relay.read_views import list_sessions_for_dashboard
@@ -200,6 +200,7 @@ def cmd_discover(args: argparse.Namespace) -> int:
                     "key": r.key,
                     "display_name": r.display_name,
                     "cli_command": r.cli_command,
+                    "alias": r.alias,
                     "available": r.available,
                     "cli_path": r.cli_path,
                     "version": r.version,
@@ -217,105 +218,54 @@ def cmd_discover(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_converse(args: argparse.Namespace) -> int:
+def _parse_agents_and_task(args: argparse.Namespace, min_agents: int = 2) -> tuple[list[str], str]:
+    """Parse the positional args into agent keys and a task string.
+
+    Supports two forms:
+        agent-relay chat c x "fix tests"       # task as last positional
+        agent-relay chat c x -t "fix tests"    # task via flag
+    """
+    from agent_relay.agents import AGENT_ALIASES, AGENT_REGISTRY
+
+    raw_args: list[str] = args.args
+    task_flag: str | None = getattr(args, "task_flag", None)
+
+    # If -t was given, all positional args are agents
+    if task_flag:
+        agents = [resolve_agent_key(a) for a in raw_args]
+        task = task_flag
+    else:
+        # Last arg is the task if it's not a known agent key/alias
+        if not raw_args:
+            raise SystemExit("Usage: agent-relay chat <agent> [<agent>...] <task>")
+
+        last = raw_args[-1]
+        if last in AGENT_REGISTRY or last in AGENT_ALIASES:
+            raise SystemExit(
+                "Missing task. Provide a task as the last argument or with -t:\n"
+                '  agent-relay chat c x "fix the tests"\n'
+                '  agent-relay chat c x -t "fix the tests"'
+            )
+        agents = [resolve_agent_key(a) for a in raw_args[:-1]]
+        task = last
+
+    if len(agents) < min_agents:
+        raise SystemExit(f"Need at least {min_agents} agents.")
+
+    return agents, task
+
+
+def cmd_chat(args: argparse.Namespace) -> int:
+    from agent_relay.converse import converse as do_converse
+
     repo_root = _resolve_repo(args.repo)
     console = args.console
     interactive = not args.json and not args.quiet
-
-    # Validate agent keys
-    agents = args.agents
-    if len(agents) < 2:
-        raise SystemExit("Converse requires at least 2 agents.")
-    unknown = [a for a in agents if a not in AGENT_REGISTRY]
-    if unknown:
-        allowed = ", ".join(sorted(AGENT_REGISTRY))
-        raise SystemExit(f"Unknown agent(s): {', '.join(unknown)}. Choose from: {allowed}")
-
-    # Branch: concurrent vs turn-based
-    if getattr(args, "concurrent", False):
-        return _cmd_converse_concurrent(args, repo_root, agents, console, interactive)
-    return _cmd_converse_turns(args, repo_root, agents, console, interactive)
-
-
-def _cmd_converse_concurrent(
-    args: argparse.Namespace,
-    repo_root: Path,
-    agents: list[str],
-    console: "Console",  # noqa: F821
-    interactive: bool,
-) -> int:
-    from agent_relay.concurrent import run_concurrent
-
-    max_time = getattr(args, "max_time", 600)
+    agents, task = _parse_agents_and_task(args)
 
     if interactive:
-        render_concurrent_start(console, agents, args.task, max_time)
+        render_converse_start(console, agents, task, args.max_turns)
 
-    def on_agent_start(slot: int, agent_key: str) -> None:
-        if interactive:
-            from agent_relay.agents import get_agent_display_name
-            name = get_agent_display_name(agent_key)
-            console.print(f"  [brand]▸[/] Slot {slot}: [bold]{name}[/] started", highlight=False)
-
-    def on_agent_done(outcome: "AgentOutcome") -> None:  # noqa: F821
-        if interactive:
-            from agent_relay.agents import get_agent_display_name
-            name = get_agent_display_name(outcome.agent_key)
-            status = "[success]done[/]" if outcome.exit_code == 0 else f"[warning]exit {outcome.exit_code}[/]"
-            console.print(f"  [brand]▸[/] Slot {outcome.slot}: [bold]{name}[/] {status} — {outcome.summary}", highlight=False)
-
-    result = run_concurrent(
-        repo_root,
-        agents=agents,
-        task=args.task,
-        max_time_seconds=max_time,
-        owner="cli:converse:concurrent",
-        on_agent_start=on_agent_start if interactive else None,
-        on_agent_done=on_agent_done if interactive else None,
-    )
-
-    if args.json:
-        emit_json({
-            "command": "converse",
-            "mode": "concurrent",
-            "session_id": result.session_id,
-            "agents": list(result.agents),
-            "stop_reason": result.stop_reason,
-            "elapsed_seconds": result.elapsed_seconds,
-            "outcomes": [
-                {
-                    "slot": o.slot,
-                    "agent": o.agent_key,
-                    "exit_code": o.exit_code,
-                    "summary": o.summary,
-                    "done_signal": o.done_signal,
-                    "started_at": o.started_at,
-                    "finished_at": o.finished_at,
-                }
-                for o in result.outcomes
-            ],
-        })
-    elif args.quiet:
-        emit_quiet(result.session_id)
-    else:
-        render_concurrent_result(console, result)
-
-    return 0
-
-
-def _cmd_converse_turns(
-    args: argparse.Namespace,
-    repo_root: Path,
-    agents: list[str],
-    console: "Console",  # noqa: F821
-    interactive: bool,
-) -> int:
-    from agent_relay.converse import converse as do_converse
-
-    if interactive:
-        render_converse_start(console, agents, args.task, args.max_turns)
-
-    # Build UI callbacks for interactive mode
     _spinner_ctx = None
 
     def on_turn_start(agent_key: str, turn_number: int, max_turns: int) -> None:
@@ -335,21 +285,19 @@ def _cmd_converse_turns(
     result = do_converse(
         repo_root,
         agents=agents,
-        task=args.task,
+        task=task,
         max_turns=args.max_turns,
-        owner="cli:converse",
+        owner="cli:chat",
         on_turn_start=on_turn_start if interactive else None,
         on_turn_complete=on_turn_complete if interactive else None,
     )
 
-    # Clean up spinner if interrupted mid-turn
     if _spinner_ctx is not None:
         _spinner_ctx.__exit__(None, None, None)
 
     if args.json:
         emit_json({
-            "command": "converse",
-            "mode": "turns",
+            "command": "chat",
             "session_id": result.session_id,
             "agents": list(result.agents),
             "turns_completed": result.turns_completed,
@@ -377,6 +325,69 @@ def _cmd_converse_turns(
             result.turns_completed,
             result.stop_reason,
         )
+
+    return 0
+
+
+def cmd_race(args: argparse.Namespace) -> int:
+    from agent_relay.concurrent import run_concurrent
+
+    repo_root = _resolve_repo(args.repo)
+    console = args.console
+    interactive = not args.json and not args.quiet
+    agents, task = _parse_agents_and_task(args)
+    max_time = args.max_time
+
+    if interactive:
+        render_concurrent_start(console, agents, task, max_time)
+
+    def on_agent_start(slot: int, agent_key: str) -> None:
+        if interactive:
+            from agent_relay.agents import get_agent_display_name
+            name = get_agent_display_name(agent_key)
+            console.print(f"  [brand]▸[/] Slot {slot}: [bold]{name}[/] started", highlight=False)
+
+    def on_agent_done(outcome: "AgentOutcome") -> None:  # noqa: F821
+        if interactive:
+            from agent_relay.agents import get_agent_display_name
+            name = get_agent_display_name(outcome.agent_key)
+            status = "[success]done[/]" if outcome.exit_code == 0 else f"[warning]exit {outcome.exit_code}[/]"
+            console.print(f"  [brand]▸[/] Slot {outcome.slot}: [bold]{name}[/] {status} — {outcome.summary}", highlight=False)
+
+    result = run_concurrent(
+        repo_root,
+        agents=agents,
+        task=task,
+        max_time_seconds=max_time,
+        owner="cli:race",
+        on_agent_start=on_agent_start if interactive else None,
+        on_agent_done=on_agent_done if interactive else None,
+    )
+
+    if args.json:
+        emit_json({
+            "command": "race",
+            "session_id": result.session_id,
+            "agents": list(result.agents),
+            "stop_reason": result.stop_reason,
+            "elapsed_seconds": result.elapsed_seconds,
+            "outcomes": [
+                {
+                    "slot": o.slot,
+                    "agent": o.agent_key,
+                    "exit_code": o.exit_code,
+                    "summary": o.summary,
+                    "done_signal": o.done_signal,
+                    "started_at": o.started_at,
+                    "finished_at": o.finished_at,
+                }
+                for o in result.outcomes
+            ],
+        })
+    elif args.quiet:
+        emit_quiet(result.session_id)
+    else:
+        render_concurrent_result(console, result)
 
     return 0
 
@@ -413,16 +424,23 @@ def build_parser() -> argparse.ArgumentParser:
     disc = subparsers.add_parser("discover", help="Detect available agent CLIs")
     disc.set_defaults(func=cmd_discover)
 
-    # agent-relay converse <agent> <agent> [<agent>...] — turn-based agent conversation
-    converse = subparsers.add_parser("converse", help="Turn-based agent-to-agent conversation")
-    converse.add_argument("agents", nargs="+", metavar="AGENT", help="Agents to converse (round-robin, minimum 2)")
-    converse.add_argument("--task", "-t", required=True, help="Task for the agents to work on")
-    converse.add_argument("--max-turns", type=int, default=10, help="Maximum turns (default: 10)")
-    converse.add_argument("--concurrent", action="store_true", help="Run agents simultaneously instead of turn-based")
-    converse.add_argument("--max-time", type=int, default=600, help="Max seconds for concurrent mode (default: 600)")
-    converse.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
-    converse.add_argument("--repo", help="Repository path (default: cwd)")
-    converse.set_defaults(func=cmd_converse)
+    # agent-relay chat <agent> [<agent>...] <task> — turn-based conversation
+    chat = subparsers.add_parser("chat", help="Turn-based agent-to-agent conversation")
+    chat.add_argument("args", nargs="+", metavar="AGENT_OR_TASK", help="Agents and task (last arg is task, or use -t)")
+    chat.add_argument("--task", "-t", dest="task_flag", default=None, help="Task (alternative to positional)")
+    chat.add_argument("--max-turns", "-n", type=int, default=10, help="Maximum turns (default: 10)")
+    chat.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
+    chat.add_argument("--repo", help="Repository path (default: cwd)")
+    chat.set_defaults(func=cmd_chat)
+
+    # agent-relay race <agent> [<agent>...] <task> — concurrent agents with tmux
+    race = subparsers.add_parser("race", help="Run agents concurrently with live visibility")
+    race.add_argument("args", nargs="+", metavar="AGENT_OR_TASK", help="Agents and task (last arg is task, or use -t)")
+    race.add_argument("--task", "-t", dest="task_flag", default=None, help="Task (alternative to positional)")
+    race.add_argument("--max-time", type=int, default=600, help="Max seconds (default: 600)")
+    race.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
+    race.add_argument("--repo", help="Repository path (default: cwd)")
+    race.set_defaults(func=cmd_race)
 
     return parser
 

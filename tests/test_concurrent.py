@@ -1,17 +1,16 @@
 """Tests for concurrent agent execution."""
 from __future__ import annotations
 
-import asyncio
-import tempfile
 from pathlib import Path
 from unittest import TestCase
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 from agent_relay.concurrent import (
     AgentOutcome,
     ConcurrentResult,
     _build_concurrent_prompt,
     _build_shell_command,
+    _require_tmux,
 )
 
 
@@ -24,14 +23,15 @@ class BuildConcurrentPromptTests(TestCase):
             all_agents=["claude", "codex"],
             repo_root=Path("/tmp/repo"),
             workspace_log=Path("/tmp/repo/.agent-relay/sessions/abc/workspace-log.md"),
+            tmux_session="relay-abc",
         )
         self.assertIn("Fix all tests", prompt)
         self.assertIn("Claude Code", prompt)
         self.assertIn("CONCURRENT", prompt)
         self.assertIn("workspace-log.md", prompt)
-        self.assertIn("slot 0", prompt)
+        self.assertIn("pane 0", prompt)
 
-    def test_lists_other_agents(self) -> None:
+    def test_lists_other_agents_with_pane_numbers(self) -> None:
         prompt = _build_concurrent_prompt(
             task="Collaborate",
             slot=1,
@@ -39,9 +39,12 @@ class BuildConcurrentPromptTests(TestCase):
             all_agents=["claude", "codex"],
             repo_root=Path("/tmp/repo"),
             workspace_log=Path("/tmp/log.md"),
+            tmux_session="relay-test",
         )
+        self.assertIn("Pane 0", prompt)
         self.assertIn("Claude Code", prompt)
-        self.assertIn("concurrently", prompt)
+        self.assertIn("tmux capture-pane", prompt)
+        self.assertIn("relay-test", prompt)
 
     def test_includes_completion_marker(self) -> None:
         prompt = _build_concurrent_prompt(
@@ -51,22 +54,51 @@ class BuildConcurrentPromptTests(TestCase):
             all_agents=["claude", "codex"],
             repo_root=Path("/tmp/repo"),
             workspace_log=Path("/tmp/log.md"),
+            tmux_session="relay-test",
         )
         self.assertIn("CONVERSATION_COMPLETE", prompt)
 
+    def test_tmux_capture_instructions_per_pane(self) -> None:
+        prompt = _build_concurrent_prompt(
+            task="Team task",
+            slot=0,
+            agent_key="claude",
+            all_agents=["claude", "codex", "claude"],
+            repo_root=Path("/tmp/repo"),
+            workspace_log=Path("/tmp/log.md"),
+            tmux_session="relay-xyz",
+        )
+        # Pane 0 (claude) should see instructions for pane 1 and pane 2
+        self.assertIn("relay-xyz:0.1", prompt)
+        self.assertIn("relay-xyz:0.2", prompt)
+
 
 class BuildShellCommandTests(TestCase):
-    def test_claude_command(self) -> None:
+    def test_claude_command_interactive(self) -> None:
         cmd = _build_shell_command("claude", Path("/tmp/prompt.md"), Path("/tmp/repo"))
         self.assertIn("claude", cmd)
-        self.assertIn("stream-json", cmd)
-        self.assertIn("--verbose", cmd)
+        self.assertIn("-p", cmd)
+        # Should NOT have stream-json in tmux mode (interactive)
+        self.assertNotIn("stream-json", cmd)
 
-    def test_codex_command(self) -> None:
+    def test_codex_command_interactive(self) -> None:
         cmd = _build_shell_command("codex", Path("/tmp/prompt.md"), Path("/tmp/repo"))
         self.assertIn("codex", cmd)
-        self.assertIn("exec", cmd)
-        self.assertIn("--json", cmd)
+        # Should NOT have --json in tmux mode
+        self.assertNotIn("--json", cmd)
+
+
+class RequireTmuxTests(TestCase):
+    @patch("shutil.which", return_value="/usr/bin/tmux")
+    def test_passes_when_tmux_available(self, mock_which) -> None:
+        path = _require_tmux()
+        self.assertEqual(path, "/usr/bin/tmux")
+
+    @patch("shutil.which", return_value=None)
+    def test_raises_when_tmux_missing(self, mock_which) -> None:
+        with self.assertRaises(SystemExit) as ctx:
+            _require_tmux()
+        self.assertIn("tmux is required", str(ctx.exception))
 
 
 class AgentOutcomeTests(TestCase):

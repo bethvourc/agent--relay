@@ -198,6 +198,7 @@ class BuildTurnPromptTests(TestCase):
             repo_root=Path("/tmp/repo"),
         )
         self.assertIn("CONVERSATION_COMPLETE", prompt)
+        self.assertIn("NEVER include CONVERSATION_COMPLETE on your first turn", prompt)
 
     def test_three_agent_prompt_lists_all_participants(self) -> None:
         from pathlib import Path

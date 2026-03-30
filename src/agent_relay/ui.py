@@ -222,6 +222,16 @@ def agent_badge(agent_key: str, short: bool = False) -> Text:
     return Text(f"{symbol} {name}", style=style_key)
 
 
+def _join_badges(badges: list[Text], separator: str = " → ", sep_style: str = "brand") -> Text:
+    """Join Text badges with a styled separator."""
+    result = Text()
+    for i, badge in enumerate(badges):
+        if i > 0:
+            result.append(f" {separator} ", style=sep_style)
+        result.append_text(badge)
+    return result
+
+
 def _label_value(label: str, value: str, label_style: str = "label", value_style: str = "value") -> Text:
     text = Text()
     text.append(f"  {label}: ", style=label_style)
@@ -693,23 +703,16 @@ def render_help(console: Console) -> None:
     if compact:
         console.print("[heading]Usage[/]")
         console.print()
-        console.print("  [brand]agent-relay <agent>[/]                   Relay to an agent (codex, claude)")
-        console.print("  [brand]agent-relay codex[/]                    Relay to Codex")
-        console.print("  [brand]agent-relay claude[/]                   Relay to Claude Code")
-        console.print("  [brand]agent-relay claude --task \"...\"[/]      With instructions for the next agent")
-        console.print("  [brand]agent-relay codex --no-launch[/]        Just create the packet")
-        console.print('  [brand]agent-relay converse claude codex -t "..."[/]  Agent-to-agent conversation')
-        console.print("  [brand]agent-relay status[/]                   View sessions")
-        console.print("  [brand]agent-relay clean[/]                    Remove all sessions")
+        console.print("  [brand]agent-relay <agent>[/]                  Relay to an agent")
+        console.print("  [brand]agent-relay codex[/]                   Relay to Codex")
+        console.print("  [brand]agent-relay claude --task \"...\"[/]     With instructions")
+        console.print('  [brand]agent-relay chat c x "fix tests"[/]    Turn-based conversation')
+        console.print('  [brand]agent-relay race c x "build auth"[/]   Concurrent agents (tmux)')
+        console.print("  [brand]agent-relay discover[/]                Show available agents")
+        console.print("  [brand]agent-relay status[/]                  View sessions")
+        console.print("  [brand]agent-relay clean[/]                   Remove all sessions")
         console.print()
-        console.print("[heading]Options[/]")
-        console.print()
-        console.print("  [brand]--task[/]  [brand]-t[/]  What the next agent should do (works with any agent)")
-        console.print("  [brand]--from[/]       Source agent (auto-detected)")
-        console.print("  [brand]--no-launch[/]  Just create the packet")
-        console.print("  [brand]--yes[/]   [brand]-y[/]  Skip confirmation")
-        console.print("  [brand]--json[/]       JSON output")
-        console.print("  [brand]--quiet[/] [brand]-q[/]  Minimal output")
+        console.print("[heading]Aliases[/]  [muted]c = claude, x = codex (see: agent-relay discover)[/]")
         console.print()
         return
 
@@ -719,11 +722,12 @@ def render_help(console: Console) -> None:
     examples.add_column("Description", style="muted")
 
     examples.add_row("agent-relay <agent>", "Relay to an agent (codex, claude)")
-    examples.add_row("agent-relay codex", "Relay context to Codex")
-    examples.add_row("agent-relay claude", "Relay context to Claude Code")
     examples.add_row('agent-relay claude --task "..."', "With instructions for the next agent")
     examples.add_row("agent-relay codex --no-launch", "Create the packet without launching")
-    examples.add_row('agent-relay converse claude codex -t "..."', "Agent-to-agent conversation")
+    examples.add_row('agent-relay chat c x "fix tests"', "Turn-based agent conversation")
+    examples.add_row('agent-relay chat c x c "review" -n 6', "3-agent, 6 turns max")
+    examples.add_row('agent-relay race c x "build auth"', "Concurrent agents (tmux)")
+    examples.add_row("agent-relay discover", "Show available agents & aliases")
     examples.add_row("agent-relay status", "View all relay sessions")
     examples.add_row("agent-relay clean", "Remove all sessions")
 
@@ -743,12 +747,14 @@ def render_help(console: Console) -> None:
     opts.add_column("Flag", style="brand", no_wrap=True, min_width=14)
     opts.add_column("Description", style="value")
 
-    opts.add_row("--task   -t", "What the next agent should do (works with any agent)")
-    opts.add_row("--from", "Source agent (auto-detected if omitted)")
+    opts.add_row("--task   -t", "Task for agents (alternative to positional)")
+    opts.add_row("-n", "Max turns for chat (default: 10)")
+    opts.add_row("--max-time", "Max seconds for race (default: 600)")
+    opts.add_row("--from", "Source agent for relay (auto-detected)")
     opts.add_row("--no-launch", "Just create the handoff packet")
     opts.add_row("--yes    -y", "Skip confirmation prompt")
     opts.add_row("--json", "Machine-readable JSON output")
-    opts.add_row("--quiet  -q", "Minimal output (just the packet path)")
+    opts.add_row("--quiet  -q", "Minimal output")
 
     console.print(Panel(
         opts,
@@ -865,12 +871,14 @@ def render_discover_results(console: Console, results: list[Any]) -> None:
     render_banner(console)
     table = Table(box=None, padding=(0, 2), show_header=True, header_style="label")
     table.add_column("Agent")
+    table.add_column("Alias")
     table.add_column("Status")
     table.add_column("Path")
     table.add_column("Version")
 
     for r in results:
         badge = agent_badge(r.key, short=True)
+        alias = Text(r.alias, style="brand")
         if r.available:
             status = Text("● installed", style="success")
             path = Text(r.cli_path or "—", style="muted")
@@ -879,7 +887,7 @@ def render_discover_results(console: Console, results: list[Any]) -> None:
             status = Text("✖ missing", style="error")
             path = Text("—", style="muted")
             version = Text("—", style="muted")
-        table.add_row(badge, status, path, version)
+        table.add_row(badge, alias, status, path, version)
 
     console.print(Padding(table, (0, 2)))
     console.print()
@@ -896,9 +904,12 @@ def render_converse_start(
     max_turns: int,
 ) -> None:
     render_banner(console)
-    badges = [agent_badge(a) for a in agents]
-    chain = " [brand]→[/] ".join(badges)
-    console.print(f"  {chain}  [muted]·[/]  [muted]{max_turns} turns max[/]", highlight=False)
+    chain = _join_badges([agent_badge(a) for a in agents], "→")
+    line = Text("  ")
+    line.append_text(chain)
+    line.append("  ·  ", style="muted")
+    line.append(f"{max_turns} turns max", style="muted")
+    console.print(line, highlight=False)
     console.print(f"  [label]Task:[/] {task}", highlight=False)
     console.print()
 
@@ -969,9 +980,13 @@ def render_converse_result(
         style = "brand"
         symbol = "●"
 
-    badges = [agent_badge(a, short=True) for a in agents]
-    chain = " [brand]→[/] ".join(badges)
-    console.print(f"  [{style}]{symbol} {reason_label}[/]  [muted]·[/]  {chain}  [muted]·[/]  [muted]{turns_completed} turns[/]", highlight=False)
+    chain = _join_badges([agent_badge(a, short=True) for a in agents], "→")
+    line = Text(f"  {symbol} {reason_label}", style=style)
+    line.append("  ·  ", style="muted")
+    line.append_text(chain)
+    line.append("  ·  ", style="muted")
+    line.append(f"{turns_completed} turns", style="muted")
+    console.print(line, highlight=False)
     console.print(f"  [label]Session:[/]  [muted]{session_id}[/]", highlight=False)
     console.print()
 
@@ -988,9 +1003,12 @@ def render_concurrent_start(
     max_time: int,
 ) -> None:
     render_banner(console)
-    badges = [agent_badge(a) for a in agents]
-    chain = " [brand]⫲[/] ".join(badges)
-    console.print(f"  {chain}  [muted]·[/]  [muted]concurrent · {max_time}s max[/]", highlight=False)
+    chain = _join_badges([agent_badge(a) for a in agents], "⫲")
+    line = Text("  ")
+    line.append_text(chain)
+    line.append("  ·  ", style="muted")
+    line.append(f"concurrent · {max_time}s max", style="muted")
+    console.print(line, highlight=False)
     console.print(f"  [label]Task:[/] {task}", highlight=False)
     console.print()
 
@@ -1009,8 +1027,12 @@ def render_concurrent_result(console: Console, result: "ConcurrentResult") -> No
         style = "brand"
         symbol = "●"
 
-    badges = [agent_badge(a, short=True) for a in result.agents]
-    chain = " [brand]⫲[/] ".join(badges)
-    console.print(f"  [{style}]{symbol} {reason_label}[/]  [muted]·[/]  {chain}  [muted]·[/]  [muted]{result.elapsed_seconds}s[/]", highlight=False)
+    chain = _join_badges([agent_badge(a, short=True) for a in result.agents], "⫲")
+    line = Text(f"  {symbol} {reason_label}", style=style)
+    line.append("  ·  ", style="muted")
+    line.append_text(chain)
+    line.append("  ·  ", style="muted")
+    line.append(f"{result.elapsed_seconds}s", style="muted")
+    console.print(line, highlight=False)
     console.print(f"  [label]Session:[/]  [muted]{result.session_id}[/]", highlight=False)
     console.print()

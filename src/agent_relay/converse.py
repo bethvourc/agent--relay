@@ -149,10 +149,11 @@ Your shared workspace is: {repo_root}
 - Focus on the task. Be direct and concise.
 - Build on what the other agents have done. Don't repeat their work.
 - You can read files, edit code, run commands — use your full capabilities.
-- When you believe the task is FULLY COMPLETE, include the exact text: CONVERSATION_COMPLETE
-- Do NOT include CONVERSATION_COMPLETE if there is still meaningful work to do.
-- All other agents will get a chance to respond after you signal completion.
-- The conversation only ends when all agents agree, or after everyone else responds.
+- NEVER include CONVERSATION_COMPLETE on your first turn. Wait until every agent has spoken at least once.
+- Only include CONVERSATION_COMPLETE after a genuine back-and-forth where the task has been meaningfully addressed.
+- Do NOT include CONVERSATION_COMPLETE if there is still meaningful work to do or the conversation just started.
+- When you believe the task is truly FULLY COMPLETE, include the exact text: CONVERSATION_COMPLETE
+- The conversation only ends when all agents agree the task is done.
 """
 
 
@@ -434,7 +435,8 @@ def converse(
                 on_turn_complete(turn)
 
             # --- N-lateral stop conditions ---
-            if done:
+            # Ignore done signals until every agent has spoken at least once
+            if done and turn_number >= n:
                 done_indices.add(slot)
             if result.returncode != 0:
                 stop_reason = "agent_error"

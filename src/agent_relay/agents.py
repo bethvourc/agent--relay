@@ -36,6 +36,7 @@ class AgentAdapter:
     key: str
     display_name: str
     cli_command: str
+    alias: str                      # Short alias (e.g. "c" for claude)
     launch_template_env: str
     default_launch_template: str
     launch_instructions_template: str
@@ -107,6 +108,7 @@ class ClaudeCodeAdapter(AgentAdapter):
             key="claude",
             display_name="Claude Code",
             cli_command="claude",
+            alias="c",
             launch_template_env="AGENT_RELAY_CLAUDE_LAUNCH_TEMPLATE",
             default_launch_template='cd {repo_root} && {agent_cli} -p "$(cat {resume_path})"',
             launch_instructions_template=(
@@ -123,6 +125,7 @@ class CodexAdapter(AgentAdapter):
             key="codex",
             display_name="Codex",
             cli_command="codex",
+            alias="x",
             launch_template_env="AGENT_RELAY_CODEX_LAUNCH_TEMPLATE",
             default_launch_template='cd {repo_root} && {agent_cli} "$(cat {resume_path})"',
             launch_instructions_template=(
@@ -142,6 +145,27 @@ AGENT_REGISTRY: dict[str, AgentAdapter] = {
 }
 
 AGENT_NAMES = tuple(AGENT_REGISTRY)
+
+# Alias → key lookup (e.g. "c" → "claude", "x" → "codex")
+AGENT_ALIASES: dict[str, str] = {
+    adapter.alias: adapter.key
+    for adapter in AGENT_REGISTRY.values()
+}
+
+
+def resolve_agent_key(name_or_alias: str) -> str:
+    """Resolve a full agent key or short alias to the canonical key.
+
+    Raises SystemExit if the name is not recognized.
+    """
+    if name_or_alias in AGENT_REGISTRY:
+        return name_or_alias
+    if name_or_alias in AGENT_ALIASES:
+        return AGENT_ALIASES[name_or_alias]
+    allowed = ", ".join(
+        f"{a.key} ({a.alias})" for a in AGENT_REGISTRY.values()
+    )
+    raise SystemExit(f"Unknown agent: {name_or_alias}. Choose from: {allowed}")
 
 
 def get_agent_adapter(agent: str) -> AgentAdapter:
@@ -164,6 +188,7 @@ class DiscoveryResult:
     key: str
     display_name: str
     cli_command: str
+    alias: str
     available: bool
     cli_path: str | None
     version: str | None
@@ -199,6 +224,7 @@ def discover(keys: Iterable[str] | None = None) -> list[DiscoveryResult]:
             key=adapter.key,
             display_name=adapter.display_name,
             cli_command=adapter.cli_command,
+            alias=adapter.alias,
             available=cli_path is not None,
             cli_path=cli_path,
             version=version,
