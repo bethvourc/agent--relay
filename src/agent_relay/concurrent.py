@@ -6,6 +6,7 @@ and coordinate through a shared workspace log.
 """
 from __future__ import annotations
 
+import json
 import os
 import secrets
 import shlex
@@ -13,7 +14,7 @@ import shutil
 import subprocess
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -47,20 +48,41 @@ class AgentOutcome:
     done_signal: bool
     started_at: str
     finished_at: str
+    control_status: str = "continue"
+    control_reason: str = ""
+    remaining_work: tuple[str, ...] = field(default_factory=tuple)
+    verification: tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True, slots=True)
 class ConcurrentResult:
     session_id: str
     agents: tuple[str, ...]
-    stop_reason: str   # "all_done" | "max_time" | "agent_error" | "interrupted"
+    stop_reason: str   # "all_done" | "incomplete" | "max_time" | "agent_error" | "interrupted"
     elapsed_seconds: float
     outcomes: tuple[AgentOutcome, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ConcurrentControl:
+    status: str = "continue"
+    reason: str = ""
+    remaining_work: tuple[str, ...] = field(default_factory=tuple)
+    verification: tuple[str, ...] = field(default_factory=tuple)
 
 
 # ---------------------------------------------------------------------------
 # tmux helpers
 # ---------------------------------------------------------------------------
+
+_DONE_MARKER = "CONVERSATION_COMPLETE"
+_STATUS_PREFIX = "RELAY_STATUS:"
+_VALID_CONTROL_STATUSES = frozenset({
+    "continue",
+    "blocked",
+    "done",
+    "error",
+})
 
 def _require_tmux() -> str:
     """Return tmux path or raise SystemExit."""
@@ -117,6 +139,142 @@ def _tmux_pane_dead(session_name: str, pane_index: int) -> bool:
     return result.stdout.strip() == "1"
 
 
+def _coerce_string_tuple(value: object) -> tuple[str, ...]:
+    if isinstance(value, str):
+        stripped = value.strip()
+        return (stripped,) if stripped else ()
+    if isinstance(value, (list, tuple)):
+        items: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                stripped = item.strip()
+                if stripped:
+                    items.append(stripped)
+        return tuple(items)
+    return ()
+
+
+def _has_legacy_done_line(text: str) -> bool:
+    return any(line.strip().upper() == _DONE_MARKER for line in text.splitlines())
+
+
+def _strip_concurrent_control(text: str) -> str:
+    kept_lines = [
+        line
+        for line in text.splitlines()
+        if not line.strip().startswith(_STATUS_PREFIX)
+        and line.strip().upper() != _DONE_MARKER
+    ]
+    return "\n".join(kept_lines).strip()
+
+
+def parse_concurrent_control(text: str) -> ConcurrentControl:
+    """Parse the last machine-readable RELAY_STATUS line from pane content."""
+    for raw_line in reversed(text.splitlines()):
+        line = raw_line.strip()
+        if not line.startswith(_STATUS_PREFIX):
+            continue
+
+        payload = line[len(_STATUS_PREFIX):].strip()
+        try:
+            data = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict):
+            continue
+
+        status = str(data.get("status", "continue")).strip().lower()
+        if status not in _VALID_CONTROL_STATUSES:
+            continue
+
+        return ConcurrentControl(
+            status=status,
+            reason=str(data.get("reason", "")).strip(),
+            remaining_work=_coerce_string_tuple(data.get("remaining_work")),
+            verification=_coerce_string_tuple(data.get("verification")),
+        )
+
+    if _has_legacy_done_line(text):
+        return ConcurrentControl(
+            status="done",
+            reason="Legacy CONVERSATION_COMPLETE marker",
+        )
+
+    return ConcurrentControl()
+
+
+def _make_summary(text: str, *, exit_code: int | None) -> str:
+    for line in _strip_concurrent_control(text).splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped[:117] + "..." if len(stripped) > 120 else stripped
+    if exit_code not in (None, 0):
+        return f"(exited with code {exit_code})"
+    if exit_code is None:
+        return "(still running)"
+    return "(no output)"
+
+
+def _read_exit_code(path: Path) -> int | None:
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return None
+    return int(text) if text and text.lstrip("-").isdigit() else None
+
+
+def _build_outcome(
+    *,
+    slot: int,
+    agent_key: str,
+    pane_content: str,
+    exit_code: int | None,
+    started_at: str,
+    finished_at: str,
+) -> AgentOutcome:
+    control = parse_concurrent_control(pane_content)
+    display_text = _strip_concurrent_control(pane_content)
+    return AgentOutcome(
+        slot=slot,
+        agent_key=agent_key,
+        exit_code=exit_code,
+        raw_stdout=pane_content,
+        raw_stderr="",
+        text=display_text,
+        summary=_make_summary(pane_content, exit_code=exit_code),
+        done_signal=control.status == "done",
+        started_at=started_at,
+        finished_at=finished_at,
+        control_status=control.status,
+        control_reason=control.reason,
+        remaining_work=control.remaining_work,
+        verification=control.verification,
+    )
+
+
+def _classify_stop_reason(
+    current_stop_reason: str,
+    outcomes: Sequence[AgentOutcome],
+) -> str:
+    if current_stop_reason in {"max_time", "interrupted", "agent_error"}:
+        return current_stop_reason
+    if any(outcome.exit_code is None for outcome in outcomes):
+        return "agent_error"
+    if any(
+        outcome.exit_code != 0 or outcome.control_status == "error"
+        for outcome in outcomes
+    ):
+        return "agent_error"
+    if all(
+        outcome.exit_code == 0 and outcome.control_status == "done"
+        for outcome in outcomes
+    ):
+        return "all_done"
+    return "incomplete"
+
+
 # ---------------------------------------------------------------------------
 # Concurrent prompt builder
 # ---------------------------------------------------------------------------
@@ -138,7 +296,12 @@ tmux session: {tmux_session}
 - A shared activity log is at: {workspace_log}
 - Before editing a file, check its current state — another agent may have changed it.
 - Coordinate: decide who handles what. Don't duplicate work.
-- When your part is FULLY COMPLETE, include: CONVERSATION_COMPLETE
+- End with a machine-readable status line:
+  RELAY_STATUS: {{"status":"continue","reason":"...","remaining_work":["..."],"verification":[]}}
+- Allowed statuses: continue, blocked, done, error
+- Use done only when your part is truly complete and remaining_work is [].
+- Use error if you hit a terminal failure you could not resolve.
+- If you post multiple RELAY_STATUS lines during the session, the last one wins.
 
 ## Task
 
@@ -187,8 +350,8 @@ def _build_concurrent_prompt(
     )
 
 
-def _build_shell_command(agent_key: str, prompt_path: Path, repo_root: Path) -> str:
-    """Build the interactive shell command for an agent (no output capture — runs in tmux pane)."""
+def _build_agent_command(agent_key: str, prompt_path: Path, repo_root: Path) -> str:
+    """Build the underlying agent command for a pane."""
     adapter = get_agent_adapter(agent_key)
     cli = shlex.quote(adapter.cli_command)
     pp = shlex.quote(str(prompt_path))
@@ -201,6 +364,25 @@ def _build_shell_command(agent_key: str, prompt_path: Path, repo_root: Path) -> 
         return f'cd {rr} && {cli} "$(cat {pp})"'
     else:
         return f'cd {rr} && {cli} "$(cat {pp})"'
+
+
+def _build_shell_command(
+    agent_key: str,
+    prompt_path: Path,
+    repo_root: Path,
+    exit_code_path: Path,
+) -> str:
+    """Build the pane shell command, persisting the agent's real exit code."""
+    exit_path = shlex.quote(str(exit_code_path))
+    inner = _build_agent_command(agent_key, prompt_path, repo_root)
+    script = (
+        f"rm -f {exit_path}; "
+        f"{inner}; "
+        'code=$?; '
+        f'printf "%s\\n" "$code" > {exit_path}; '
+        'exit "$code"'
+    )
+    return f"/bin/sh -lc {shlex.quote(script)}"
 
 
 # ---------------------------------------------------------------------------
@@ -251,6 +433,7 @@ def run_concurrent(
     # Write prompts
     prompt_paths: list[Path] = []
     commands: list[str] = []
+    exit_code_paths: list[Path] = []
     for slot, agent_key in enumerate(agents):
         agent_dir = concurrent_agent_dir(repo_root, session_id, slot)
         agent_dir.mkdir(parents=True, exist_ok=True)
@@ -267,8 +450,10 @@ def run_concurrent(
         prompt_path = agent_dir / "prompt.md"
         prompt_path.write_text(prompt_text, encoding="utf-8")
         prompt_paths.append(prompt_path)
+        exit_code_path = agent_dir / "exit-code.txt"
+        exit_code_paths.append(exit_code_path)
 
-        cmd = _build_shell_command(agent_key, prompt_path, repo_root)
+        cmd = _build_shell_command(agent_key, prompt_path, repo_root, exit_code_path)
         commands.append(cmd)
 
     # Create tmux session with first agent
@@ -280,6 +465,13 @@ def run_concurrent(
         "-s", tmux_session,
         "-x", "200", "-y", "50",
         commands[0],
+    )
+    _tmux(
+        "set-window-option",
+        "-t", f"{tmux_session}:0",
+        "remain-on-exit",
+        "on",
+        check=False,
     )
 
     wlog.append(LogEntry(
@@ -322,13 +514,22 @@ def run_concurrent(
     # Poll for completion
     stop_reason = "all_done"
     finished_slots: dict[int, AgentOutcome] = {}
+    attach_proc: subprocess.Popen[bytes] | None = None
+    reported_slots: set[int] = set()
+
+    def maybe_report_outcome(outcome: AgentOutcome) -> None:
+        if not on_agent_done or outcome.slot in reported_slots:
+            return
+        if attach_proc is not None and attach_proc.poll() is None:
+            return
+        on_agent_done(outcome)
+        reported_slots.add(outcome.slot)
 
     try:
         # Attach to tmux session (blocks until user detaches or all panes die)
         if os.isatty(0):
-            subprocess.run(
+            attach_proc = subprocess.Popen(
                 ["tmux", "attach-session", "-t", tmux_session],
-                check=False,
             )
 
         # After detach (or if not a tty), poll until all panes are done or timeout
@@ -346,12 +547,13 @@ def run_concurrent(
                     # Session was killed entirely
                     for s in range(len(agents)):
                         if s not in finished_slots:
-                            finished_slots[s] = AgentOutcome(
-                                slot=s, agent_key=agents[s], exit_code=None,
-                                raw_stdout="", raw_stderr="",
-                                text="(session terminated)", summary="Session terminated",
-                                done_signal=False,
-                                started_at=started_at[s], finished_at=utc_timestamp(),
+                            finished_slots[s] = _build_outcome(
+                                slot=s,
+                                agent_key=agents[s],
+                                pane_content="(session terminated)",
+                                exit_code=None,
+                                started_at=started_at[s],
+                                finished_at=utc_timestamp(),
                             )
                     stop_reason = "interrupted"
                     break
@@ -361,16 +563,13 @@ def run_concurrent(
                     # Capture final pane content
                     pane_content = _tmux_capture_pane(tmux_session, slot)
                     agent_key = agents[slot]
+                    exit_code = _read_exit_code(exit_code_paths[slot])
 
-                    outcome = AgentOutcome(
+                    outcome = _build_outcome(
                         slot=slot,
                         agent_key=agent_key,
-                        exit_code=0,  # Can't reliably get exit code from tmux pane
-                        raw_stdout=pane_content,
-                        raw_stderr="",
-                        text=pane_content.strip(),
-                        summary=pane_content.strip()[:120] or "(no output)",
-                        done_signal="CONVERSATION_COMPLETE" in pane_content.upper(),
+                        exit_code=exit_code,
+                        pane_content=pane_content,
                         started_at=started_at[slot],
                         finished_at=finished_at,
                     )
@@ -383,8 +582,7 @@ def run_concurrent(
                         entry_type="signal" if outcome.done_signal else "turn_complete",
                         summary=outcome.summary,
                     ))
-                    if on_agent_done:
-                        on_agent_done(outcome)
+                    maybe_report_outcome(outcome)
 
             if stop_reason != "all_done":
                 break
@@ -400,20 +598,33 @@ def run_concurrent(
             pane_content = ""
             if _tmux_session_exists(tmux_session):
                 pane_content = _tmux_capture_pane(tmux_session, slot)
-            finished_slots[slot] = AgentOutcome(
-                slot=slot, agent_key=agents[slot], exit_code=None,
-                raw_stdout=pane_content, raw_stderr="",
-                text=pane_content.strip(),
-                summary=pane_content.strip()[:120] or "(still running)",
-                done_signal=False,
-                started_at=started_at[slot], finished_at=utc_timestamp(),
+            finished_slots[slot] = _build_outcome(
+                slot=slot,
+                agent_key=agents[slot],
+                exit_code=None,
+                pane_content=pane_content,
+                started_at=started_at[slot],
+                finished_at=utc_timestamp(),
             )
 
     # Clean up tmux session
     if _tmux_session_exists(tmux_session):
         _tmux("kill-session", "-t", tmux_session, check=False)
+    if attach_proc is not None:
+        try:
+            attach_proc.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            attach_proc.terminate()
+            try:
+                attach_proc.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                attach_proc.kill()
+                attach_proc.wait()
 
     outcomes = sorted(finished_slots.values(), key=lambda o: o.slot)
+    stop_reason = _classify_stop_reason(stop_reason, outcomes)
+    for outcome in outcomes:
+        maybe_report_outcome(outcome)
     elapsed = (datetime.now(UTC) - start_time).total_seconds()
 
     return ConcurrentResult(

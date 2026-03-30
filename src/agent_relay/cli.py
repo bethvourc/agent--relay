@@ -355,7 +355,12 @@ def cmd_race(args: argparse.Namespace) -> int:
         if interactive:
             from agent_relay.agents import get_agent_display_name
             name = get_agent_display_name(outcome.agent_key)
-            status = "[success]done[/]" if outcome.exit_code == 0 else f"[warning]exit {outcome.exit_code}[/]"
+            if outcome.exit_code == 0 and outcome.control_status == "done":
+                status = "[success]done[/]"
+            elif outcome.exit_code == 0:
+                status = f"[warning]{outcome.control_status}[/]"
+            else:
+                status = f"[warning]exit {outcome.exit_code}[/]"
             console.print(f"  [brand]▸[/] Slot {outcome.slot}: [bold]{name}[/] {status} — {outcome.summary}", highlight=False)
 
     result = run_concurrent(
@@ -382,6 +387,10 @@ def cmd_race(args: argparse.Namespace) -> int:
                     "exit_code": o.exit_code,
                     "summary": o.summary,
                     "done_signal": o.done_signal,
+                    "completion_status": o.control_status,
+                    "completion_reason": o.control_reason,
+                    "remaining_work": list(o.remaining_work),
+                    "verification": list(o.verification),
                     "started_at": o.started_at,
                     "finished_at": o.finished_at,
                 }

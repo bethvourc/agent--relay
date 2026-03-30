@@ -954,6 +954,7 @@ _STOP_REASON_LABELS = {
     "max_turns": "Max turns reached",
     "done_signal": "Task completed",
     "all_done": "All agents completed",
+    "incomplete": "Agents exited without completion",
     "max_time": "Time limit reached",
     "interrupted": "Interrupted by user",
     "agent_error": "Agent exited with error",
