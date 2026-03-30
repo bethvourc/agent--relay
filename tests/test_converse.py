@@ -2,17 +2,25 @@
 from __future__ import annotations
 
 import json
+import subprocess
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import TestCase
+from unittest.mock import patch
 
 from agent_relay.converse import (
+    CompletionState,
     TurnResult,
     build_turn_prompt,
+    converse,
     detect_done_signal,
     normalize_claude_output,
     normalize_codex_output,
+    parse_turn_control,
     _make_summary,
     _normalize_output,
     _strip_done_marker,
+    _strip_turn_control,
 )
 
 
@@ -138,6 +146,27 @@ class DetectDoneSignalTests(TestCase):
         self.assertFalse(detect_done_signal(""))
 
 
+class ParseTurnControlTests(TestCase):
+    def test_parses_structured_status(self) -> None:
+        control = parse_turn_control(
+            'Work summary\nRELAY_STATUS: {"status":"propose_done","reason":"Tests pass","remaining_work":[],"verification":["uv run pytest tests/test_converse.py -v"]}'
+        )
+        self.assertEqual(control.status, "propose_done")
+        self.assertEqual(control.reason, "Tests pass")
+        self.assertEqual(control.remaining_work, ())
+        self.assertEqual(control.verification, ("uv run pytest tests/test_converse.py -v",))
+
+    def test_missing_status_defaults_to_continue(self) -> None:
+        control = parse_turn_control("Still working")
+        self.assertEqual(control.status, "continue")
+        self.assertEqual(control.remaining_work, ())
+        self.assertEqual(control.verification, ())
+
+    def test_legacy_marker_falls_back_to_propose_done(self) -> None:
+        control = parse_turn_control("Task is done.\nCONVERSATION_COMPLETE")
+        self.assertEqual(control.status, "propose_done")
+
+
 class BuildTurnPromptTests(TestCase):
     def _make_turn(self, turn_number: int, agent_key: str, text: str) -> TurnResult:
         return TurnResult(
@@ -188,7 +217,6 @@ class BuildTurnPromptTests(TestCase):
         self.assertIn("Turn 2", prompt)
 
     def test_includes_completion_instructions(self) -> None:
-        from pathlib import Path
         prompt = build_turn_prompt(
             task="Do something",
             turn_history=[],
@@ -197,8 +225,29 @@ class BuildTurnPromptTests(TestCase):
             turn_number=1,
             repo_root=Path("/tmp/repo"),
         )
-        self.assertIn("CONVERSATION_COMPLETE", prompt)
-        self.assertIn("NEVER include CONVERSATION_COMPLETE on your first turn", prompt)
+        self.assertIn("RELAY_STATUS:", prompt)
+        self.assertIn("propose_done", prompt)
+        self.assertIn("agree_done", prompt)
+        self.assertIn("NEVER use propose_done or agree_done on your first turn", prompt)
+
+    def test_includes_active_completion_state(self) -> None:
+        prompt = build_turn_prompt(
+            task="Do something",
+            turn_history=[],
+            current_agent="codex",
+            all_agents=["claude", "codex"],
+            turn_number=3,
+            repo_root=Path("/tmp/repo"),
+            completion_state=CompletionState(
+                active_epoch=1,
+                proposed_by_slot=0,
+                proposed_turn=2,
+                agreeing_slots=(0,),
+            ),
+        )
+        self.assertIn("Active completion proposal: epoch 1", prompt)
+        self.assertIn("Slot 0", prompt)
+        self.assertIn("agree_done", prompt)
 
     def test_three_agent_prompt_lists_all_participants(self) -> None:
         from pathlib import Path
@@ -265,6 +314,15 @@ class StripDoneMarkerTests(TestCase):
         self.assertEqual(_strip_done_marker(""), "")
 
 
+class StripTurnControlTests(TestCase):
+    def test_removes_status_line(self) -> None:
+        text = 'Hello\nRELAY_STATUS: {"status":"continue","reason":"more work","remaining_work":["tests"],"verification":[]}'
+        self.assertEqual(_strip_turn_control(text), "Hello")
+
+    def test_preserves_non_status_text(self) -> None:
+        self.assertEqual(_strip_turn_control("Just normal text"), "Just normal text")
+
+
 class MakeSummaryTests(TestCase):
     def test_takes_first_non_empty_line(self) -> None:
         text = "\n\nHello world\nMore text"
@@ -285,3 +343,114 @@ class MakeSummaryTests(TestCase):
 
     def test_only_headings(self) -> None:
         self.assertEqual(_make_summary("# Only a heading\n## Another"), "(no output)")
+
+
+class ConverseCompletionProtocolTests(TestCase):
+    @staticmethod
+    def _result(stdout: str, returncode: int = 0) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=["mock-agent"],
+            returncode=returncode,
+            stdout=stdout,
+            stderr="",
+        )
+
+    def test_stops_only_after_all_agents_agree(self) -> None:
+        outputs = [
+            self._result(
+                'I am still working\nRELAY_STATUS: {"status":"continue","reason":"Inspecting code","remaining_work":["inspect code"],"verification":[]}'
+            ),
+            self._result(
+                'I think this is done\nRELAY_STATUS: {"status":"propose_done","reason":"Fix applied and tests pass","remaining_work":[],"verification":["pytest tests/test_converse.py"]}'
+            ),
+            self._result(
+                'I reviewed the work and agree\nRELAY_STATUS: {"status":"agree_done","reason":"Looks complete","remaining_work":[],"verification":["reviewed diff"]}'
+            ),
+        ]
+
+        with TemporaryDirectory() as tmpdir:
+            with patch("agent_relay.converse.require_available"), patch(
+                "agent_relay.converse.start_session",
+            ), patch(
+                "agent_relay.converse.run_agent_turn",
+                side_effect=outputs,
+            ):
+                result = converse(
+                    Path(tmpdir),
+                    agents=["claude", "codex"],
+                    task="Finish the task",
+                    max_turns=5,
+                )
+
+        self.assertEqual(result.stop_reason, "all_done")
+        self.assertEqual(result.turns_completed, 3)
+        self.assertEqual(
+            [turn.control_status for turn in result.turn_results],
+            ["continue", "propose_done", "agree_done"],
+        )
+
+    def test_reopen_cancels_stale_done_votes(self) -> None:
+        outputs = [
+            self._result(
+                'Initial work\nRELAY_STATUS: {"status":"continue","reason":"Need context","remaining_work":["read code"],"verification":[]}'
+            ),
+            self._result(
+                'Done for now\nRELAY_STATUS: {"status":"propose_done","reason":"Looks complete","remaining_work":[],"verification":["pytest"]}'
+            ),
+            self._result(
+                'Found a bug\nRELAY_STATUS: {"status":"reopen","reason":"Regression found","remaining_work":["fix regression"],"verification":["reproduced bug"]}'
+            ),
+            self._result(
+                'Stale agreement\nRELAY_STATUS: {"status":"agree_done","reason":"Still agree","remaining_work":[],"verification":[]}'
+            ),
+        ]
+
+        with TemporaryDirectory() as tmpdir:
+            with patch("agent_relay.converse.require_available"), patch(
+                "agent_relay.converse.start_session",
+            ), patch(
+                "agent_relay.converse.run_agent_turn",
+                side_effect=outputs,
+            ):
+                result = converse(
+                    Path(tmpdir),
+                    agents=["claude", "codex"],
+                    task="Finish the task",
+                    max_turns=4,
+                )
+
+        self.assertEqual(result.stop_reason, "max_turns")
+        self.assertEqual(
+            [turn.control_status for turn in result.turn_results],
+            ["continue", "propose_done", "reopen", "continue"],
+        )
+
+    def test_first_round_done_signals_are_ignored(self) -> None:
+        outputs = [
+            self._result(
+                'Premature done\nRELAY_STATUS: {"status":"propose_done","reason":"Too early","remaining_work":[],"verification":[]}'
+            ),
+            self._result(
+                'Premature agree\nRELAY_STATUS: {"status":"agree_done","reason":"Also too early","remaining_work":[],"verification":[]}'
+            ),
+        ]
+
+        with TemporaryDirectory() as tmpdir:
+            with patch("agent_relay.converse.require_available"), patch(
+                "agent_relay.converse.start_session",
+            ), patch(
+                "agent_relay.converse.run_agent_turn",
+                side_effect=outputs,
+            ):
+                result = converse(
+                    Path(tmpdir),
+                    agents=["claude", "codex"],
+                    task="Finish the task",
+                    max_turns=2,
+                )
+
+        self.assertEqual(result.stop_reason, "max_turns")
+        self.assertEqual(
+            [turn.control_status for turn in result.turn_results],
+            ["continue", "continue"],
+        )

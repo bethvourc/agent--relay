@@ -35,9 +35,13 @@ class TurnResult:
     raw_stderr: str
     text: str           # Normalized text content from the agent
     summary: str        # Short one-line summary for UI
-    done_signal: bool   # True if agent signaled CONVERSATION_COMPLETE
+    done_signal: bool   # True if the turn advanced the completion protocol
     started_at: str
     finished_at: str
+    control_status: str = "continue"
+    control_reason: str = ""
+    remaining_work: tuple[str, ...] = field(default_factory=tuple)
+    verification: tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,8 +49,24 @@ class ConverseResult:
     session_id: str
     agents: tuple[str, ...]
     turns_completed: int
-    stop_reason: str   # "max_turns" | "done_signal" | "interrupted" | "agent_error"
+    stop_reason: str   # "max_turns" | "all_done" | "done_signal" | "interrupted" | "agent_error"
     turn_results: tuple[TurnResult, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class TurnControl:
+    status: str = "continue"
+    reason: str = ""
+    remaining_work: tuple[str, ...] = field(default_factory=tuple)
+    verification: tuple[str, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True, slots=True)
+class CompletionState:
+    active_epoch: int | None = None
+    proposed_by_slot: int | None = None
+    proposed_turn: int | None = None
+    agreeing_slots: tuple[int, ...] = field(default_factory=tuple)
 
 
 # ---------------------------------------------------------------------------
@@ -119,16 +139,88 @@ def _strip_done_marker(text: str) -> str:
     return re.sub(r'\s*CONVERSATION_COMPLETE\s*', ' ', text, flags=re.IGNORECASE).strip()
 
 
+def _strip_turn_control(text: str) -> str:
+    """Remove machine-readable RELAY_STATUS lines from display text."""
+    kept_lines = [
+        line
+        for line in text.splitlines()
+        if not line.strip().startswith("RELAY_STATUS:")
+    ]
+    return "\n".join(kept_lines).strip()
+
+
 # ---------------------------------------------------------------------------
 # Stop detection
 # ---------------------------------------------------------------------------
 
 _DONE_MARKER = "CONVERSATION_COMPLETE"
+_TURN_STATUS_PREFIX = "RELAY_STATUS:"
+_VALID_TURN_STATUSES = frozenset({
+    "continue",
+    "blocked",
+    "propose_done",
+    "agree_done",
+    "reopen",
+})
 
 
 def detect_done_signal(text: str) -> bool:
     """Check if the agent's output signals the conversation is done."""
     return _DONE_MARKER in text.upper()
+
+
+def _has_legacy_done_line(text: str) -> bool:
+    return any(line.strip().upper() == _DONE_MARKER for line in text.splitlines())
+
+
+def _coerce_string_tuple(value: object) -> tuple[str, ...]:
+    if isinstance(value, str):
+        stripped = value.strip()
+        return (stripped,) if stripped else ()
+    if isinstance(value, (list, tuple)):
+        items: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                stripped = item.strip()
+                if stripped:
+                    items.append(stripped)
+        return tuple(items)
+    return ()
+
+
+def parse_turn_control(text: str) -> TurnControl:
+    """Parse the machine-readable RELAY_STATUS line from agent output."""
+    for raw_line in reversed(text.splitlines()):
+        line = raw_line.strip()
+        if not line.startswith(_TURN_STATUS_PREFIX):
+            continue
+
+        payload = line[len(_TURN_STATUS_PREFIX):].strip()
+        try:
+            data = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict):
+            continue
+
+        status = str(data.get("status", "continue")).strip().lower()
+        if status not in _VALID_TURN_STATUSES:
+            continue
+
+        return TurnControl(
+            status=status,
+            reason=str(data.get("reason", "")).strip(),
+            remaining_work=_coerce_string_tuple(data.get("remaining_work")),
+            verification=_coerce_string_tuple(data.get("verification")),
+        )
+
+    if _has_legacy_done_line(text):
+        return TurnControl(
+            status="propose_done",
+            reason="Legacy CONVERSATION_COMPLETE marker",
+        )
+
+    return TurnControl()
 
 
 # ---------------------------------------------------------------------------
@@ -149,11 +241,6 @@ Your shared workspace is: {repo_root}
 - Focus on the task. Be direct and concise.
 - Build on what the other agents have done. Don't repeat their work.
 - You can read files, edit code, run commands — use your full capabilities.
-- NEVER include CONVERSATION_COMPLETE on your first turn. Wait until every agent has spoken at least once.
-- Only include CONVERSATION_COMPLETE after a genuine back-and-forth where the task has been meaningfully addressed.
-- Do NOT include CONVERSATION_COMPLETE if there is still meaningful work to do or the conversation just started.
-- When you believe the task is truly FULLY COMPLETE, include the exact text: CONVERSATION_COMPLETE
-- The conversation only ends when all agents agree the task is done.
 """
 
 
@@ -164,9 +251,11 @@ def build_turn_prompt(
     all_agents: Sequence[str],
     turn_number: int,
     repo_root: Path,
+    completion_state: CompletionState | None = None,
 ) -> str:
     """Build the prompt for the next agent turn with full conversation history."""
     current_name = get_agent_display_name(current_agent)
+    completion_state = completion_state or CompletionState()
 
     # Build participants section listing all other agents
     others = [a for a in all_agents if a != current_agent]
@@ -194,7 +283,55 @@ def build_turn_prompt(
         "",
         task,
         "",
+        "## Completion Protocol",
+        "",
+        'End every turn with exactly one machine-readable line in this format:',
+        'RELAY_STATUS: {"status":"continue","reason":"...","remaining_work":["..."],"verification":[]}',
+        "",
+        "Allowed status values:",
+        "- continue: there is still meaningful work to do.",
+        "- blocked: you cannot proceed without human input or an external dependency.",
+        "- propose_done: you believe the task is complete. Only use this after every agent has spoken at least once, remaining_work is empty, and verification lists concrete checks.",
+        "- agree_done: another agent already proposed completion and you agree the task is complete.",
+        "- reopen: there is an active completion proposal, but you found remaining work, a bug, or a disagreement.",
+        "",
+        "Protocol rules:",
+        "- NEVER use propose_done or agree_done on your first turn.",
+        "- If there is an active completion proposal and you disagree, use reopen, not continue.",
+        "- If you made edits, found a bug, or uncovered missing verification after a completion proposal, use reopen.",
+        "- When using propose_done or agree_done, remaining_work must be [].",
+        "",
+        "## Completion State",
+        "",
     ]
+
+    if completion_state.active_epoch is None:
+        lines.extend([
+            "- No active completion proposal.",
+            "- If you believe the task is complete, use status propose_done.",
+            "",
+        ])
+    else:
+        agreeing = ", ".join(
+            f"Slot {slot} — {get_agent_display_name(all_agents[slot])}"
+            for slot in completion_state.agreeing_slots
+        ) or "none yet"
+        proposer = "Unknown agent"
+        if completion_state.proposed_by_slot is not None:
+            proposer = (
+                f"Slot {completion_state.proposed_by_slot} — "
+                f"{get_agent_display_name(all_agents[completion_state.proposed_by_slot])}"
+            )
+        lines.extend([
+            (
+                f"- Active completion proposal: epoch {completion_state.active_epoch}, "
+                f"proposed on Turn {completion_state.proposed_turn} by {proposer}."
+            ),
+            f"- Agents already agreeing in this epoch: {agreeing}.",
+            "- If you agree the task is complete, use status agree_done.",
+            "- If you disagree or found more work, use status reopen.",
+            "",
+        ])
 
     if turn_history:
         lines.append("## Conversation so far")
@@ -363,8 +500,11 @@ def converse(
     wlog = WorkspaceLog(workspace_log_path(repo_root, session_id))
 
     turn_history: list[TurnResult] = []
-    done_indices: set[int] = set()  # Track slot indices that signaled completion
-    grace_turns: int | None = None  # Countdown after first done signal
+    completion_epoch = 0
+    active_completion_epoch: int | None = None
+    proposed_by_slot: int | None = None
+    proposed_turn: int | None = None
+    agreeing_slots: set[int] = set()
     stop_reason = "max_turns"
 
     try:
@@ -383,6 +523,12 @@ def converse(
                 all_agents=agents,
                 turn_number=turn_number,
                 repo_root=repo_root,
+                completion_state=CompletionState(
+                    active_epoch=active_completion_epoch,
+                    proposed_by_slot=proposed_by_slot,
+                    proposed_turn=proposed_turn,
+                    agreeing_slots=tuple(i for i in range(n) if i in agreeing_slots),
+                ),
             )
 
             # Write prompt to turn directory
@@ -398,8 +544,19 @@ def converse(
 
             # Normalize output
             raw_text = _normalize_output(current_agent, result.stdout)
-            done = detect_done_signal(raw_text)
-            display_text = _strip_done_marker(raw_text)
+            control = parse_turn_control(raw_text)
+            status = control.status
+            if status in {"propose_done", "agree_done"} and turn_number < n:
+                status = "continue"
+            elif status == "agree_done" and active_completion_epoch is None:
+                status = "continue"
+            elif status == "propose_done" and active_completion_epoch is not None:
+                status = "agree_done"
+            elif status == "reopen" and active_completion_epoch is None:
+                status = "continue"
+
+            done = status in {"propose_done", "agree_done"}
+            display_text = _strip_done_marker(_strip_turn_control(raw_text))
 
             # Store artifacts
             _store_turn_artifacts(
@@ -419,6 +576,10 @@ def converse(
                 done_signal=done,
                 started_at=started_at,
                 finished_at=finished_at,
+                control_status=status,
+                control_reason=control.reason,
+                remaining_work=control.remaining_work,
+                verification=control.verification,
             )
             turn_history.append(turn)
 
@@ -435,26 +596,30 @@ def converse(
                 on_turn_complete(turn)
 
             # --- N-lateral stop conditions ---
-            # Ignore done signals until every agent has spoken at least once
-            if done and turn_number >= n:
-                done_indices.add(slot)
             if result.returncode != 0:
                 stop_reason = "agent_error"
                 break
-            # All agent slots signaled done
-            if len(done_indices) == n:
-                stop_reason = "done_signal"
+            if status == "propose_done":
+                if active_completion_epoch is None:
+                    completion_epoch += 1
+                    active_completion_epoch = completion_epoch
+                    proposed_by_slot = slot
+                    proposed_turn = turn_number
+                    agreeing_slots = {slot}
+                else:
+                    agreeing_slots.add(slot)
+            elif status == "agree_done":
+                if active_completion_epoch is not None:
+                    agreeing_slots.add(slot)
+            elif status in {"continue", "blocked", "reopen"} and active_completion_epoch is not None:
+                active_completion_epoch = None
+                proposed_by_slot = None
+                proposed_turn = None
+                agreeing_slots.clear()
+
+            if active_completion_epoch is not None and len(agreeing_slots) == n:
+                stop_reason = "all_done"
                 break
-            # Grace period: once any agent signals done, give every other
-            # non-done slot exactly one more turn to respond
-            if done_indices and grace_turns is None:
-                grace_turns = n - len(done_indices)
-            if grace_turns is not None:
-                if slot not in done_indices:
-                    grace_turns -= 1
-                if grace_turns <= 0:
-                    stop_reason = "done_signal"
-                    break
 
     except KeyboardInterrupt:
         stop_reason = "interrupted"

@@ -970,7 +970,7 @@ def render_converse_result(
     console.print()
     reason_label = _STOP_REASON_LABELS.get(stop_reason, stop_reason)
 
-    if stop_reason == "done_signal":
+    if stop_reason in ("done_signal", "all_done"):
         style = "success"
         symbol = "✔"
     elif stop_reason in ("agent_error", "interrupted"):

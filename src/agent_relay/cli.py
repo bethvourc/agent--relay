@@ -309,6 +309,10 @@ def cmd_chat(args: argparse.Namespace) -> int:
                     "exit_code": t.exit_code,
                     "summary": t.summary,
                     "done_signal": t.done_signal,
+                    "completion_status": t.control_status,
+                    "completion_reason": t.control_reason,
+                    "remaining_work": list(t.remaining_work),
+                    "verification": list(t.verification),
                     "started_at": t.started_at,
                     "finished_at": t.finished_at,
                 }
