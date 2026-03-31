@@ -1,4 +1,5 @@
 """Tests for the converse orchestrator module."""
+
 from __future__ import annotations
 
 import json
@@ -28,8 +29,22 @@ from agent_relay.converse import (
 class NormalizeClaudeOutputTests(TestCase):
     def test_extracts_text_from_stream_json(self) -> None:
         lines = [
-            json.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "Hello from Claude"}]}}),
-            json.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "Second message"}]}}),
+            json.dumps(
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "Hello from Claude"}],
+                    }
+                }
+            ),
+            json.dumps(
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "Second message"}],
+                    }
+                }
+            ),
         ]
         raw = "\n".join(lines)
         result = normalize_claude_output(raw)
@@ -38,8 +53,22 @@ class NormalizeClaudeOutputTests(TestCase):
 
     def test_ignores_non_assistant_messages(self) -> None:
         lines = [
-            json.dumps({"message": {"role": "user", "content": [{"type": "text", "text": "user input"}]}}),
-            json.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "assistant reply"}]}}),
+            json.dumps(
+                {
+                    "message": {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "user input"}],
+                    }
+                }
+            ),
+            json.dumps(
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "assistant reply"}],
+                    }
+                }
+            ),
         ]
         raw = "\n".join(lines)
         result = normalize_claude_output(raw)
@@ -48,10 +77,22 @@ class NormalizeClaudeOutputTests(TestCase):
 
     def test_ignores_tool_use_blocks(self) -> None:
         lines = [
-            json.dumps({"message": {"role": "assistant", "content": [
-                {"type": "tool_use", "id": "t1", "name": "Read", "input": {}},
-                {"type": "text", "text": "I read the file"},
-            ]}}),
+            json.dumps(
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "t1",
+                                "name": "Read",
+                                "input": {},
+                            },
+                            {"type": "text", "text": "I read the file"},
+                        ],
+                    }
+                }
+            ),
         ]
         raw = "\n".join(lines)
         result = normalize_claude_output(raw)
@@ -69,7 +110,14 @@ class NormalizeClaudeOutputTests(TestCase):
     def test_skips_invalid_json_lines(self) -> None:
         lines = [
             "not json",
-            json.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "valid"}]}}),
+            json.dumps(
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "valid"}],
+                    }
+                }
+            ),
         ]
         raw = "\n".join(lines)
         result = normalize_claude_output(raw)
@@ -77,7 +125,9 @@ class NormalizeClaudeOutputTests(TestCase):
 
     def test_handles_flat_assistant_message(self) -> None:
         """Claude sometimes emits events where 'role' and 'content' are at the top level."""
-        raw = json.dumps({"role": "assistant", "content": [{"type": "text", "text": "flat reply"}]})
+        raw = json.dumps(
+            {"role": "assistant", "content": [{"type": "text", "text": "flat reply"}]}
+        )
         result = normalize_claude_output(raw)
         self.assertIn("flat reply", result)
 
@@ -87,7 +137,16 @@ class NormalizeCodexOutputTests(TestCase):
         lines = [
             json.dumps({"type": "thread.started", "thread_id": "abc"}),
             json.dumps({"type": "turn.started"}),
-            json.dumps({"type": "item.completed", "item": {"id": "item_0", "type": "agent_message", "text": "Hello from Codex"}}),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "item_0",
+                        "type": "agent_message",
+                        "text": "Hello from Codex",
+                    },
+                }
+            ),
             json.dumps({"type": "turn.completed", "usage": {"input_tokens": 100}}),
         ]
         raw = "\n".join(lines)
@@ -96,8 +155,22 @@ class NormalizeCodexOutputTests(TestCase):
 
     def test_ignores_non_agent_message_items(self) -> None:
         lines = [
-            json.dumps({"type": "item.completed", "item": {"id": "item_0", "type": "tool_call", "text": "ignored"}}),
-            json.dumps({"type": "item.completed", "item": {"id": "item_1", "type": "agent_message", "text": "keep this"}}),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {"id": "item_0", "type": "tool_call", "text": "ignored"},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "item_1",
+                        "type": "agent_message",
+                        "text": "keep this",
+                    },
+                }
+            ),
         ]
         raw = "\n".join(lines)
         result = normalize_codex_output(raw)
@@ -105,7 +178,13 @@ class NormalizeCodexOutputTests(TestCase):
 
     def test_extracts_message_with_content_blocks(self) -> None:
         lines = [
-            json.dumps({"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Codex says hi"}]}),
+            json.dumps(
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Codex says hi"}],
+                }
+            ),
         ]
         raw = "\n".join(lines)
         result = normalize_codex_output(raw)
@@ -119,12 +198,20 @@ class NormalizeCodexOutputTests(TestCase):
 
 class NormalizeOutputDispatchTests(TestCase):
     def test_dispatches_to_claude(self) -> None:
-        raw = json.dumps({"role": "assistant", "content": [{"type": "text", "text": "claude"}]})
+        raw = json.dumps(
+            {"role": "assistant", "content": [{"type": "text", "text": "claude"}]}
+        )
         result = _normalize_output("claude", raw)
         self.assertIn("claude", result)
 
     def test_dispatches_to_codex(self) -> None:
-        raw = json.dumps({"type": "message", "role": "assistant", "content": [{"type": "text", "text": "codex"}]})
+        raw = json.dumps(
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "codex"}],
+            }
+        )
         result = _normalize_output("codex", raw)
         self.assertIn("codex", result)
 
@@ -155,7 +242,9 @@ class ParseTurnControlTests(TestCase):
         self.assertEqual(control.status, "propose_done")
         self.assertEqual(control.reason, "Tests pass")
         self.assertEqual(control.remaining_work, ())
-        self.assertEqual(control.verification, ("uv run pytest tests/test_converse.py -v",))
+        self.assertEqual(
+            control.verification, ("uv run pytest tests/test_converse.py -v",)
+        )
 
     def test_missing_status_defaults_to_continue(self) -> None:
         control = parse_turn_control("Still working")
@@ -194,6 +283,7 @@ class BuildTurnPromptTests(TestCase):
 
     def test_first_turn_has_task_and_no_history(self) -> None:
         from pathlib import Path
+
         prompt = build_turn_prompt(
             task="Fix the tests",
             turn_history=[],
@@ -210,6 +300,7 @@ class BuildTurnPromptTests(TestCase):
 
     def test_subsequent_turn_includes_history(self) -> None:
         from pathlib import Path
+
         history = [
             self._make_turn(1, "claude", "I looked at the code and found the bug."),
         ]
@@ -241,6 +332,22 @@ class BuildTurnPromptTests(TestCase):
         self.assertIn("agree_done", prompt)
         self.assertIn("NEVER use propose_done or agree_done on your first turn", prompt)
 
+    def test_single_agent_prompt_uses_single_agent_completion_rules(self) -> None:
+        prompt = build_turn_prompt(
+            task="Do something",
+            turn_history=[],
+            current_agent="claude",
+            all_agents=["claude"],
+            turn_number=1,
+            repo_root=Path("/tmp/repo"),
+        )
+        self.assertIn("Relay-managed single-agent session", prompt)
+        self.assertIn("Use status propose_done when the task is complete.", prompt)
+        self.assertIn("Use status blocked when you cannot continue", prompt)
+        self.assertNotIn(
+            "NEVER use propose_done or agree_done on your first turn", prompt
+        )
+
     def test_includes_active_completion_state(self) -> None:
         prompt = build_turn_prompt(
             task="Do something",
@@ -262,6 +369,7 @@ class BuildTurnPromptTests(TestCase):
 
     def test_three_agent_prompt_lists_all_participants(self) -> None:
         from pathlib import Path
+
         # claude + codex + claude: unique others from claude's perspective is just codex
         prompt = build_turn_prompt(
             task="Collaborate on design",
@@ -280,6 +388,7 @@ class BuildTurnPromptTests(TestCase):
     def test_three_distinct_agents_lists_two_others(self) -> None:
         """When three distinct agents converse, each sees 2 others."""
         from pathlib import Path
+
         # Use claude twice to simulate 3 slots, but test with codex seeing 1 unique
         # For a true 3-distinct test we'd need a third agent type; test the count logic
         prompt = build_turn_prompt(
@@ -294,6 +403,7 @@ class BuildTurnPromptTests(TestCase):
 
     def test_two_agent_prompt_says_one_other(self) -> None:
         from pathlib import Path
+
         prompt = build_turn_prompt(
             task="Pair up",
             turn_history=[],
@@ -384,11 +494,15 @@ class ConverseCompletionProtocolTests(TestCase):
         ]
 
         with TemporaryDirectory() as tmpdir:
-            with patch("agent_relay.converse.require_available"), patch(
-                "agent_relay.converse.start_session",
-            ), patch(
-                "agent_relay.converse.run_agent_turn",
-                side_effect=outputs,
+            with (
+                patch("agent_relay.converse.require_available"),
+                patch(
+                    "agent_relay.converse.start_session",
+                ),
+                patch(
+                    "agent_relay.converse.run_agent_turn",
+                    side_effect=outputs,
+                ),
             ):
                 result = converse(
                     Path(tmpdir),
@@ -421,11 +535,15 @@ class ConverseCompletionProtocolTests(TestCase):
         ]
 
         with TemporaryDirectory() as tmpdir:
-            with patch("agent_relay.converse.require_available"), patch(
-                "agent_relay.converse.start_session",
-            ), patch(
-                "agent_relay.converse.run_agent_turn",
-                side_effect=outputs,
+            with (
+                patch("agent_relay.converse.require_available"),
+                patch(
+                    "agent_relay.converse.start_session",
+                ),
+                patch(
+                    "agent_relay.converse.run_agent_turn",
+                    side_effect=outputs,
+                ),
             ):
                 result = converse(
                     Path(tmpdir),
@@ -451,11 +569,15 @@ class ConverseCompletionProtocolTests(TestCase):
         ]
 
         with TemporaryDirectory() as tmpdir:
-            with patch("agent_relay.converse.require_available"), patch(
-                "agent_relay.converse.start_session",
-            ), patch(
-                "agent_relay.converse.run_agent_turn",
-                side_effect=outputs,
+            with (
+                patch("agent_relay.converse.require_available"),
+                patch(
+                    "agent_relay.converse.start_session",
+                ),
+                patch(
+                    "agent_relay.converse.run_agent_turn",
+                    side_effect=outputs,
+                ),
             ):
                 result = converse(
                     Path(tmpdir),
@@ -482,11 +604,15 @@ class ConverseCompletionProtocolTests(TestCase):
 
         with TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
-            with patch("agent_relay.converse.require_available"), patch(
-                "agent_relay.converse.start_session",
-            ), patch(
-                "agent_relay.converse.run_agent_turn",
-                side_effect=outputs,
+            with (
+                patch("agent_relay.converse.require_available"),
+                patch(
+                    "agent_relay.converse.start_session",
+                ),
+                patch(
+                    "agent_relay.converse.run_agent_turn",
+                    side_effect=outputs,
+                ),
             ):
                 result = converse(
                     repo_root,
@@ -521,3 +647,61 @@ class ConverseCompletionProtocolTests(TestCase):
         self.assertEqual(first_payload["next_step"], "edit src/auth.py")
         self.assertEqual(second_payload["status"], "blocked")
         self.assertEqual(second_payload["remaining_work"], ["confirm auth policy"])
+
+    def test_single_agent_stops_on_propose_done(self) -> None:
+        outputs = [
+            self._result(
+                'Finished the task\nRELAY_STATUS: {"status":"propose_done","reason":"Done","remaining_work":[],"verification":["pytest"]}'
+            ),
+        ]
+
+        with TemporaryDirectory() as tmpdir:
+            with (
+                patch("agent_relay.converse.require_available"),
+                patch(
+                    "agent_relay.converse.start_session",
+                ),
+                patch(
+                    "agent_relay.converse.run_agent_turn",
+                    side_effect=outputs,
+                ),
+            ):
+                result = converse(
+                    Path(tmpdir),
+                    agents=["claude"],
+                    task="Finish the task",
+                    max_turns=3,
+                )
+
+        self.assertEqual(result.stop_reason, "done_signal")
+        self.assertEqual(result.turns_completed, 1)
+        self.assertEqual(result.turn_results[0].control_status, "propose_done")
+
+    def test_single_agent_stops_on_blocked(self) -> None:
+        outputs = [
+            self._result(
+                'Need human input\nRELAY_STATUS: {"status":"blocked","reason":"Waiting on review","remaining_work":["review change"],"verification":[]}'
+            ),
+        ]
+
+        with TemporaryDirectory() as tmpdir:
+            with (
+                patch("agent_relay.converse.require_available"),
+                patch(
+                    "agent_relay.converse.start_session",
+                ),
+                patch(
+                    "agent_relay.converse.run_agent_turn",
+                    side_effect=outputs,
+                ),
+            ):
+                result = converse(
+                    Path(tmpdir),
+                    agents=["claude"],
+                    task="Finish the task",
+                    max_turns=3,
+                )
+
+        self.assertEqual(result.stop_reason, "blocked")
+        self.assertEqual(result.turns_completed, 1)
+        self.assertEqual(result.turn_results[0].control_status, "blocked")

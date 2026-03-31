@@ -58,22 +58,26 @@ def _open_tmux_session_in_terminal(tmux_session: str) -> str | None:
     command = f"tmux attach-session -t {tmux_session}"
     term_program = os.getenv("TERM_PROGRAM", "")
     if term_program == "iTerm.app":
-        script = "\n".join([
-            'tell application "iTerm"',
-            "activate",
-            "set newWindow to (create window with default profile)",
-            "tell current session of newWindow",
-            f"write text {json.dumps(command)}",
-            "end tell",
-            "end tell",
-        ])
+        script = "\n".join(
+            [
+                'tell application "iTerm"',
+                "activate",
+                "set newWindow to (create window with default profile)",
+                "tell current session of newWindow",
+                f"write text {json.dumps(command)}",
+                "end tell",
+                "end tell",
+            ]
+        )
     else:
-        script = "\n".join([
-            'tell application "Terminal"',
-            "activate",
-            f"do script {json.dumps(command)}",
-            "end tell",
-        ])
+        script = "\n".join(
+            [
+                'tell application "Terminal"',
+                "activate",
+                f"do script {json.dumps(command)}",
+                "end tell",
+            ]
+        )
 
     try:
         result = subprocess.run(
@@ -103,11 +107,13 @@ def _load_conflict_paths(conflict_artifact_path: str | None) -> list[str]:
     raw_paths = payload.get("paths")
     if not isinstance(raw_paths, list):
         return []
-    return list(dict.fromkeys(
-        str(item.get("path", "")).strip()
-        for item in raw_paths
-        if isinstance(item, dict) and str(item.get("path", "")).strip()
-    ))
+    return list(
+        dict.fromkeys(
+            str(item.get("path", "")).strip()
+            for item in raw_paths
+            if isinstance(item, dict) and str(item.get("path", "")).strip()
+        )
+    )
 
 
 def _race_next_action(result: "ConcurrentResult") -> str | None:  # noqa: F821
@@ -117,7 +123,7 @@ def _race_next_action(result: "ConcurrentResult") -> str | None:  # noqa: F821
         return f"agent-relay resolve {result.session_id}"
     if result.stop_reason in {"max_time", "interrupted", "incomplete", "agent_error"}:
         return (
-            f'agent-relay race --continue {result.session_id} <agents> '
+            f"agent-relay race --continue {result.session_id} <agents> "
             f'"continue the task"'
         )
     return None
@@ -133,16 +139,16 @@ def _default_resolution_task(status: str) -> str:
 def _race_result_metadata(result: "ConcurrentResult") -> dict[str, object]:  # noqa: F821
     conflict_paths = _load_conflict_paths(result.conflict_artifact_path)
     if not conflict_paths:
-        conflict_paths = list(dict.fromkeys(
-            path
-            for outcome in result.outcomes
-            for path in outcome.merge_conflicts
-        ))
-    scope_violation_paths = list(dict.fromkeys(
-        path
-        for outcome in result.outcomes
-        for path in outcome.scope_violations
-    ))
+        conflict_paths = list(
+            dict.fromkeys(
+                path for outcome in result.outcomes for path in outcome.merge_conflicts
+            )
+        )
+    scope_violation_paths = list(
+        dict.fromkeys(
+            path for outcome in result.outcomes for path in outcome.scope_violations
+        )
+    )
     metadata: dict[str, object] = {
         "conflict_paths": conflict_paths,
         "scope_violation_paths": scope_violation_paths,
@@ -160,10 +166,12 @@ def cmd_inspect_conflicts(args: argparse.Namespace) -> int:
     summary = load_conflict_artifact_summary(repo_root, args.session_id)
 
     if args.json:
-        emit_json({
-            "command": "inspect-conflicts",
-            **summary,
-        })
+        emit_json(
+            {
+                "command": "inspect-conflicts",
+                **summary,
+            }
+        )
     elif args.quiet:
         emit_quiet(str(summary.get("conflict_artifact_path", "")))
     else:
@@ -194,10 +202,16 @@ def cmd_resolve(args: argparse.Namespace) -> int:
 
     context = infer_conflict_resolution_context(repo_root, target_session_id)
     override_agents = getattr(args, "agent_overrides", None) or []
-    agents = [resolve_agent_key(agent) for agent in override_agents] if override_agents else list(context["agents"])
+    agents = (
+        [resolve_agent_key(agent) for agent in override_agents]
+        if override_agents
+        else list(context["agents"])
+    )
     if len(agents) < 2:
         raise SystemExit("Conflict resolution requires at least 2 agents.")
-    task = getattr(args, "task_flag", None) or _default_resolution_task(str(context["status"]))
+    task = getattr(args, "task_flag", None) or _default_resolution_task(
+        str(context["status"])
+    )
     max_time = args.max_time
     auto_open_terminals = _should_auto_open_terminals(
         interactive=interactive,
@@ -216,6 +230,7 @@ def cmd_resolve(args: argparse.Namespace) -> int:
     def on_agent_start(slot: int, agent_key: str, tmux_session: str) -> None:
         if interactive:
             from agent_relay.agents import get_agent_display_name
+
             name = get_agent_display_name(agent_key)
             console.print(
                 f"  [brand]▸[/] Slot {slot}: [bold]{name}[/] started  [muted]({tmux_session})[/]",
@@ -233,6 +248,7 @@ def cmd_resolve(args: argparse.Namespace) -> int:
     def on_agent_done(outcome: "AgentOutcome") -> None:  # noqa: F821
         if interactive:
             from agent_relay.agents import get_agent_display_name
+
             name = get_agent_display_name(outcome.agent_key)
             if outcome.exit_code == 0 and outcome.control_status == "done":
                 status = "[success]done[/]"
@@ -240,7 +256,11 @@ def cmd_resolve(args: argparse.Namespace) -> int:
                 status = f"[warning]{outcome.control_status}[/]"
             else:
                 status = f"[warning]exit {outcome.exit_code}[/]"
-            phase_label = f"[muted]{outcome.phase}[/] " if outcome.phase != "implementation" else ""
+            phase_label = (
+                f"[muted]{outcome.phase}[/] "
+                if outcome.phase != "implementation"
+                else ""
+            )
             console.print(
                 f"  [brand]▸[/] Slot {outcome.slot}: [bold]{name}[/] {phase_label}{status} — {outcome.summary}",
                 highlight=False,
@@ -258,47 +278,49 @@ def cmd_resolve(args: argparse.Namespace) -> int:
     )
 
     if args.json:
-        emit_json({
-            "command": "resolve",
-            "session_id": result.session_id,
-            "source_session_id": target_session_id,
-            "agents": list(result.agents),
-            "tmux_sessions": list(result.tmux_sessions),
-            "continued_from_session_id": result.continued_from_session_id,
-            "claim_ledger_path": result.claim_ledger_path,
-            "conflict_artifact_path": result.conflict_artifact_path,
-            "stop_reason": result.stop_reason,
-            "elapsed_seconds": result.elapsed_seconds,
-            **_race_result_metadata(result),
-            "outcomes": [
-                {
-                    "slot": o.slot,
-                    "agent": o.agent_key,
-                    "tmux_session": o.tmux_session,
-                    "phase": o.phase,
-                    "worktree_path": o.worktree_path,
-                    "exit_code": o.exit_code,
-                    "summary": o.summary,
-                    "done_signal": o.done_signal,
-                    "completion_status": o.control_status,
-                    "completion_reason": o.control_reason,
-                    "claims": list(o.claims),
-                    "claim_specs": [
-                        {"path": claim.path, "role": claim.role}
-                        for claim in o.claim_specs
-                    ],
-                    "changed_paths": list(o.changed_paths),
-                    "merged_paths": list(o.merged_paths),
-                    "merge_conflicts": list(o.merge_conflicts),
-                    "scope_violations": list(o.scope_violations),
-                    "remaining_work": list(o.remaining_work),
-                    "verification": list(o.verification),
-                    "started_at": o.started_at,
-                    "finished_at": o.finished_at,
-                }
-                for o in result.outcomes
-            ],
-        })
+        emit_json(
+            {
+                "command": "resolve",
+                "session_id": result.session_id,
+                "source_session_id": target_session_id,
+                "agents": list(result.agents),
+                "tmux_sessions": list(result.tmux_sessions),
+                "continued_from_session_id": result.continued_from_session_id,
+                "claim_ledger_path": result.claim_ledger_path,
+                "conflict_artifact_path": result.conflict_artifact_path,
+                "stop_reason": result.stop_reason,
+                "elapsed_seconds": result.elapsed_seconds,
+                **_race_result_metadata(result),
+                "outcomes": [
+                    {
+                        "slot": o.slot,
+                        "agent": o.agent_key,
+                        "tmux_session": o.tmux_session,
+                        "phase": o.phase,
+                        "worktree_path": o.worktree_path,
+                        "exit_code": o.exit_code,
+                        "summary": o.summary,
+                        "done_signal": o.done_signal,
+                        "completion_status": o.control_status,
+                        "completion_reason": o.control_reason,
+                        "claims": list(o.claims),
+                        "claim_specs": [
+                            {"path": claim.path, "role": claim.role}
+                            for claim in o.claim_specs
+                        ],
+                        "changed_paths": list(o.changed_paths),
+                        "merged_paths": list(o.merged_paths),
+                        "merge_conflicts": list(o.merge_conflicts),
+                        "scope_violations": list(o.scope_violations),
+                        "remaining_work": list(o.remaining_work),
+                        "verification": list(o.verification),
+                        "started_at": o.started_at,
+                        "finished_at": o.finished_at,
+                    }
+                    for o in result.outcomes
+                ],
+            }
+        )
     elif args.quiet:
         emit_quiet(result.session_id)
     else:
@@ -332,16 +354,18 @@ def cmd_relay(args: argparse.Namespace) -> int:
     )
 
     if args.json:
-        emit_json({
-            "command": "relay",
-            "session_id": result.session_id,
-            "from_agent": result.from_agent,
-            "to_agent": result.to_agent,
-            "handoff_id": result.handoff_id,
-            "resume_path": result.resume_path,
-            "launch_command": result.launch_command,
-            "created_session": result.created_session,
-        })
+        emit_json(
+            {
+                "command": "relay",
+                "session_id": result.session_id,
+                "from_agent": result.from_agent,
+                "to_agent": result.to_agent,
+                "handoff_id": result.handoff_id,
+                "resume_path": result.resume_path,
+                "launch_command": result.launch_command,
+                "created_session": result.created_session,
+            }
+        )
     elif args.quiet:
         emit_quiet(result.resume_path)
     else:
@@ -359,11 +383,20 @@ def cmd_relay(args: argparse.Namespace) -> int:
     if not no_launch:
         from agent_relay.handoffs import execute_launch_for_command
 
-        if not args.json and not args.quiet and not getattr(args, "yes", False) and sys.stdin.isatty():
+        if (
+            not args.json
+            and not args.quiet
+            and not getattr(args, "yes", False)
+            and sys.stdin.isatty()
+        ):
             from rich.prompt import Confirm
 
-            if not Confirm.ask("\n  [brand]Launch target agent?[/]", console=args.console, default=True):
-                args.console.print("  [muted]Launch skipped. Run manually with the command above.[/]")
+            if not Confirm.ask(
+                "\n  [brand]Launch target agent?[/]", console=args.console, default=True
+            ):
+                args.console.print(
+                    "  [muted]Launch skipped. Run manually with the command above.[/]"
+                )
                 return 0
 
         if not args.json and not args.quiet:
@@ -374,7 +407,9 @@ def cmd_relay(args: argparse.Namespace) -> int:
                 handoff_id=result.handoff_id,
                 owner="cli:relay:launch",
             )
-            render_relay_launch_result(args.console, launch_result.exit_code == 0, launch_result.exit_code)
+            render_relay_launch_result(
+                args.console, launch_result.exit_code == 0, launch_result.exit_code
+            )
         else:
             launch_result = execute_launch_for_command(
                 repo_root,
@@ -393,19 +428,21 @@ def cmd_status(args: argparse.Namespace) -> int:
     sessions = list_sessions_for_dashboard(repo_root)
 
     if args.json:
-        emit_json({
-            "command": "status",
-            "sessions": [
-                {
-                    "session_id": s["session_id"],
-                    "agent": s["current_agent"],
-                    "status": s["current_status"],
-                    "objective": s["objective"],
-                    "updated_at": s["updated_at"],
-                }
-                for s in sessions
-            ],
-        })
+        emit_json(
+            {
+                "command": "status",
+                "sessions": [
+                    {
+                        "session_id": s["session_id"],
+                        "agent": s["current_agent"],
+                        "status": s["current_status"],
+                        "objective": s["objective"],
+                        "updated_at": s["updated_at"],
+                    }
+                    for s in sessions
+                ],
+            }
+        )
     elif args.quiet:
         for s in sessions:
             emit_quiet(str(s["session_id"]))
@@ -437,7 +474,9 @@ def cmd_clean(args: argparse.Namespace) -> int:
         elif args.quiet:
             emit_quiet(str(root))
         else:
-            args.console.print("[success]Cleaned[/]  Removed all relay data.", highlight=False)
+            args.console.print(
+                "[success]Cleaned[/]  Removed all relay data.", highlight=False
+            )
         return 0
 
     # Remove all sessions
@@ -475,21 +514,23 @@ def cmd_discover(args: argparse.Namespace) -> int:
     results = discover()
 
     if args.json:
-        emit_json({
-            "command": "discover",
-            "agents": [
-                {
-                    "key": r.key,
-                    "display_name": r.display_name,
-                    "cli_command": r.cli_command,
-                    "alias": r.alias,
-                    "available": r.available,
-                    "cli_path": r.cli_path,
-                    "version": r.version,
-                }
-                for r in results
-            ],
-        })
+        emit_json(
+            {
+                "command": "discover",
+                "agents": [
+                    {
+                        "key": r.key,
+                        "display_name": r.display_name,
+                        "cli_command": r.cli_command,
+                        "alias": r.alias,
+                        "available": r.available,
+                        "cli_path": r.cli_path,
+                        "version": r.version,
+                    }
+                    for r in results
+                ],
+            }
+        )
     elif args.quiet:
         for r in results:
             if r.available:
@@ -500,7 +541,9 @@ def cmd_discover(args: argparse.Namespace) -> int:
     return 0
 
 
-def _parse_agents_and_task(args: argparse.Namespace, min_agents: int = 2) -> tuple[list[str], str]:
+def _parse_agents_and_task(
+    args: argparse.Namespace, min_agents: int = 2
+) -> tuple[list[str], str]:
     """Parse the positional args into agent keys and a task string.
 
     Supports two forms:
@@ -537,6 +580,122 @@ def _parse_agents_and_task(args: argparse.Namespace, min_agents: int = 2) -> tup
     return agents, task
 
 
+def _parse_run_task(args: argparse.Namespace, repo_root: Path) -> str:
+    positional_task: str | None = getattr(args, "task", None)
+    task_flag: str | None = getattr(args, "task_flag", None)
+    continue_session: str | None = getattr(args, "continue_session", None)
+
+    if positional_task and task_flag:
+        raise SystemExit("Choose either a positional task or --task, not both.")
+
+    if task_flag:
+        return task_flag
+    if positional_task:
+        return positional_task
+    if continue_session:
+        from agent_relay.storage import load_session_view
+
+        return load_session_view(repo_root, continue_session).objective
+
+    raise SystemExit(
+        "Missing task. Provide a task positionally or with -t:\n"
+        '  agent-relay run claude "fix the tests"\n'
+        '  agent-relay run claude -t "fix the tests"'
+    )
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    from agent_relay.run_session import run_session as do_run
+
+    repo_root = _resolve_repo(args.repo)
+    console = args.console
+    interactive = not args.json and not args.quiet
+    agent = resolve_agent_key(args.agent)
+    task = _parse_run_task(args, repo_root)
+
+    if interactive:
+        render_converse_start(console, [agent], task, args.max_turns)
+
+    _spinner_ctx = None
+
+    def on_turn_start(agent_key: str, turn_number: int, max_turns: int) -> None:
+        nonlocal _spinner_ctx
+        if interactive:
+            _spinner_ctx = render_converse_turn_active(
+                console, agent_key, turn_number, max_turns
+            )
+            _spinner_ctx.__enter__()
+
+    def on_turn_complete(turn: "TurnResult") -> None:  # noqa: F821
+        nonlocal _spinner_ctx
+        if _spinner_ctx is not None:
+            _spinner_ctx.__exit__(None, None, None)
+            _spinner_ctx = None
+        if interactive:
+            render_converse_turn_done(
+                console,
+                turn.turn_number,
+                turn.agent_key,
+                turn.summary,
+                turn.exit_code,
+                turn.text,
+            )
+
+    result = do_run(
+        repo_root,
+        agent=agent,
+        task=task,
+        max_turns=args.max_turns,
+        continue_from_session_id=getattr(args, "continue_session", None),
+        owner="cli:run",
+        on_turn_start=on_turn_start if interactive else None,
+        on_turn_complete=on_turn_complete if interactive else None,
+    )
+
+    if _spinner_ctx is not None:
+        _spinner_ctx.__exit__(None, None, None)
+
+    if args.json:
+        emit_json(
+            {
+                "command": "run",
+                "session_id": result.session_id,
+                "agent": agent,
+                "continued_from_session_id": result.continued_from_session_id,
+                "turns_completed": result.turns_completed,
+                "stop_reason": result.stop_reason,
+                "turns": [
+                    {
+                        "turn": t.turn_number,
+                        "agent": t.agent_key,
+                        "exit_code": t.exit_code,
+                        "summary": t.summary,
+                        "done_signal": t.done_signal,
+                        "completion_status": t.control_status,
+                        "completion_reason": t.control_reason,
+                        "remaining_work": list(t.remaining_work),
+                        "verification": list(t.verification),
+                        "started_at": t.started_at,
+                        "finished_at": t.finished_at,
+                    }
+                    for t in result.turn_results
+                ],
+            }
+        )
+    elif args.quiet:
+        emit_quiet(result.session_id)
+    else:
+        render_converse_result(
+            console,
+            result.session_id,
+            result.agents,
+            result.turns_completed,
+            result.stop_reason,
+        )
+
+    return 0
+
+
 def cmd_chat(args: argparse.Namespace) -> int:
     from agent_relay.converse import converse as do_converse
 
@@ -553,7 +712,9 @@ def cmd_chat(args: argparse.Namespace) -> int:
     def on_turn_start(agent_key: str, turn_number: int, max_turns: int) -> None:
         nonlocal _spinner_ctx
         if interactive:
-            _spinner_ctx = render_converse_turn_active(console, agent_key, turn_number, max_turns)
+            _spinner_ctx = render_converse_turn_active(
+                console, agent_key, turn_number, max_turns
+            )
             _spinner_ctx.__enter__()
 
     def on_turn_complete(turn: "TurnResult") -> None:  # noqa: F821
@@ -562,7 +723,14 @@ def cmd_chat(args: argparse.Namespace) -> int:
             _spinner_ctx.__exit__(None, None, None)
             _spinner_ctx = None
         if interactive:
-            render_converse_turn_done(console, turn.turn_number, turn.agent_key, turn.summary, turn.exit_code, turn.text)
+            render_converse_turn_done(
+                console,
+                turn.turn_number,
+                turn.agent_key,
+                turn.summary,
+                turn.exit_code,
+                turn.text,
+            )
 
     result = do_converse(
         repo_root,
@@ -579,30 +747,32 @@ def cmd_chat(args: argparse.Namespace) -> int:
         _spinner_ctx.__exit__(None, None, None)
 
     if args.json:
-        emit_json({
-            "command": "chat",
-            "session_id": result.session_id,
-            "agents": list(result.agents),
-            "continued_from_session_id": result.continued_from_session_id,
-            "turns_completed": result.turns_completed,
-            "stop_reason": result.stop_reason,
-            "turns": [
-                {
-                    "turn": t.turn_number,
-                    "agent": t.agent_key,
-                    "exit_code": t.exit_code,
-                    "summary": t.summary,
-                    "done_signal": t.done_signal,
-                    "completion_status": t.control_status,
-                    "completion_reason": t.control_reason,
-                    "remaining_work": list(t.remaining_work),
-                    "verification": list(t.verification),
-                    "started_at": t.started_at,
-                    "finished_at": t.finished_at,
-                }
-                for t in result.turn_results
-            ],
-        })
+        emit_json(
+            {
+                "command": "chat",
+                "session_id": result.session_id,
+                "agents": list(result.agents),
+                "continued_from_session_id": result.continued_from_session_id,
+                "turns_completed": result.turns_completed,
+                "stop_reason": result.stop_reason,
+                "turns": [
+                    {
+                        "turn": t.turn_number,
+                        "agent": t.agent_key,
+                        "exit_code": t.exit_code,
+                        "summary": t.summary,
+                        "done_signal": t.done_signal,
+                        "completion_status": t.control_status,
+                        "completion_reason": t.control_reason,
+                        "remaining_work": list(t.remaining_work),
+                        "verification": list(t.verification),
+                        "started_at": t.started_at,
+                        "finished_at": t.finished_at,
+                    }
+                    for t in result.turn_results
+                ],
+            }
+        )
     elif args.quiet:
         emit_quiet(result.session_id)
     else:
@@ -642,6 +812,7 @@ def cmd_race(args: argparse.Namespace) -> int:
     def on_agent_start(slot: int, agent_key: str, tmux_session: str) -> None:
         if interactive:
             from agent_relay.agents import get_agent_display_name
+
             name = get_agent_display_name(agent_key)
             console.print(
                 f"  [brand]▸[/] Slot {slot}: [bold]{name}[/] started  [muted]({tmux_session})[/]",
@@ -659,6 +830,7 @@ def cmd_race(args: argparse.Namespace) -> int:
     def on_agent_done(outcome: "AgentOutcome") -> None:  # noqa: F821
         if interactive:
             from agent_relay.agents import get_agent_display_name
+
             name = get_agent_display_name(outcome.agent_key)
             if outcome.exit_code == 0 and outcome.control_status == "done":
                 status = "[success]done[/]"
@@ -666,7 +838,11 @@ def cmd_race(args: argparse.Namespace) -> int:
                 status = f"[warning]{outcome.control_status}[/]"
             else:
                 status = f"[warning]exit {outcome.exit_code}[/]"
-            phase_label = f"[muted]{outcome.phase}[/] " if outcome.phase != "implementation" else ""
+            phase_label = (
+                f"[muted]{outcome.phase}[/] "
+                if outcome.phase != "implementation"
+                else ""
+            )
             console.print(
                 f"  [brand]▸[/] Slot {outcome.slot}: [bold]{name}[/] {phase_label}{status} — {outcome.summary}",
                 highlight=False,
@@ -684,46 +860,48 @@ def cmd_race(args: argparse.Namespace) -> int:
     )
 
     if args.json:
-        emit_json({
-            "command": "race",
-            "session_id": result.session_id,
-            "agents": list(result.agents),
-            "tmux_sessions": list(result.tmux_sessions),
-            "continued_from_session_id": result.continued_from_session_id,
-            "claim_ledger_path": result.claim_ledger_path,
-            "conflict_artifact_path": result.conflict_artifact_path,
-            "stop_reason": result.stop_reason,
-            "elapsed_seconds": result.elapsed_seconds,
-            **_race_result_metadata(result),
-            "outcomes": [
-                {
-                    "slot": o.slot,
-                    "agent": o.agent_key,
-                    "tmux_session": o.tmux_session,
-                    "phase": o.phase,
-                    "worktree_path": o.worktree_path,
-                    "exit_code": o.exit_code,
-                    "summary": o.summary,
-                    "done_signal": o.done_signal,
-                    "completion_status": o.control_status,
-                    "completion_reason": o.control_reason,
-                    "claims": list(o.claims),
-                    "claim_specs": [
-                        {"path": claim.path, "role": claim.role}
-                        for claim in o.claim_specs
-                    ],
-                    "changed_paths": list(o.changed_paths),
-                    "merged_paths": list(o.merged_paths),
-                    "merge_conflicts": list(o.merge_conflicts),
-                    "scope_violations": list(o.scope_violations),
-                    "remaining_work": list(o.remaining_work),
-                    "verification": list(o.verification),
-                    "started_at": o.started_at,
-                    "finished_at": o.finished_at,
-                }
-                for o in result.outcomes
-            ],
-        })
+        emit_json(
+            {
+                "command": "race",
+                "session_id": result.session_id,
+                "agents": list(result.agents),
+                "tmux_sessions": list(result.tmux_sessions),
+                "continued_from_session_id": result.continued_from_session_id,
+                "claim_ledger_path": result.claim_ledger_path,
+                "conflict_artifact_path": result.conflict_artifact_path,
+                "stop_reason": result.stop_reason,
+                "elapsed_seconds": result.elapsed_seconds,
+                **_race_result_metadata(result),
+                "outcomes": [
+                    {
+                        "slot": o.slot,
+                        "agent": o.agent_key,
+                        "tmux_session": o.tmux_session,
+                        "phase": o.phase,
+                        "worktree_path": o.worktree_path,
+                        "exit_code": o.exit_code,
+                        "summary": o.summary,
+                        "done_signal": o.done_signal,
+                        "completion_status": o.control_status,
+                        "completion_reason": o.control_reason,
+                        "claims": list(o.claims),
+                        "claim_specs": [
+                            {"path": claim.path, "role": claim.role}
+                            for claim in o.claim_specs
+                        ],
+                        "changed_paths": list(o.changed_paths),
+                        "merged_paths": list(o.merged_paths),
+                        "merge_conflicts": list(o.merge_conflicts),
+                        "scope_violations": list(o.scope_violations),
+                        "remaining_work": list(o.remaining_work),
+                        "verification": list(o.verification),
+                        "started_at": o.started_at,
+                        "finished_at": o.finished_at,
+                    }
+                    for o in result.outcomes
+                ],
+            }
+        )
     elif args.quiet:
         emit_quiet(result.session_id)
     else:
@@ -735,21 +913,44 @@ def cmd_race(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agent-relay", add_help=False)
     parser.add_argument("--help", "-h", action="store_true", default=False)
-    parser.add_argument("--json", action="store_true", help="Machine-readable JSON output")
+    parser.add_argument(
+        "--json", action="store_true", help="Machine-readable JSON output"
+    )
     parser.add_argument("--quiet", "-q", action="store_true", help="Minimal output")
     subparsers = parser.add_subparsers(dest="command")
 
     # agent-relay <agent> — the one command users need
     for agent_key in AGENT_NAMES:
-        agent_cmd = subparsers.add_parser(agent_key, help=f"Relay to {AGENT_REGISTRY[agent_key].display_name}")
-        agent_cmd.add_argument("--from", dest="from_agent", choices=AGENT_NAMES, help="Source agent (auto-detected)")
+        agent_cmd = subparsers.add_parser(
+            agent_key, help=f"Relay to {AGENT_REGISTRY[agent_key].display_name}"
+        )
+        agent_cmd.add_argument(
+            "--from",
+            dest="from_agent",
+            choices=AGENT_NAMES,
+            help="Source agent (auto-detected)",
+        )
         agent_cmd.add_argument("--task", "-t", help="What the next agent should do")
-        agent_cmd.add_argument("--planning-note", help="Planning snapshot to preserve even when no code changed")
-        agent_cmd.add_argument("--planning-note-file", help="Path to a planning snapshot file")
-        agent_cmd.add_argument("--proposed-edits", help="UI-only or not-yet-applied proposed edits to preserve")
-        agent_cmd.add_argument("--proposed-edits-file", help="Path to a proposed edits file or diff")
-        agent_cmd.add_argument("--no-launch", action="store_true", help="Just create the packet")
-        agent_cmd.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
+        agent_cmd.add_argument(
+            "--planning-note",
+            help="Planning snapshot to preserve even when no code changed",
+        )
+        agent_cmd.add_argument(
+            "--planning-note-file", help="Path to a planning snapshot file"
+        )
+        agent_cmd.add_argument(
+            "--proposed-edits",
+            help="UI-only or not-yet-applied proposed edits to preserve",
+        )
+        agent_cmd.add_argument(
+            "--proposed-edits-file", help="Path to a proposed edits file or diff"
+        )
+        agent_cmd.add_argument(
+            "--no-launch", action="store_true", help="Just create the packet"
+        )
+        agent_cmd.add_argument(
+            "--yes", "-y", action="store_true", help="Skip confirmation"
+        )
         agent_cmd.add_argument("--repo", help="Repository path (default: cwd)")
         agent_cmd.set_defaults(func=cmd_relay, to=agent_key)
 
@@ -760,7 +961,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     # agent-relay clean — remove sessions
     clean = subparsers.add_parser("clean", help="Remove all relay sessions")
-    clean.add_argument("--all", action="store_true", help="Remove the entire .agent-relay directory")
+    clean.add_argument(
+        "--all", action="store_true", help="Remove the entire .agent-relay directory"
+    )
     clean.add_argument("--repo")
     clean.set_defaults(func=cmd_clean)
 
@@ -768,22 +971,83 @@ def build_parser() -> argparse.ArgumentParser:
     disc = subparsers.add_parser("discover", help="Detect available agent CLIs")
     disc.set_defaults(func=cmd_discover)
 
+    # agent-relay run <agent> <task> — single-agent managed session
+    run = subparsers.add_parser(
+        "run", help="Run a single agent in a Relay-managed session"
+    )
+    run.add_argument("agent", help="Agent key or alias")
+    run.add_argument("task", nargs="?", help="Task (omit when using -t or --continue)")
+    run.add_argument(
+        "--task",
+        "-t",
+        dest="task_flag",
+        default=None,
+        help="Task (alternative to positional)",
+    )
+    run.add_argument(
+        "--continue",
+        dest="continue_session",
+        help="Continue from a prior relay session id",
+    )
+    run.add_argument(
+        "--max-turns", "-n", type=int, default=10, help="Maximum turns (default: 10)"
+    )
+    run.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
+    run.add_argument("--repo", help="Repository path (default: cwd)")
+    run.set_defaults(func=cmd_run)
+
     # agent-relay chat <agent> [<agent>...] <task> — turn-based conversation
     chat = subparsers.add_parser("chat", help="Turn-based agent-to-agent conversation")
-    chat.add_argument("args", nargs="+", metavar="AGENT_OR_TASK", help="Agents and task (last arg is task, or use -t)")
-    chat.add_argument("--task", "-t", dest="task_flag", default=None, help="Task (alternative to positional)")
-    chat.add_argument("--continue", dest="continue_session", help="Continue from a prior relay session id")
-    chat.add_argument("--max-turns", "-n", type=int, default=10, help="Maximum turns (default: 10)")
+    chat.add_argument(
+        "args",
+        nargs="+",
+        metavar="AGENT_OR_TASK",
+        help="Agents and task (last arg is task, or use -t)",
+    )
+    chat.add_argument(
+        "--task",
+        "-t",
+        dest="task_flag",
+        default=None,
+        help="Task (alternative to positional)",
+    )
+    chat.add_argument(
+        "--continue",
+        dest="continue_session",
+        help="Continue from a prior relay session id",
+    )
+    chat.add_argument(
+        "--max-turns", "-n", type=int, default=10, help="Maximum turns (default: 10)"
+    )
     chat.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
     chat.add_argument("--repo", help="Repository path (default: cwd)")
     chat.set_defaults(func=cmd_chat)
 
     # agent-relay race <agent> [<agent>...] <task> — concurrent agents with tmux
-    race = subparsers.add_parser("race", help="Run agents concurrently with live visibility")
-    race.add_argument("args", nargs="+", metavar="AGENT_OR_TASK", help="Agents and task (last arg is task, or use -t)")
-    race.add_argument("--task", "-t", dest="task_flag", default=None, help="Task (alternative to positional)")
-    race.add_argument("--continue", dest="continue_session", help="Continue from a prior relay session id")
-    race.add_argument("--max-time", type=int, default=600, help="Max seconds (default: 600)")
+    race = subparsers.add_parser(
+        "race", help="Run agents concurrently with live visibility"
+    )
+    race.add_argument(
+        "args",
+        nargs="+",
+        metavar="AGENT_OR_TASK",
+        help="Agents and task (last arg is task, or use -t)",
+    )
+    race.add_argument(
+        "--task",
+        "-t",
+        dest="task_flag",
+        default=None,
+        help="Task (alternative to positional)",
+    )
+    race.add_argument(
+        "--continue",
+        dest="continue_session",
+        help="Continue from a prior relay session id",
+    )
+    race.add_argument(
+        "--max-time", type=int, default=600, help="Max seconds (default: 600)"
+    )
     race.add_argument(
         "--open-terminals",
         action=argparse.BooleanOptionalAction,
@@ -794,12 +1058,31 @@ def build_parser() -> argparse.ArgumentParser:
     race.add_argument("--repo", help="Repository path (default: cwd)")
     race.set_defaults(func=cmd_race)
 
-    resolve = subparsers.add_parser("resolve", help="Resume an unresolved race conflict")
-    resolve.add_argument("session_id", nargs="?", help="Relay session id (defaults to latest unresolved conflict)")
-    resolve.add_argument("--latest", action="store_true", help="Resolve the latest unresolved conflict session")
-    resolve.add_argument("--agent", dest="agent_overrides", action="append", help="Override inferred resolver agents")
-    resolve.add_argument("--task", "-t", dest="task_flag", default=None, help="Resolution task override")
-    resolve.add_argument("--max-time", type=int, default=600, help="Max seconds (default: 600)")
+    resolve = subparsers.add_parser(
+        "resolve", help="Resume an unresolved race conflict"
+    )
+    resolve.add_argument(
+        "session_id",
+        nargs="?",
+        help="Relay session id (defaults to latest unresolved conflict)",
+    )
+    resolve.add_argument(
+        "--latest",
+        action="store_true",
+        help="Resolve the latest unresolved conflict session",
+    )
+    resolve.add_argument(
+        "--agent",
+        dest="agent_overrides",
+        action="append",
+        help="Override inferred resolver agents",
+    )
+    resolve.add_argument(
+        "--task", "-t", dest="task_flag", default=None, help="Resolution task override"
+    )
+    resolve.add_argument(
+        "--max-time", type=int, default=600, help="Max seconds (default: 600)"
+    )
     resolve.add_argument(
         "--open-terminals",
         action=argparse.BooleanOptionalAction,
@@ -810,7 +1093,9 @@ def build_parser() -> argparse.ArgumentParser:
     resolve.add_argument("--repo", help="Repository path (default: cwd)")
     resolve.set_defaults(func=cmd_resolve)
 
-    inspect_conflicts = subparsers.add_parser("inspect-conflicts", help="Inspect saved concurrent conflict artifacts")
+    inspect_conflicts = subparsers.add_parser(
+        "inspect-conflicts", help="Inspect saved concurrent conflict artifacts"
+    )
     inspect_conflicts.add_argument("session_id", help="Relay session id")
     inspect_conflicts.add_argument("--repo", help="Repository path (default: cwd)")
     inspect_conflicts.set_defaults(func=cmd_inspect_conflicts)

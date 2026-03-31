@@ -115,6 +115,7 @@ def emit_quiet(value: str) -> None:
 # Shared helpers
 # ---------------------------------------------------------------------------
 
+
 def render_banner(console: Console) -> None:
     if is_compact(console):
         console.print(BANNER_COMPACT)
@@ -127,14 +128,16 @@ def render_banner(console: Console) -> None:
             _banner_icon(),
             _banner_body(include_tips=show_tips),
         )
-        console.print(Panel(
-            layout,
-            border_style="banner.border",
-            box=box.ROUNDED,
-            padding=(1, 2),
-            expand=True,
-            style="banner.surface",
-        ))
+        console.print(
+            Panel(
+                layout,
+                border_style="banner.border",
+                box=box.ROUNDED,
+                padding=(1, 2),
+                expand=True,
+                style="banner.surface",
+            )
+        )
     console.print()
 
 
@@ -223,7 +226,9 @@ def agent_badge(agent_key: str, short: bool = False) -> Text:
     return Text(f"{symbol} {name}", style=style_key)
 
 
-def _join_badges(badges: list[Text], separator: str = " → ", sep_style: str = "brand") -> Text:
+def _join_badges(
+    badges: list[Text], separator: str = " → ", sep_style: str = "brand"
+) -> Text:
     """Join Text badges with a styled separator."""
     result = Text()
     for i, badge in enumerate(badges):
@@ -233,7 +238,9 @@ def _join_badges(badges: list[Text], separator: str = " → ", sep_style: str = 
     return result
 
 
-def _label_value(label: str, value: str, label_style: str = "label", value_style: str = "value") -> Text:
+def _label_value(
+    label: str, value: str, label_style: str = "label", value_style: str = "value"
+) -> Text:
     text = Text()
     text.append(f"  {label}: ", style=label_style)
     text.append(value, style=value_style)
@@ -243,6 +250,7 @@ def _label_value(label: str, value: str, label_style: str = "label", value_style
 # ---------------------------------------------------------------------------
 # Command renderers
 # ---------------------------------------------------------------------------
+
 
 def render_start_success(
     console: Console,
@@ -254,7 +262,9 @@ def render_start_success(
     render_banner(console)
 
     if is_compact(console):
-        console.print(f"[success]Session created[/]  [brand]{session_id}[/]", highlight=False)
+        console.print(
+            f"[success]Session created[/]  [brand]{session_id}[/]", highlight=False
+        )
         console.print(f"  [label]Agent:[/]     {agent_badge(agent)}", highlight=False)
         console.print(f"  [label]Objective:[/] [value]{objective}[/]", highlight=False)
         console.print(f"  [label]Path:[/]      [path]{state_path}[/]", highlight=False)
@@ -274,14 +284,16 @@ def render_start_success(
     content.append("  Path      ", style="label")
     content.append(state_path, style="path")
 
-    console.print(Panel(
-        content,
-        border_style="brand",
-        title="[brand]new session[/]",
-        title_align="left",
-        padding=(1, 2),
-        expand=False,
-    ))
+    console.print(
+        Panel(
+            content,
+            border_style="brand",
+            title="[brand]new session[/]",
+            title_align="left",
+            padding=(1, 2),
+            expand=False,
+        )
+    )
 
 
 def render_checkpoint_success(
@@ -290,7 +302,9 @@ def render_checkpoint_success(
     checkpoint_id: str,
 ) -> None:
     if is_compact(console):
-        console.print(f"[success]Checkpoint saved[/]  [brand]{checkpoint_id}[/]", highlight=False)
+        console.print(
+            f"[success]Checkpoint saved[/]  [brand]{checkpoint_id}[/]", highlight=False
+        )
         console.print(f"  [label]Session:[/] [muted]{session_id}[/]", highlight=False)
         return
 
@@ -302,14 +316,16 @@ def render_checkpoint_success(
     content.append("  Session     ", style="label")
     content.append(session_id, style="muted")
 
-    console.print(Panel(
-        content,
-        border_style="brand.dim",
-        title="[brand.dim]checkpoint[/]",
-        title_align="left",
-        padding=(0, 2),
-        expand=False,
-    ))
+    console.print(
+        Panel(
+            content,
+            border_style="brand.dim",
+            title="[brand.dim]checkpoint[/]",
+            title_align="left",
+            padding=(0, 2),
+            expand=False,
+        )
+    )
 
 
 def render_pause_success(
@@ -319,9 +335,16 @@ def render_pause_success(
     next_action: str,
 ) -> None:
     if is_compact(console):
-        console.print(f"[warning]Session paused[/]  [brand]{checkpoint_id}[/]", highlight=False)
-        console.print(f"  [label]Session:[/]     [muted]{session_id}[/]", highlight=False)
-        console.print(f"  [label]Next action:[/] [value]{next_action or 'None recorded'}[/]", highlight=False)
+        console.print(
+            f"[warning]Session paused[/]  [brand]{checkpoint_id}[/]", highlight=False
+        )
+        console.print(
+            f"  [label]Session:[/]     [muted]{session_id}[/]", highlight=False
+        )
+        console.print(
+            f"  [label]Next action:[/] [value]{next_action or 'None recorded'}[/]",
+            highlight=False,
+        )
         return
 
     content = Text()
@@ -335,14 +358,16 @@ def render_pause_success(
     content.append("  Next action ", style="label")
     content.append(next_action or "None recorded", style="value")
 
-    console.print(Panel(
-        content,
-        border_style="brand.dim",
-        title="[brand.dim]pause[/]",
-        title_align="left",
-        padding=(0, 2),
-        expand=False,
-    ))
+    console.print(
+        Panel(
+            content,
+            border_style="brand.dim",
+            title="[brand.dim]pause[/]",
+            title_align="left",
+            padding=(0, 2),
+            expand=False,
+        )
+    )
 
 
 def render_prepare_success(
@@ -352,9 +377,16 @@ def render_prepare_success(
     next_action: str,
 ) -> None:
     if is_compact(console):
-        console.print(f"[brand]Prepared for handoff[/]  [brand]{checkpoint_id}[/]", highlight=False)
-        console.print(f"  [label]Session:[/]     [muted]{session_id}[/]", highlight=False)
-        console.print(f"  [label]Next action:[/] [value]{next_action}[/]", highlight=False)
+        console.print(
+            f"[brand]Prepared for handoff[/]  [brand]{checkpoint_id}[/]",
+            highlight=False,
+        )
+        console.print(
+            f"  [label]Session:[/]     [muted]{session_id}[/]", highlight=False
+        )
+        console.print(
+            f"  [label]Next action:[/] [value]{next_action}[/]", highlight=False
+        )
         return
 
     content = Text()
@@ -368,14 +400,16 @@ def render_prepare_success(
     content.append("  Next action ", style="label")
     content.append(next_action, style="value")
 
-    console.print(Panel(
-        content,
-        border_style="brand",
-        title="[brand]prepare[/]",
-        title_align="left",
-        padding=(0, 2),
-        expand=False,
-    ))
+    console.print(
+        Panel(
+            content,
+            border_style="brand",
+            title="[brand]prepare[/]",
+            title_align="left",
+            padding=(0, 2),
+            expand=False,
+        )
+    )
 
 
 def render_failover_success(
@@ -388,10 +422,15 @@ def render_failover_success(
 ) -> None:
     if is_compact(console):
         console.print("[brand]Handoff prepared[/]", highlight=False)
-        console.print(f"  {agent_badge(from_agent)} [brand]──▶[/] {agent_badge(to_agent)}", highlight=False)
+        console.print(
+            f"  {agent_badge(from_agent)} [brand]──▶[/] {agent_badge(to_agent)}",
+            highlight=False,
+        )
         console.print(f"  [label]Reason:[/]  [value]{reason}[/]", highlight=False)
         console.print(f"  [label]Resume:[/]  [path]{resume_path}[/]", highlight=False)
-        console.print(f"  [label]Launch:[/]  [muted]{launch_command}[/]", highlight=False)
+        console.print(
+            f"  [label]Launch:[/]  [muted]{launch_command}[/]", highlight=False
+        )
         return
 
     arrow = Text()
@@ -415,14 +454,16 @@ def render_failover_success(
     content.append("  Command  ", style="label")
     content.append(launch_command, style="muted")
 
-    console.print(Panel(
-        content,
-        border_style="brand",
-        title="[brand]failover[/]",
-        title_align="left",
-        padding=(1, 2),
-        expand=False,
-    ))
+    console.print(
+        Panel(
+            content,
+            border_style="brand",
+            title="[brand]failover[/]",
+            title_align="left",
+            padding=(1, 2),
+            expand=False,
+        )
+    )
 
 
 def render_launch_preview(
@@ -435,12 +476,24 @@ def render_launch_preview(
     warning: str | None = None,
 ) -> None:
     if is_compact(console):
-        console.print(f"[brand]Launch preview[/]  [label]target:[/] {agent_badge(to_agent)}", highlight=False)
-        console.print(f"  [label]Resume:[/]       [path]{resume_path}[/]", highlight=False)
-        console.print(f"  [label]Command:[/]      [muted]{launch_command}[/]", highlight=False)
-        console.print(f"  [label]Instructions:[/] [value]{launch_instructions}[/]", highlight=False)
+        console.print(
+            f"[brand]Launch preview[/]  [label]target:[/] {agent_badge(to_agent)}",
+            highlight=False,
+        )
+        console.print(
+            f"  [label]Resume:[/]       [path]{resume_path}[/]", highlight=False
+        )
+        console.print(
+            f"  [label]Command:[/]      [muted]{launch_command}[/]", highlight=False
+        )
+        console.print(
+            f"  [label]Instructions:[/] [value]{launch_instructions}[/]",
+            highlight=False,
+        )
         if warning:
-            console.print(f"  [warning]Warning:[/]     [value]{warning}[/]", highlight=False)
+            console.print(
+                f"  [warning]Warning:[/]     [value]{warning}[/]", highlight=False
+            )
         return
 
     content = Text()
@@ -461,14 +514,16 @@ def render_launch_preview(
         content.append("  Warning       ", style="label")
         content.append(warning, style="warning")
 
-    console.print(Panel(
-        content,
-        border_style="brand.dim",
-        title="[brand.dim]launch[/]",
-        title_align="left",
-        padding=(1, 2),
-        expand=False,
-    ))
+    console.print(
+        Panel(
+            content,
+            border_style="brand.dim",
+            title="[brand.dim]launch[/]",
+            title_align="left",
+            padding=(1, 2),
+            expand=False,
+        )
+    )
 
 
 def render_launch_executing(console: Console) -> Any:
@@ -481,7 +536,10 @@ def render_launch_result(console: Console, success: bool, exit_code: int) -> Non
         console.print("[success]  ✔ Launch succeeded[/]", highlight=False)
     else:
         console.print()
-        console.print(f"[error]  ✖ Launch failed[/]  [muted]exit code {exit_code}[/]", highlight=False)
+        console.print(
+            f"[error]  ✖ Launch failed[/]  [muted]exit code {exit_code}[/]",
+            highlight=False,
+        )
 
 
 def render_inspect(console: Console, session_dict: dict[str, Any]) -> None:
@@ -502,25 +560,39 @@ def render_inspect(console: Console, session_dict: dict[str, Any]) -> None:
     header.append("  ")
     header.append_text(status_badge(status))
 
-    console.print(Panel(
-        header,
-        border_style="brand",
-        title="[brand]session[/]",
-        title_align="left",
-        padding=(0, 2),
-        expand=False,
-    ))
+    console.print(
+        Panel(
+            header,
+            border_style="brand",
+            title="[brand]session[/]",
+            title_align="left",
+            padding=(0, 2),
+            expand=False,
+        )
+    )
 
     # Objective
     console.print(f"\n  [label]Objective[/]    [value]{objective}[/]")
-    console.print(f"  [label]Workstream[/]   [value]{session_dict.get('workstream_kind', '?')}[/]")
-    console.print(f"  [label]Health[/]       {status_badge(session_dict.get('health', 'healthy'))}")
-    console.print(f"  [label]Next action[/]  [value]{session_dict.get('next_action') or 'None'}[/]")
-    console.print(f"  [label]Created[/]      [muted]{session_dict.get('created_at', '?')}[/]")
-    console.print(f"  [label]Updated[/]      [muted]{session_dict.get('updated_at', '?')}[/]")
+    console.print(
+        f"  [label]Workstream[/]   [value]{session_dict.get('workstream_kind', '?')}[/]"
+    )
+    console.print(
+        f"  [label]Health[/]       {status_badge(session_dict.get('health', 'healthy'))}"
+    )
+    console.print(
+        f"  [label]Next action[/]  [value]{session_dict.get('next_action') or 'None'}[/]"
+    )
+    console.print(
+        f"  [label]Created[/]      [muted]{session_dict.get('created_at', '?')}[/]"
+    )
+    console.print(
+        f"  [label]Updated[/]      [muted]{session_dict.get('updated_at', '?')}[/]"
+    )
     if session_dict.get("last_valid_event"):
         last_valid = session_dict["last_valid_event"]
-        console.print(f"  [label]Last valid[/]   [muted]{last_valid.get('event_id', '?')}[/]")
+        console.print(
+            f"  [label]Last valid[/]   [muted]{last_valid.get('event_id', '?')}[/]"
+        )
     if session_dict.get("error"):
         console.print(f"  [label]Integrity[/]    [error]{session_dict['error']}[/]")
 
@@ -605,7 +677,9 @@ def render_inspect(console: Console, session_dict: dict[str, Any]) -> None:
     v_summary = validation.get("summary", "")
     console.print()
     console.print(Rule(style="brand.dim"))
-    console.print(f"\n  [heading]Validation[/]  {status_badge(v_status) if v_status in STATUS_SYMBOLS else v_status}")
+    console.print(
+        f"\n  [heading]Validation[/]  {status_badge(v_status) if v_status in STATUS_SYMBOLS else v_status}"
+    )
     if v_summary:
         console.print(f"    {v_summary}")
     console.print()
@@ -616,9 +690,18 @@ def _render_inspect_compact(console: Console, session_dict: dict[str, Any]) -> N
     agent = session_dict.get("current_agent", "?")
     status = session_dict.get("current_status", "?")
 
-    console.print(f"[brand]{sid}[/]  {agent_badge(agent)}  {status_badge(status)}", highlight=False)
-    console.print(f"  [label]Objective:[/] [value]{session_dict.get('objective', '?')}[/]", highlight=False)
-    console.print(f"  [label]Health:[/] {status_badge(session_dict.get('health', 'healthy'))}", highlight=False)
+    console.print(
+        f"[brand]{sid}[/]  {agent_badge(agent)}  {status_badge(status)}",
+        highlight=False,
+    )
+    console.print(
+        f"  [label]Objective:[/] [value]{session_dict.get('objective', '?')}[/]",
+        highlight=False,
+    )
+    console.print(
+        f"  [label]Health:[/] {status_badge(session_dict.get('health', 'healthy'))}",
+        highlight=False,
+    )
     if session_dict.get("error"):
         console.print(f"  [error]{session_dict['error']}[/]", highlight=False)
     for path in session_dict.get("broken_paths", []):
@@ -643,7 +726,9 @@ def render_dashboard(console: Console, sessions: list[dict[str, Any]]) -> None:
 
     if not sessions:
         console.print("  [muted]No sessions found.[/]")
-        console.print("  [label]Start one with:[/]  [brand]agent-relay codex[/]  or  [brand]agent-relay claude[/]")
+        console.print(
+            "  [label]Start one with:[/]  [brand]agent-relay codex[/]  or  [brand]agent-relay claude[/]"
+        )
         console.print()
         return
 
@@ -681,7 +766,9 @@ def render_dashboard(console: Console, sessions: list[dict[str, Any]]) -> None:
         if len(obj) > max_obj:
             obj = obj[: max_obj - 3] + "..."
         updated = s.get("updated_at", "?")
-        updated_short = updated[5:16].replace("T", " ") if len(updated) >= 16 else updated
+        updated_short = (
+            updated[5:16].replace("T", " ") if len(updated) >= 16 else updated
+        )
         health = s.get("health", "healthy")
         status = health if health != "healthy" else s.get("current_status", "?")
         table.add_row(
@@ -704,18 +791,39 @@ def render_help(console: Console) -> None:
     if compact:
         console.print("[heading]Usage[/]")
         console.print()
-        console.print("  [brand]agent-relay <agent>[/]                  Relay to an agent")
+        console.print(
+            "  [brand]agent-relay <agent>[/]                  Relay to an agent"
+        )
+        console.print(
+            '  [brand]agent-relay run c "fix tests"[/]       Single-agent managed run'
+        )
         console.print("  [brand]agent-relay codex[/]                   Relay to Codex")
-        console.print("  [brand]agent-relay claude --task \"...\"[/]     With instructions")
-        console.print('  [brand]agent-relay chat c x "fix tests"[/]    Turn-based conversation')
-        console.print('  [brand]agent-relay race c x "build auth"[/]   Concurrent agents (tmux)')
-        console.print("  [brand]agent-relay resolve [id][/]            Resume a race conflict")
-        console.print("  [brand]agent-relay discover[/]                Show available agents")
+        console.print(
+            '  [brand]agent-relay claude --task "..."[/]     With instructions'
+        )
+        console.print(
+            '  [brand]agent-relay chat c x "fix tests"[/]    Turn-based conversation'
+        )
+        console.print(
+            '  [brand]agent-relay race c x "build auth"[/]   Concurrent agents (tmux)'
+        )
+        console.print(
+            "  [brand]agent-relay resolve [id][/]            Resume a race conflict"
+        )
+        console.print(
+            "  [brand]agent-relay discover[/]                Show available agents"
+        )
         console.print("  [brand]agent-relay status[/]                  View sessions")
-        console.print("  [brand]agent-relay inspect-conflicts <id>[/]  Inspect race conflicts")
-        console.print("  [brand]agent-relay clean[/]                   Remove all sessions")
+        console.print(
+            "  [brand]agent-relay inspect-conflicts <id>[/]  Inspect race conflicts"
+        )
+        console.print(
+            "  [brand]agent-relay clean[/]                   Remove all sessions"
+        )
         console.print()
-        console.print("[heading]Aliases[/]  [muted]c = claude, x = codex (see: agent-relay discover)[/]")
+        console.print(
+            "[heading]Aliases[/]  [muted]c = claude, x = codex (see: agent-relay discover)[/]"
+        )
         console.print()
         return
 
@@ -725,25 +833,38 @@ def render_help(console: Console) -> None:
     examples.add_column("Description", style="muted")
 
     examples.add_row("agent-relay <agent>", "Relay to an agent (codex, claude)")
-    examples.add_row('agent-relay claude --task "..."', "With instructions for the next agent")
-    examples.add_row("agent-relay codex --no-launch", "Create the packet without launching")
-    examples.add_row('agent-relay chat c x "fix tests"', "Turn-based agent conversation")
+    examples.add_row('agent-relay run c "fix tests"', "Single-agent managed run")
+    examples.add_row(
+        'agent-relay claude --task "..."', "With instructions for the next agent"
+    )
+    examples.add_row(
+        "agent-relay codex --no-launch", "Create the packet without launching"
+    )
+    examples.add_row(
+        'agent-relay chat c x "fix tests"', "Turn-based agent conversation"
+    )
     examples.add_row('agent-relay chat c x c "review" -n 6', "3-agent, 6 turns max")
     examples.add_row('agent-relay race c x "build auth"', "Concurrent agents (tmux)")
-    examples.add_row("agent-relay resolve <session>", "Resume an unresolved race conflict")
-    examples.add_row("agent-relay inspect-conflicts <session>", "Inspect saved conflict artifacts")
+    examples.add_row(
+        "agent-relay resolve <session>", "Resume an unresolved race conflict"
+    )
+    examples.add_row(
+        "agent-relay inspect-conflicts <session>", "Inspect saved conflict artifacts"
+    )
     examples.add_row("agent-relay discover", "Show available agents & aliases")
     examples.add_row("agent-relay status", "View all relay sessions")
     examples.add_row("agent-relay clean", "Remove all sessions")
 
-    console.print(Panel(
-        examples,
-        border_style="brand",
-        title="[heading]usage[/]",
-        title_align="left",
-        padding=(1, 2),
-        expand=False,
-    ))
+    console.print(
+        Panel(
+            examples,
+            border_style="brand",
+            title="[heading]usage[/]",
+            title_align="left",
+            padding=(1, 2),
+            expand=False,
+        )
+    )
 
     console.print()
 
@@ -753,7 +874,8 @@ def render_help(console: Console) -> None:
     opts.add_column("Description", style="value")
 
     opts.add_row("--task   -t", "Task for agents (alternative to positional)")
-    opts.add_row("-n", "Max turns for chat (default: 10)")
+    opts.add_row("--continue", "Continue from a prior relay session id")
+    opts.add_row("-n", "Max turns for run/chat (default: 10)")
     opts.add_row("--max-time", "Max seconds for race (default: 600)")
     opts.add_row("--from", "Source agent for relay (auto-detected)")
     opts.add_row("--no-launch", "Just create the handoff packet")
@@ -761,29 +883,43 @@ def render_help(console: Console) -> None:
     opts.add_row("--json", "Machine-readable JSON output")
     opts.add_row("--quiet  -q", "Minimal output")
 
-    console.print(Panel(
-        opts,
-        border_style="brand.dim",
-        title="[heading]options[/]",
-        title_align="left",
-        padding=(0, 2),
-        expand=False,
-    ))
+    console.print(
+        Panel(
+            opts,
+            border_style="brand.dim",
+            title="[heading]options[/]",
+            title_align="left",
+            padding=(0, 2),
+            expand=False,
+        )
+    )
 
     console.print()
 
 
 def render_conflict_inspect(console: Console, summary: dict[str, Any]) -> None:
     render_banner(console)
-    console.print(f"  [label]Session:[/]  [muted]{summary.get('session_id', '?')}[/]", highlight=False)
-    console.print(f"  [label]Status:[/]  [value]{summary.get('status', 'unknown')}[/]", highlight=False)
-    console.print(f"  [label]Artifact:[/]  [muted]{summary.get('conflict_artifact_path', '?')}[/]", highlight=False)
+    console.print(
+        f"  [label]Session:[/]  [muted]{summary.get('session_id', '?')}[/]",
+        highlight=False,
+    )
+    console.print(
+        f"  [label]Status:[/]  [value]{summary.get('status', 'unknown')}[/]",
+        highlight=False,
+    )
+    console.print(
+        f"  [label]Artifact:[/]  [muted]{summary.get('conflict_artifact_path', '?')}[/]",
+        highlight=False,
+    )
     note = str(summary.get("note", "")).strip()
     if note:
         console.print(f"  [label]Note:[/]  {note}", highlight=False)
     manual_paths = summary.get("manual_paths", [])
     if isinstance(manual_paths, list) and manual_paths:
-        console.print(f"  [label]Manual:[/]  [muted]{', '.join(str(path) for path in manual_paths)}[/]", highlight=False)
+        console.print(
+            f"  [label]Manual:[/]  [muted]{', '.join(str(path) for path in manual_paths)}[/]",
+            highlight=False,
+        )
     attempted_slots = summary.get("attempted_slots", [])
     if isinstance(attempted_slots, list) and attempted_slots:
         console.print(
@@ -803,7 +939,9 @@ def render_conflict_inspect(console: Console, summary: dict[str, Any]) -> None:
             continue
         path = str(item.get("path", "")).strip() or "?"
         kind = str(item.get("kind", "unknown")).strip() or "unknown"
-        console.print(f"  [brand]•[/] [value]{path}[/]  [muted]({kind})[/]", highlight=False)
+        console.print(
+            f"  [brand]•[/] [value]{path}[/]  [muted]({kind})[/]", highlight=False
+        )
         manual_reasons = item.get("manual_reasons", [])
         if isinstance(manual_reasons, list) and manual_reasons:
             console.print(
@@ -834,7 +972,10 @@ def render_conflict_inspect(console: Console, summary: dict[str, Any]) -> None:
                 continue
             full_path = version.get("full_path")
             if isinstance(full_path, str) and full_path.strip():
-                console.print(f"      [label]{version_label}:[/]  [muted]{full_path}[/]", highlight=False)
+                console.print(
+                    f"      [label]{version_label}:[/]  [muted]{full_path}[/]",
+                    highlight=False,
+                )
         if isinstance(contributors, list):
             for contributor in contributors:
                 if not isinstance(contributor, dict):
@@ -870,13 +1011,21 @@ def render_relay_success(
 
     if is_compact(console):
         console.print("[success]Relay ready[/]", highlight=False)
-        console.print(f"  {agent_badge(from_agent)} [brand]──▶[/] {agent_badge(to_agent)}", highlight=False)
+        console.print(
+            f"  {agent_badge(from_agent)} [brand]──▶[/] {agent_badge(to_agent)}",
+            highlight=False,
+        )
         console.print(f"  [label]Session:[/] [muted]{session_id}[/]", highlight=False)
         console.print(f"  [label]Packet:[/]  [path]{resume_path}[/]", highlight=False)
         if no_launch:
-            console.print(f"\n  [label]Run manually:[/]  [muted]{launch_command}[/]", highlight=False)
+            console.print(
+                f"\n  [label]Run manually:[/]  [muted]{launch_command}[/]",
+                highlight=False,
+            )
         else:
-            console.print(f"\n  [label]Launch:[/]  [muted]{launch_command}[/]", highlight=False)
+            console.print(
+                f"\n  [label]Launch:[/]  [muted]{launch_command}[/]", highlight=False
+            )
         return
 
     arrow = Text()
@@ -907,14 +1056,16 @@ def render_relay_success(
         content.append("  Launch:\n", style="label")
         content.append(f"  {launch_command}", style="muted")
 
-    console.print(Panel(
-        content,
-        border_style="brand",
-        title="[brand]relay[/]",
-        title_align="left",
-        padding=(1, 2),
-        expand=False,
-    ))
+    console.print(
+        Panel(
+            content,
+            border_style="brand",
+            title="[brand]relay[/]",
+            title_align="left",
+            padding=(1, 2),
+            expand=False,
+        )
+    )
 
 
 def render_relay_launching(console: Console) -> Any:
@@ -927,7 +1078,10 @@ def render_relay_launch_result(console: Console, success: bool, exit_code: int) 
         console.print("[success]  ✔ Agent launched successfully[/]", highlight=False)
     else:
         console.print()
-        console.print(f"[error]  ✖ Agent launch failed[/]  [muted]exit code {exit_code}[/]", highlight=False)
+        console.print(
+            f"[error]  ✖ Agent launch failed[/]  [muted]exit code {exit_code}[/]",
+            highlight=False,
+        )
 
 
 def render_error(console: Console, message: str) -> None:
@@ -935,19 +1089,22 @@ def render_error(console: Console, message: str) -> None:
         console.print(f"[error]Error:[/] {message}")
         return
 
-    console.print(Panel(
-        f"[error]{message}[/]",
-        border_style="error",
-        title="[error]error[/]",
-        title_align="left",
-        padding=(0, 2),
-        expand=False,
-    ))
+    console.print(
+        Panel(
+            f"[error]{message}[/]",
+            border_style="error",
+            title="[error]error[/]",
+            title_align="left",
+            padding=(0, 2),
+            expand=False,
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
 # Discover UI
 # ---------------------------------------------------------------------------
+
 
 def render_discover_results(console: Console, results: list[Any]) -> None:
     render_banner(console)
@@ -979,6 +1136,7 @@ def render_discover_results(console: Console, results: list[Any]) -> None:
 # Converse UI
 # ---------------------------------------------------------------------------
 
+
 def render_converse_start(
     console: Console,
     agents: "Sequence[str]",
@@ -996,7 +1154,9 @@ def render_converse_start(
     console.print()
 
 
-def render_converse_turn_active(console: Console, agent_key: str, turn_number: int, max_turns: int) -> Any:
+def render_converse_turn_active(
+    console: Console, agent_key: str, turn_number: int, max_turns: int
+) -> Any:
     """Return a console.status() context manager for the turn spinner."""
     name = AGENT_NAMES_DISPLAY.get(agent_key, agent_key)
     symbol = AGENT_SYMBOLS.get(agent_key, "·")
@@ -1036,6 +1196,7 @@ _STOP_REASON_LABELS = {
     "max_turns": "Max turns reached",
     "done_signal": "Task completed",
     "all_done": "All agents completed",
+    "blocked": "Blocked waiting on input",
     "incomplete": "Agents exited without completion",
     "planning_incomplete": "Planning phase did not produce valid claims",
     "claim_conflict": "Planning claims conflict",
@@ -1061,7 +1222,7 @@ def render_converse_result(
     if stop_reason in ("done_signal", "all_done"):
         style = "success"
         symbol = "✔"
-    elif stop_reason in ("agent_error", "interrupted"):
+    elif stop_reason in ("agent_error", "interrupted", "blocked"):
         style = "warning"
         symbol = "◌"
     else:
@@ -1101,7 +1262,10 @@ def render_concurrent_start(
     console.print(f"  [label]Task:[/] {task}", highlight=False)
     if continue_session:
         console.print(f"  [label]Continuing:[/] {continue_session}", highlight=False)
-    console.print("  [muted]Each agent runs in its own tmux session and isolated worktree. Attach from separate terminals using the commands below.[/]", highlight=False)
+    console.print(
+        "  [muted]Each agent runs in its own tmux session and isolated worktree. Attach from separate terminals using the commands below.[/]",
+        highlight=False,
+    )
     console.print()
 
 
@@ -1135,11 +1299,19 @@ def render_concurrent_result(console: Console, result: "ConcurrentResult") -> No
     line.append("  ·  ", style="muted")
     line.append(f"{result.elapsed_seconds}s", style="muted")
     console.print(line, highlight=False)
-    console.print(f"  [label]Session:[/]  [muted]{result.session_id}[/]", highlight=False)
+    console.print(
+        f"  [label]Session:[/]  [muted]{result.session_id}[/]", highlight=False
+    )
     if result.conflict_artifact_path:
-        console.print(f"  [label]Conflicts:[/]  [muted]{result.conflict_artifact_path}[/]", highlight=False)
+        console.print(
+            f"  [label]Conflicts:[/]  [muted]{result.conflict_artifact_path}[/]",
+            highlight=False,
+        )
     conflict_paths = _concurrent_conflict_paths(result)
-    if conflict_paths and result.stop_reason in {"merge_conflict", "manual_resolution_required"}:
+    if conflict_paths and result.stop_reason in {
+        "merge_conflict",
+        "manual_resolution_required",
+    }:
         console.print(
             f"  [label]Files:[/]  [muted]{_summarize_paths(conflict_paths)}[/]",
             highlight=False,
@@ -1156,7 +1328,9 @@ def render_concurrent_result(console: Console, result: "ConcurrentResult") -> No
     console.print()
 
 
-def _load_conflict_artifact_paths(conflict_artifact_path: str | None) -> tuple[str, ...]:
+def _load_conflict_artifact_paths(
+    conflict_artifact_path: str | None,
+) -> tuple[str, ...]:
     if not conflict_artifact_path:
         return ()
     try:
@@ -1180,20 +1354,12 @@ def _concurrent_conflict_paths(result: "ConcurrentResult") -> tuple[str, ...]:  
     artifact_paths = _load_conflict_artifact_paths(result.conflict_artifact_path)
     if artifact_paths:
         return artifact_paths
-    paths = [
-        path
-        for outcome in result.outcomes
-        for path in outcome.merge_conflicts
-    ]
+    paths = [path for outcome in result.outcomes for path in outcome.merge_conflicts]
     return tuple(dict.fromkeys(paths))
 
 
 def _concurrent_scope_violation_paths(result: "ConcurrentResult") -> tuple[str, ...]:  # noqa: F821
-    paths = [
-        path
-        for outcome in result.outcomes
-        for path in outcome.scope_violations
-    ]
+    paths = [path for outcome in result.outcomes for path in outcome.scope_violations]
     return tuple(dict.fromkeys(paths))
 
 
@@ -1220,6 +1386,6 @@ def _concurrent_next_action(result: "ConcurrentResult") -> str | None:  # noqa: 
     if result.stop_reason in {"max_time", "interrupted", "incomplete", "agent_error"}:
         return (
             f"If you want to keep going, continue with "
-            f"`agent-relay race --continue {result.session_id} <agents> \"continue the task\"`."
+            f'`agent-relay race --continue {result.session_id} <agents> "continue the task"`.'
         )
     return None

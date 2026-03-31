@@ -3,6 +3,7 @@
 Runs two agents in alternating --print mode, captures their full structured
 output, and feeds it as context to the next agent's turn.
 """
+
 from __future__ import annotations
 
 import json
@@ -16,7 +17,12 @@ from pathlib import Path
 from collections.abc import Sequence
 from typing import Callable
 
-from agent_relay.agents import AGENT_REGISTRY, get_agent_adapter, get_agent_display_name, require_available
+from agent_relay.agents import (
+    AGENT_REGISTRY,
+    get_agent_adapter,
+    get_agent_display_name,
+    require_available,
+)
 from agent_relay.bootstrap import start_session
 from agent_relay.layout import session_root, turn_dir, turns_dir, workspace_log_path
 from agent_relay.resumable_state import normalize_resumable_state, resumable_state_text
@@ -28,6 +34,7 @@ from agent_relay.workspace_log import LogEntry, WorkspaceLog, utc_timestamp
 # Data structures
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True, slots=True)
 class TurnResult:
     turn_number: int
@@ -35,9 +42,9 @@ class TurnResult:
     exit_code: int
     raw_stdout: str
     raw_stderr: str
-    text: str           # Normalized text content from the agent
-    summary: str        # Short one-line summary for UI
-    done_signal: bool   # True if the turn advanced the completion protocol
+    text: str  # Normalized text content from the agent
+    summary: str  # Short one-line summary for UI
+    done_signal: bool  # True if the turn advanced the completion protocol
     started_at: str
     finished_at: str
     control_status: str = "continue"
@@ -51,7 +58,7 @@ class ConverseResult:
     session_id: str
     agents: tuple[str, ...]
     turns_completed: int
-    stop_reason: str   # "max_turns" | "all_done" | "done_signal" | "interrupted" | "agent_error"
+    stop_reason: str  # "max_turns" | "all_done" | "done_signal" | "blocked" | "interrupted" | "agent_error"
     turn_results: tuple[TurnResult, ...]
     continued_from_session_id: str | None = None
 
@@ -75,6 +82,7 @@ class CompletionState:
 # ---------------------------------------------------------------------------
 # Output normalization
 # ---------------------------------------------------------------------------
+
 
 def normalize_claude_output(raw_stdout: str) -> str:
     """Parse Claude --output-format stream-json JSONL, extract assistant text."""
@@ -120,7 +128,10 @@ def normalize_codex_output(raw_stdout: str) -> str:
         # Also handle message events with content blocks
         if event.get("type") == "message" and event.get("role") == "assistant":
             for block in event.get("content", []):
-                if isinstance(block, dict) and block.get("type") in ("output_text", "text"):
+                if isinstance(block, dict) and block.get("type") in (
+                    "output_text",
+                    "text",
+                ):
                     text = block.get("text", "")
                     if text:
                         texts.append(text)
@@ -139,7 +150,10 @@ def _normalize_output(agent_key: str, raw_stdout: str) -> str:
 def _strip_done_marker(text: str) -> str:
     """Remove the CONVERSATION_COMPLETE marker from display text."""
     import re
-    return re.sub(r'\s*CONVERSATION_COMPLETE\s*', ' ', text, flags=re.IGNORECASE).strip()
+
+    return re.sub(
+        r"\s*CONVERSATION_COMPLETE\s*", " ", text, flags=re.IGNORECASE
+    ).strip()
 
 
 def _strip_turn_control(text: str) -> str:
@@ -160,13 +174,15 @@ def _strip_turn_control(text: str) -> str:
 _DONE_MARKER = "CONVERSATION_COMPLETE"
 _TURN_STATUS_PREFIX = "RELAY_STATUS:"
 _TURN_STATE_PREFIX = "RELAY_STATE:"
-_VALID_TURN_STATUSES = frozenset({
-    "continue",
-    "blocked",
-    "propose_done",
-    "agree_done",
-    "reopen",
-})
+_VALID_TURN_STATUSES = frozenset(
+    {
+        "continue",
+        "blocked",
+        "propose_done",
+        "agree_done",
+        "reopen",
+    }
+)
 
 
 def detect_done_signal(text: str) -> bool:
@@ -200,7 +216,7 @@ def parse_turn_control(text: str) -> TurnControl:
         if not line.startswith(_TURN_STATUS_PREFIX):
             continue
 
-        payload = line[len(_TURN_STATUS_PREFIX):].strip()
+        payload = line[len(_TURN_STATUS_PREFIX) :].strip()
         try:
             data = json.loads(payload)
         except json.JSONDecodeError:
@@ -235,7 +251,7 @@ def parse_turn_state(text: str) -> dict[str, object] | None:
         if not line.startswith(_TURN_STATE_PREFIX):
             continue
 
-        payload = line[len(_TURN_STATE_PREFIX):].strip()
+        payload = line[len(_TURN_STATE_PREFIX) :].strip()
         try:
             data = json.loads(payload)
         except json.JSONDecodeError:
@@ -267,6 +283,18 @@ Your shared workspace is: {repo_root}
 - You can read files, edit code, run commands — use your full capabilities.
 """
 
+_SINGLE_AGENT_PREAMBLE = """\
+You are participating in a Relay-managed single-agent session.
+You are {current_agent_name} ({current_agent_key}).
+
+Your shared workspace is: {repo_root}
+
+## Rules
+- Focus on the task. Be direct and concise.
+- Work incrementally and leave a clear next step when you are not done.
+- You can read files, edit code, run commands — use your full capabilities.
+"""
+
 
 def build_turn_prompt(
     task: str,
@@ -281,6 +309,7 @@ def build_turn_prompt(
     """Build the prompt for the next agent turn with full conversation history."""
     current_name = get_agent_display_name(current_agent)
     completion_state = completion_state or CompletionState()
+    single_agent = len(all_agents) == 1
 
     # Build participants section listing all other agents
     others = [a for a in all_agents if a != current_agent]
@@ -294,16 +323,24 @@ def build_turn_prompt(
         participants_section = ""
 
     other_count = len(set(all_agents) - {current_agent})
-
-    lines: list[str] = [
-        _SYSTEM_PREAMBLE.format(
+    if single_agent:
+        preamble = _SINGLE_AGENT_PREAMBLE.format(
+            current_agent_name=current_name,
+            current_agent_key=current_agent,
+            repo_root=str(repo_root),
+        )
+    else:
+        preamble = _SYSTEM_PREAMBLE.format(
             current_agent_name=current_name,
             current_agent_key=current_agent,
             other_count=other_count,
             plural="s" if other_count != 1 else "",
             participants_section=participants_section,
             repo_root=str(repo_root),
-        ),
+        )
+
+    lines: list[str] = [
+        preamble,
         "## Task",
         "",
         task,
@@ -311,66 +348,107 @@ def build_turn_prompt(
     ]
 
     if continuation_context:
-        lines.extend([
-            "## Continuation Context",
-            "",
-            continuation_context,
-            "",
-        ])
+        lines.extend(
+            [
+                "## Continuation Context",
+                "",
+                continuation_context,
+                "",
+            ]
+        )
 
-    lines.extend([
-        "## Completion Protocol",
-        "",
-        'You may include one optional structured line immediately before the status line:',
-        'RELAY_STATE: {"summary":"...","current_plan":["..."],"assumptions":[],"blockers":[],"intended_edits":["..."],"next_step":"..."}',
-        "",
-        'End every turn with exactly one machine-readable line in this format:',
-        'RELAY_STATUS: {"status":"continue","reason":"...","remaining_work":["..."],"verification":[]}',
-        "",
-        "Allowed status values:",
-        "- continue: there is still meaningful work to do.",
-        "- blocked: you cannot proceed without human input or an external dependency.",
-        "- propose_done: you believe the task is complete. Only use this after every agent has spoken at least once, remaining_work is empty, and verification lists concrete checks.",
-        "- agree_done: another agent already proposed completion and you agree the task is complete.",
-        "- reopen: there is an active completion proposal, but you found remaining work, a bug, or a disagreement.",
-        "",
-        "Protocol rules:",
-        "- NEVER use propose_done or agree_done on your first turn.",
-        "- If there is an active completion proposal and you disagree, use reopen, not continue.",
-        "- If you made edits, found a bug, or uncovered missing verification after a completion proposal, use reopen.",
-        "- When using propose_done or agree_done, remaining_work must be [].",
-        "",
-        "## Completion State",
-        "",
-    ])
-
-    if completion_state.active_epoch is None:
-        lines.extend([
-            "- No active completion proposal.",
-            "- If you believe the task is complete, use status propose_done.",
-            "",
-        ])
+    if single_agent:
+        lines.extend(
+            [
+                "## Completion Protocol",
+                "",
+                "You may include one optional structured line immediately before the status line:",
+                'RELAY_STATE: {"summary":"...","current_plan":["..."],"assumptions":[],"blockers":[],"intended_edits":["..."],"next_step":"..."}',
+                "",
+                "End every turn with exactly one machine-readable line in this format:",
+                'RELAY_STATUS: {"status":"continue","reason":"...","remaining_work":["..."],"verification":[]}',
+                "",
+                "Allowed status values:",
+                "- continue: there is still meaningful work to do.",
+                "- blocked: you cannot proceed without human input or an external dependency.",
+                "- propose_done: the task is complete and verification lists concrete checks.",
+                "",
+                "Protocol rules:",
+                "- Use propose_done when the task is complete.",
+                "- Use blocked when you need human input or an external dependency.",
+                "- When using propose_done, remaining_work must be [].",
+                "",
+                "## Completion State",
+                "",
+                "- This is a single-agent run.",
+                "- Use status propose_done when the task is complete.",
+                "- Use status blocked when you cannot continue without outside help.",
+                "",
+            ]
+        )
     else:
-        agreeing = ", ".join(
-            f"Slot {slot} — {get_agent_display_name(all_agents[slot])}"
-            for slot in completion_state.agreeing_slots
-        ) or "none yet"
-        proposer = "Unknown agent"
-        if completion_state.proposed_by_slot is not None:
-            proposer = (
-                f"Slot {completion_state.proposed_by_slot} — "
-                f"{get_agent_display_name(all_agents[completion_state.proposed_by_slot])}"
+        lines.extend(
+            [
+                "## Completion Protocol",
+                "",
+                "You may include one optional structured line immediately before the status line:",
+                'RELAY_STATE: {"summary":"...","current_plan":["..."],"assumptions":[],"blockers":[],"intended_edits":["..."],"next_step":"..."}',
+                "",
+                "End every turn with exactly one machine-readable line in this format:",
+                'RELAY_STATUS: {"status":"continue","reason":"...","remaining_work":["..."],"verification":[]}',
+                "",
+                "Allowed status values:",
+                "- continue: there is still meaningful work to do.",
+                "- blocked: you cannot proceed without human input or an external dependency.",
+                "- propose_done: you believe the task is complete. Only use this after every agent has spoken at least once, remaining_work is empty, and verification lists concrete checks.",
+                "- agree_done: another agent already proposed completion and you agree the task is complete.",
+                "- reopen: there is an active completion proposal, but you found remaining work, a bug, or a disagreement.",
+                "",
+                "Protocol rules:",
+                "- NEVER use propose_done or agree_done on your first turn.",
+                "- If there is an active completion proposal and you disagree, use reopen, not continue.",
+                "- If you made edits, found a bug, or uncovered missing verification after a completion proposal, use reopen.",
+                "- When using propose_done or agree_done, remaining_work must be [].",
+                "",
+                "## Completion State",
+                "",
+            ]
+        )
+
+        if completion_state.active_epoch is None:
+            lines.extend(
+                [
+                    "- No active completion proposal.",
+                    "- If you believe the task is complete, use status propose_done.",
+                    "",
+                ]
             )
-        lines.extend([
-            (
-                f"- Active completion proposal: epoch {completion_state.active_epoch}, "
-                f"proposed on Turn {completion_state.proposed_turn} by {proposer}."
-            ),
-            f"- Agents already agreeing in this epoch: {agreeing}.",
-            "- If you agree the task is complete, use status agree_done.",
-            "- If you disagree or found more work, use status reopen.",
-            "",
-        ])
+        else:
+            agreeing = (
+                ", ".join(
+                    f"Slot {slot} — {get_agent_display_name(all_agents[slot])}"
+                    for slot in completion_state.agreeing_slots
+                )
+                or "none yet"
+            )
+            proposer = "Unknown agent"
+            if completion_state.proposed_by_slot is not None:
+                proposer = (
+                    f"Slot {completion_state.proposed_by_slot} — "
+                    f"{get_agent_display_name(all_agents[completion_state.proposed_by_slot])}"
+                )
+            lines.extend(
+                [
+                    (
+                        f"- Active completion proposal: epoch {completion_state.active_epoch}, "
+                        f"proposed on Turn {completion_state.proposed_turn} by {proposer}."
+                    ),
+                    f"- Agents already agreeing in this epoch: {agreeing}.",
+                    "- If you agree the task is complete, use status agree_done.",
+                    "- If you disagree or found more work, use status reopen.",
+                    "",
+                ]
+            )
 
     if turn_history:
         lines.append("## Conversation so far")
@@ -393,13 +471,15 @@ def build_turn_prompt(
         history_parts.reverse()
         lines.extend(history_parts)
 
-    lines.extend([
-        f"## Your turn (Turn {turn_number})",
-        "",
-        f"You are {current_name}. Continue working on the task above.",
-        "Review what has been done so far and take the next step.",
-        "",
-    ])
+    lines.extend(
+        [
+            f"## Your turn (Turn {turn_number})",
+            "",
+            f"You are {current_name}. Continue working on the task above.",
+            "Review what has been done so far and take the next step.",
+            "",
+        ]
+    )
 
     return "\n".join(lines)
 
@@ -407,6 +487,7 @@ def build_turn_prompt(
 # ---------------------------------------------------------------------------
 # Agent runner
 # ---------------------------------------------------------------------------
+
 
 def _build_agent_command(agent_key: str, prompt_path: Path, repo_root: Path) -> str:
     """Build the shell command to run an agent turn with captured output."""
@@ -416,7 +497,9 @@ def _build_agent_command(agent_key: str, prompt_path: Path, repo_root: Path) -> 
     rr = shlex.quote(str(repo_root))
 
     if agent_key == "claude":
-        return f'cd {rr} && {cli} -p "$(cat {pp})" --output-format stream-json --verbose'
+        return (
+            f'cd {rr} && {cli} -p "$(cat {pp})" --output-format stream-json --verbose'
+        )
     elif agent_key == "codex":
         return f'cd {rr} && {cli} exec "$(cat {pp})" --json'
     else:
@@ -445,6 +528,7 @@ def run_agent_turn(
 # Turn artifact storage
 # ---------------------------------------------------------------------------
 
+
 def _store_turn_artifacts(
     repo_root: Path,
     session_id: str,
@@ -463,7 +547,9 @@ def _store_turn_artifacts(
     if raw_stderr.strip():
         (tdir / "stderr.log").write_text(raw_stderr, encoding="utf-8")
     if state_payload is not None:
-        (tdir / "state.json").write_text(resumable_state_text(state_payload), encoding="utf-8")
+        (tdir / "state.json").write_text(
+            resumable_state_text(state_payload), encoding="utf-8"
+        )
 
     return tdir
 
@@ -472,6 +558,7 @@ def _store_turn_artifacts(
 # Orchestrator
 # ---------------------------------------------------------------------------
 
+
 def _make_summary(text: str, max_len: int = 120) -> str:
     """Extract a one-line summary from agent output."""
     # Take first non-empty line
@@ -479,7 +566,7 @@ def _make_summary(text: str, max_len: int = 120) -> str:
         stripped = line.strip()
         if stripped and not stripped.startswith("#"):
             if len(stripped) > max_len:
-                return stripped[:max_len - 3] + "..."
+                return stripped[: max_len - 3] + "..."
             return stripped
     return "(no output)"
 
@@ -518,7 +605,8 @@ def _build_turn_state(
         "assumptions": _state_list(explicit_state, "assumptions"),
         "blockers": _state_list(explicit_state, "blockers"),
         "intended_edits": _state_list(explicit_state, "intended_edits"),
-        "remaining_work": _state_list(explicit_state, "remaining_work") or remaining_work,
+        "remaining_work": _state_list(explicit_state, "remaining_work")
+        or remaining_work,
         "verification": _state_list(explicit_state, "verification") or verification,
         "next_step": next_step,
         "agent_key": agent_key,
@@ -579,7 +667,7 @@ def converse(
 
     Args:
         repo_root: Repository root path.
-        agents: Ordered list of agent keys (round-robin). Must have >= 2.
+        agents: Ordered list of agent keys (round-robin). Must have >= 1.
         task: The task prompt for the conversation.
         max_turns: Maximum number of turns before stopping.
         continue_from_session_id: Optional prior session to continue from.
@@ -590,8 +678,8 @@ def converse(
     Returns:
         ConverseResult with all turn data and stop reason.
     """
-    if len(agents) < 2:
-        raise SystemExit("Converse requires at least 2 agents.")
+    if len(agents) < 1:
+        raise SystemExit("Converse requires at least 1 agent.")
 
     # Validate continuation session exists
     if continue_from_session_id and not is_session(repo_root, continue_from_session_id):
@@ -604,14 +692,20 @@ def converse(
     agent_names = [get_agent_display_name(a) for a in agents]
 
     # Create session
-    session_id = datetime.now(UTC).strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(3)
+    session_id = (
+        datetime.now(UTC).strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(3)
+    )
     start_session(
         repo_root,
         session_id=session_id,
         objective=task,
         workstream_kind="mixed",
         initial_agent=agents[0],
-        next_action=f"Converse with {', '.join(agent_names[1:])}",
+        next_action=(
+            f"Continue managed run in {agent_names[0]}"
+            if n == 1
+            else f"Converse with {', '.join(agent_names[1:])}"
+        ),
         snapshot_mode=None,
         owner=f"{owner}:start",
     )
@@ -627,7 +721,9 @@ def converse(
     continuation_context: str | None = None
     if continue_from_session_id:
         ctx_parts: list[str] = []
-        ctx_parts.append(f"This run continues prior relay session: {continue_from_session_id}")
+        ctx_parts.append(
+            f"This run continues prior relay session: {continue_from_session_id}"
+        )
         prior_session_dir = session_root(repo_root, continue_from_session_id)
         ctx_parts.append(f"Prior session root: {prior_session_dir}")
 
@@ -645,6 +741,7 @@ def converse(
                 if state_file.exists():
                     try:
                         import json as _json
+
                         state_data = _json.loads(state_file.read_text(encoding="utf-8"))
                         if isinstance(state_data, dict):
                             summary = state_data.get("summary", "")
@@ -655,7 +752,9 @@ def converse(
                             if next_step:
                                 ctx_parts.append(f"Planned next step: {next_step}")
                             if remaining:
-                                ctx_parts.append(f"Remaining work: {', '.join(remaining)}")
+                                ctx_parts.append(
+                                    f"Remaining work: {', '.join(remaining)}"
+                                )
                     except (OSError, json.JSONDecodeError):
                         pass
                     break
@@ -712,14 +811,20 @@ def converse(
             control = parse_turn_control(raw_text)
             explicit_state = parse_turn_state(raw_text)
             status = control.status
-            if status in {"propose_done", "agree_done"} and turn_number < n:
-                status = "continue"
-            elif status == "agree_done" and active_completion_epoch is None:
-                status = "continue"
-            elif status == "propose_done" and active_completion_epoch is not None:
-                status = "agree_done"
-            elif status == "reopen" and active_completion_epoch is None:
-                status = "continue"
+            if n == 1:
+                if status == "agree_done":
+                    status = "propose_done"
+                elif status == "reopen":
+                    status = "continue"
+            else:
+                if status in {"propose_done", "agree_done"} and turn_number < n:
+                    status = "continue"
+                elif status == "agree_done" and active_completion_epoch is None:
+                    status = "continue"
+                elif status == "propose_done" and active_completion_epoch is not None:
+                    status = "agree_done"
+                elif status == "reopen" and active_completion_epoch is None:
+                    status = "continue"
 
             done = status in {"propose_done", "agree_done"}
             display_text = _strip_done_marker(_strip_turn_control(raw_text))
@@ -736,8 +841,12 @@ def converse(
 
             # Store artifacts
             _store_turn_artifacts(
-                repo_root, session_id, turn_number,
-                prompt_text, result.stdout, result.stderr,
+                repo_root,
+                session_id,
+                turn_number,
+                prompt_text,
+                result.stdout,
+                result.stderr,
                 state_payload=turn_state,
             )
 
@@ -761,21 +870,32 @@ def converse(
             turn_history.append(turn)
 
             # Write workspace log entry
-            wlog.append(LogEntry(
-                timestamp=finished_at,
-                agent_key=current_agent,
-                agent_slot=slot,
-                entry_type="signal" if done else "turn_complete",
-                summary=turn.summary,
-            ))
+            wlog.append(
+                LogEntry(
+                    timestamp=finished_at,
+                    agent_key=current_agent,
+                    agent_slot=slot,
+                    entry_type="signal" if done else "turn_complete",
+                    summary=turn.summary,
+                )
+            )
 
             if on_turn_complete:
                 on_turn_complete(turn)
 
-            # --- N-lateral stop conditions ---
             if result.returncode != 0:
                 stop_reason = "agent_error"
                 break
+            if n == 1:
+                if status == "blocked":
+                    stop_reason = "blocked"
+                    break
+                if status in {"propose_done", "agree_done"}:
+                    stop_reason = "done_signal"
+                    break
+                continue
+
+            # --- Multi-agent stop conditions ---
             if status == "propose_done":
                 if active_completion_epoch is None:
                     completion_epoch += 1
@@ -788,7 +908,10 @@ def converse(
             elif status == "agree_done":
                 if active_completion_epoch is not None:
                     agreeing_slots.add(slot)
-            elif status in {"continue", "blocked", "reopen"} and active_completion_epoch is not None:
+            elif (
+                status in {"continue", "blocked", "reopen"}
+                and active_completion_epoch is not None
+            ):
                 active_completion_epoch = None
                 proposed_by_slot = None
                 proposed_turn = None

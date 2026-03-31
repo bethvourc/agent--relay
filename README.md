@@ -51,7 +51,7 @@ Agent aliases: `c` = Claude, `x` = Codex. Use `agent-relay discover` to see all 
 
 The best way to get the most out of Agent Relay is to start the work inside Relay instead of only using Relay after an agent stops.
 
-- Use `agent-relay chat ...` or `agent-relay race ...` when you want Relay to manage the session live from the beginning. This gives Relay the strongest handoff because it saves the recent turns, the current plan, the next step, and any structured state it can capture while the work is happening.
+- Use `agent-relay run ...`, `agent-relay chat ...`, or `agent-relay race ...` when you want Relay to manage the session live from the beginning. This gives Relay the strongest handoff because it saves the recent turns, the current plan, the next step, and any structured state it can capture while the work is happening.
 - Use `agent-relay claude ...` or `agent-relay codex ...` when you want a one-command handoff to another agent. This flow prepares the packet and, unless you pass `--no-launch`, also launches the target agent.
 - If an agent hits a limit outside Relay, open a new terminal in the same repo and run a one-command handoff such as `agent-relay codex --task "Claude hit its limit; continue from the current state"`.
 
@@ -88,12 +88,17 @@ Relay cannot fully reconstruct work that only existed inside an unmanaged extern
 Use one of these when you want Relay to watch the session live:
 
 ```bash
+# Single-agent managed run
+agent-relay run c "Fix the failing tests"
+
 # Turn-based handoff-friendly collaboration
 agent-relay chat c x "Fix the failing tests"
 
 # Concurrent work with tmux sessions
 agent-relay race c x "Build the auth module"
 ```
+
+Use `run` when one agent should stay in control from the first prompt. Use `chat` when multiple agents should take turns. Use `race` when multiple agents should work in parallel.
 
 ### Switch agents after one stops
 

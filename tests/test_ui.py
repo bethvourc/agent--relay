@@ -101,14 +101,26 @@ class BannerTests(TestCase):
 class StartRenderTests(TestCase):
     def test_start_success_contains_session_id(self) -> None:
         console, buf = make_console()
-        render_start_success(console, "20260324-120000-abc123", "/tmp/state.json", "claude", "Fix the bug")
+        render_start_success(
+            console,
+            "20260324-120000-abc123",
+            "/tmp/state.json",
+            "claude",
+            "Fix the bug",
+        )
         output = buf.getvalue()
         self.assertIn("20260324-120000-abc123", output)
         self.assertIn("Fix the bug", output)
 
     def test_start_success_compact(self) -> None:
         console, buf = make_console(width=60)
-        render_start_success(console, "20260324-120000-abc123", "/tmp/state.json", "claude", "Fix the bug")
+        render_start_success(
+            console,
+            "20260324-120000-abc123",
+            "/tmp/state.json",
+            "claude",
+            "Fix the bug",
+        )
         output = buf.getvalue()
         self.assertIn("20260324-120000-abc123", output)
         self.assertIn("Session created", output)
@@ -140,7 +152,14 @@ class CheckpointRenderTests(TestCase):
 class FailoverRenderTests(TestCase):
     def test_failover_shows_handoff_arrow(self) -> None:
         console, buf = make_console()
-        render_failover_success(console, "claude", "codex", "rate limit", "/tmp/codex.md", "cd /tmp && codex")
+        render_failover_success(
+            console,
+            "claude",
+            "codex",
+            "rate limit",
+            "/tmp/codex.md",
+            "cd /tmp && codex",
+        )
         output = buf.getvalue()
         self.assertIn("Handoff prepared", output)
         self.assertIn("──▶", output)
@@ -149,7 +168,9 @@ class FailoverRenderTests(TestCase):
 class LaunchRenderTests(TestCase):
     def test_launch_preview_shows_target(self) -> None:
         console, buf = make_console()
-        render_launch_preview(console, "codex", "/tmp/codex.md", "cd /tmp && codex", "Start Codex")
+        render_launch_preview(
+            console, "codex", "/tmp/codex.md", "cd /tmp && codex", "Start Codex"
+        )
         output = buf.getvalue()
         self.assertIn("Launch preview", output)
         self.assertIn("Codex", output)
@@ -249,6 +270,7 @@ class HelpRenderTests(TestCase):
         console, buf = make_console()
         render_help(console)
         output = buf.getvalue()
+        self.assertIn("run", output)
         self.assertIn("chat", output)
         self.assertIn("race", output)
         self.assertIn("discover", output)
@@ -263,10 +285,15 @@ class ConcurrentRenderTests(TestCase):
         console, buf = make_console()
         with tempfile.TemporaryDirectory() as tmpdir:
             artifact_path = Path(tmpdir) / "conflicts.json"
-            artifact_path.write_text(json.dumps({
-                "status": "manual_resolution_required",
-                "paths": [{"path": "README.md"}, {"path": "docs/guide.md"}],
-            }), encoding="utf-8")
+            artifact_path.write_text(
+                json.dumps(
+                    {
+                        "status": "manual_resolution_required",
+                        "paths": [{"path": "README.md"}, {"path": "docs/guide.md"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
             result = ConcurrentResult(
                 session_id="sess-123",
                 agents=("claude", "codex"),
@@ -323,37 +350,40 @@ class ConcurrentRenderTests(TestCase):
 class ConflictInspectRenderTests(TestCase):
     def test_render_conflict_inspect_shows_paths_and_versions(self) -> None:
         console, buf = make_console()
-        render_conflict_inspect(console, {
-            "session_id": "sess-123",
-            "status": "manual_resolution_required",
-            "conflict_artifact_path": "/tmp/conflicts.json",
-            "note": "Need a human decision.",
-            "manual_paths": ["assets/logo.bin"],
-            "attempted_slots": [0, 1],
-            "paths": [
-                {
-                    "path": "README.md",
-                    "kind": "text",
-                    "manual_reasons": ["lockfile"],
-                    "contributors": [
-                        {
-                            "slot": 0,
-                            "agent": "claude",
-                            "roles": ["shared"],
-                            "full_version_path": "/tmp/conflicts/slot-00/README.md",
-                        },
-                        {
-                            "slot": 1,
-                            "agent": "codex",
-                            "roles": ["shared"],
-                            "full_version_path": "/tmp/conflicts/slot-01/README.md",
-                        },
-                    ],
-                    "base_version": {"full_path": "/tmp/conflicts/base/README.md"},
-                    "repo_version": {"full_path": "/tmp/conflicts/repo/README.md"},
-                }
-            ],
-        })
+        render_conflict_inspect(
+            console,
+            {
+                "session_id": "sess-123",
+                "status": "manual_resolution_required",
+                "conflict_artifact_path": "/tmp/conflicts.json",
+                "note": "Need a human decision.",
+                "manual_paths": ["assets/logo.bin"],
+                "attempted_slots": [0, 1],
+                "paths": [
+                    {
+                        "path": "README.md",
+                        "kind": "text",
+                        "manual_reasons": ["lockfile"],
+                        "contributors": [
+                            {
+                                "slot": 0,
+                                "agent": "claude",
+                                "roles": ["shared"],
+                                "full_version_path": "/tmp/conflicts/slot-00/README.md",
+                            },
+                            {
+                                "slot": 1,
+                                "agent": "codex",
+                                "roles": ["shared"],
+                                "full_version_path": "/tmp/conflicts/slot-01/README.md",
+                            },
+                        ],
+                        "base_version": {"full_path": "/tmp/conflicts/base/README.md"},
+                        "repo_version": {"full_path": "/tmp/conflicts/repo/README.md"},
+                    }
+                ],
+            },
+        )
         output = buf.getvalue()
         self.assertIn("manual_resolution_required", output)
         self.assertIn("README.md", output)
