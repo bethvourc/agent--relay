@@ -32,6 +32,9 @@ cd /path/to/your/repo
 # One-command relay: hand off to another agent
 agent-relay codex --task "Continue the release prep"
 
+# Single-agent managed run (best for handoffs — see Best Practices)
+agent-relay run c "Fix the failing tests"
+
 # Turn-based conversation between agents
 agent-relay chat c x "Fix the failing tests"
 
@@ -53,75 +56,153 @@ agent-relay status
 
 Agent aliases: `c` = Claude, `x` = Codex. Use `agent-relay discover` to see all available agents and aliases.
 
-## Best results
+## Best practices
 
-The best way to get the most out of Agent Relay is to start the work inside Relay instead of only using Relay after an agent stops.
+### Start inside Relay for the strongest handoffs
 
-- Use `agent-relay run ...`, `agent-relay chat ...`, or `agent-relay race ...` when you want Relay to manage the session live from the beginning. This gives Relay the strongest handoff because it saves the recent turns, the current plan, the next step, and any structured state it can capture while the work is happening.
-- Use `agent-relay claude ...` or `agent-relay codex ...` when you want a one-command handoff to another agent. This flow prepares the packet and, unless you pass `--no-launch`, also launches the target agent.
-- If an agent hits a limit outside Relay, open a new terminal in the same repo and run a one-command handoff such as `agent-relay codex --task "Claude hit its limit; continue from the current state"`.
+The single most important thing you can do for better handoffs is **start the work inside Relay** instead of only calling Relay after an agent stops.
 
-In simple terms: if Relay was there while the work was happening, handoffs are much stronger. If Relay joins later, it can only hand off what it can still see.
+When Relay manages the session from the beginning, it runs the agent in `--print` mode and captures the full output stream — including the agent's reasoning, tool calls, decisions, and structured state. This means the handoff packet contains everything the next agent needs: recent conversation history, the current plan, blockers, remaining work, intended edits, and any provider-exported session state.
 
-## What Relay Can Recover
+When Relay joins after the fact, it can only hand off what is still observable: the working tree changes, any notes you provide, and whatever the provider can export at that moment. Private reasoning, in-progress drafts, and tool-call history from an unmanaged session are lost.
 
-If Relay managed the session live, it can hand off much more than just changed files. It can carry:
+**In simple terms: if Relay was there while the work was happening, handoffs are much stronger. If Relay joins later, it can only hand off what it can still see.**
 
-- recent relay-owned conversation artifacts
-- a saved summary of the current work
-- the current plan and next step
-- blockers and remaining work
-- intended edits and proposed edits that may not be applied yet
-- provider-exported session state when available
-
-If Relay joins later, it can still hand off:
-
-- the current working tree changes
-- planning notes you give it
-- proposed edits you give it
-- anything the provider can export at handoff time
-
-Relay cannot fully reconstruct work that only existed inside an unmanaged external session and was never saved or exported. In particular, it cannot reliably recover:
-
-- private hidden reasoning
-- UI-only drafts that were never saved anywhere
-- proposed edits that were shown in a tool UI but never accepted, exported, or passed to Relay
-
-## Recommended Workflows
-
-### Start inside Relay for the strongest continuity
-
-Use one of these when you want Relay to watch the session live:
+### Use `run` as the default starting point
 
 ```bash
-# Single-agent managed run
 agent-relay run c "Fix the failing tests"
+```
 
-# Turn-based handoff-friendly collaboration
+`run` is the recommended way to start any single-agent task when you know a handoff might happen later. It:
+
+- runs the agent with live output capture (reasoning, tool calls, decisions)
+- extracts structured state from each turn (status, remaining work, blockers)
+- stores full turn artifacts (prompt, output, stderr, state) for later recovery
+- builds continuation context automatically so the next agent picks up exactly where this one left off
+
+If the agent finishes the work, great. If it hits a rate limit or needs to hand off, the session already has everything Relay needs to produce a strong resume packet.
+
+### Use `chat` for multi-agent collaboration
+
+```bash
 agent-relay chat c x "Fix the failing tests"
+```
 
-# Concurrent work with planning, isolated worktrees, and conflict recovery
+`chat` runs agents in alternating turns. Each agent sees the full conversation history — what every other agent said, decided, and proposed. Use this when agents need to build on each other's work iteratively, like one agent investigating and another implementing.
+
+### Use `race` for parallel work with enforced delegation
+
+```bash
 agent-relay race c x "Build the auth module"
 ```
 
-Use `run` when one agent should stay in control from the first prompt. Use `chat` when multiple agents should take turns. Use `race` when multiple agents should work in parallel.
+`race` is a phased concurrent workflow, not just two agents launched side by side. It enforces a structured process:
 
-### Use `race` when you want enforced delegation before edits land
+1. **Planning**: every agent must claim a concrete slice of work before implementation begins.
+2. **Implementation**: each agent works inside its own isolated git worktree, so changes cannot collide during execution.
+3. **Merge and review**: Relay only merges in-scope work back to the main repo.
+4. **Conflict handling**: Relay saves conflict artifacts, can run an automatic resolver/reviewer pass, and hands off to `resolve` when human judgment is still needed.
 
-`race` is now a phased concurrent workflow, not just two agents launched side by side.
+### Fall back to one-command relay when Relay was not managing the session
 
-1. Planning: every agent must claim a concrete slice before implementation begins.
-2. Implementation: each agent works inside its own isolated git worktree.
-3. Merge and review: Relay only merges in-scope work back to the main repo.
-4. Conflict handling: Relay saves conflict artifacts, can run an automatic resolver/reviewer pass, and hands off to `resolve` when human judgment is still needed.
+```bash
+agent-relay codex --task "Claude hit its limit; continue from the current state"
+```
 
-Claim roles:
+If an agent was working outside of Relay and needs to hand off, open a new terminal in the same repo and run a one-command handoff. Relay will capture what it can (git changes, any notes you provide) and generate a packet for the target agent. This is less complete than a managed session but still far better than starting from scratch.
 
-- `owner`: exclusive editor for that path or directory
-- `shared`: multiple agents may edit that scope intentionally
-- `reviewer`: review-only overlap; edits in reviewer-only scope are blocked
+## What Relay can recover
 
-Useful concurrent commands:
+### When Relay managed the session (run, chat, race)
+
+- full conversation turn history (prompts, outputs, reasoning)
+- structured state from each turn (status, plan, blockers, remaining work)
+- intended and proposed edits (even if not yet applied)
+- provider-exported session state when available
+- current working tree changes
+- verification items and validation results
+
+### When Relay joins after the fact (one-command handoff)
+
+- current working tree changes (git diff)
+- planning notes you provide via `--planning-note-file`
+- proposed edits you provide via `--proposed-edits-file`
+- anything the provider can export at handoff time
+
+### What Relay cannot recover
+
+- private hidden reasoning from an unmanaged session
+- UI-only drafts that were never saved anywhere
+- proposed edits shown in a tool UI but never accepted, exported, or passed to Relay
+
+## Commands
+
+### Primary commands
+
+| Command | Description |
+|---------|-------------|
+| `agent-relay run <agent> <task>` | Single-agent managed session with live capture. Best starting point for any task. |
+| `agent-relay chat <agents...> <task>` | Turn-based agent conversation. Agents alternate with full history context. |
+| `agent-relay race <agents...> <task>` | Concurrent workflow with planning, isolated worktrees, and conflict recovery (tmux). |
+| `agent-relay <agent>` | One-command relay to a target agent. Creates packet and optionally launches. |
+
+### Conflict resolution
+
+| Command | Description |
+|---------|-------------|
+| `agent-relay resolve [session-id]` | Resume unresolved race conflicts. |
+| `agent-relay resolve --latest` | Resume the most recent unresolved conflict. |
+| `agent-relay inspect-conflicts <session-id>` | Inspect saved conflict artifacts, versions, and resolution hints. |
+
+### Session management
+
+| Command | Description |
+|---------|-------------|
+| `agent-relay discover` | Show available agents, aliases, and CLI paths. |
+| `agent-relay status` | List all relay sessions in the current repo. |
+| `agent-relay clean` | Remove all sessions. Use `--all` to remove entire `.agent-relay/` directory. |
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--task`, `-t` | Task for agents (alternative to positional argument) |
+| `--continue` | Continue from a prior relay session id |
+| `-n` | Max turns for `run`/`chat` (default: 10) |
+| `--max-time` | Max seconds for `race` (default: 600) |
+| `--open-terminals` | Auto-open terminal windows/tabs for `race`/`resolve` on macOS |
+| `--no-open-terminals` | Disable auto-open terminal behavior |
+| `--from` | Source agent for relay (auto-detected by default) |
+| `--no-launch` | Create the handoff packet without launching the target agent |
+| `--yes`, `-y` | Skip confirmation prompt |
+| `--json` | Machine-readable JSON output |
+| `--quiet`, `-q` | Minimal output |
+
+## Recommended workflows
+
+### Single-agent task with potential handoff
+
+```bash
+# Start inside Relay for the strongest handoff later
+agent-relay run c "Fix the failing tests"
+
+# If the agent hits a limit, the session is already captured.
+# Hand off to another agent:
+agent-relay codex --task "Continue from the saved session"
+```
+
+### Turn-based collaboration
+
+```bash
+# Two agents alternating
+agent-relay chat c x "Fix the failing tests"
+
+# Three agents, 6 turns max
+agent-relay chat c x c "Review and fix" -n 6
+```
+
+### Concurrent work with conflict recovery
 
 ```bash
 # Start a concurrent run
@@ -138,23 +219,17 @@ agent-relay resolve <session-id>
 agent-relay resolve --latest
 ```
 
+Claim roles in `race`:
+
+- `owner`: exclusive editor for that path or directory
+- `shared`: multiple agents may edit that scope intentionally
+- `reviewer`: review-only overlap; edits in reviewer-only scope are blocked
+
 Notes:
 
 - On macOS, Relay can auto-open one terminal window or tab per tmux session. Use `--open-terminals` or `--no-open-terminals` to control that behavior explicitly.
-- If a concurrent run ends in `manual_resolution_required`, use `inspect-conflicts` first when you want to see the saved versions, then `resolve` to continue the resolution workflow.
+- If a concurrent run ends in `manual_resolution_required`, use `inspect-conflicts` first to see the saved versions, then `resolve` to continue the resolution workflow.
 - If a concurrent run ends in `max_time`, `interrupted`, `incomplete`, or `agent_error`, use `race --continue <session-id> ...` to continue the broader task.
-
-### Switch agents after one stops
-
-Use the one-command handoff when one agent needs to stop and another should continue:
-
-```bash
-# Prepare the packet and launch the target agent
-agent-relay codex --task "Continue the release prep"
-
-# Only prepare the packet so you can inspect it first
-agent-relay codex --task "Continue the release prep" --no-launch
-```
 
 ### Preserve planning-only work
 
@@ -170,59 +245,58 @@ agent-relay codex \
 
 This is the best fallback when an agent did useful planning but did not write code to disk.
 
-## Commands
-
-- `agent-relay <agent>`: relay to an agent and, by default, launch it (e.g. `agent-relay codex`, `agent-relay claude`)
-- `agent-relay chat <agents> <task>`: turn-based agent conversation
-- `agent-relay race <agents> <task>`: concurrent workflow with planning, claims, isolated worktrees, and conflict handling (tmux)
-- `agent-relay resolve [session-id]`: resume unresolved race conflicts (defaults to the latest unresolved conflict)
-- `agent-relay inspect-conflicts <session-id>`: inspect saved race conflict artifacts, versions, and manual-resolution hints
-- `agent-relay discover`: show available agents and aliases
-- `agent-relay status`: show sessions in the current repo
-- `agent-relay clean`: remove all sessions
-
-Run `agent-relay --help` for the full command list and options.
-
 ## Configuration
 
-Capture helpers:
+### Capture helpers
 
-- `AGENT_RELAY_AUTOSAVE_GIT_TOUCHED_FILES=1`
-- `AGENT_RELAY_AUTOSAVE_RESEARCH_NOTE_FILE=<path>`
-- `AGENT_RELAY_AUTOSAVE_IMPLEMENTATION_NOTE_FILE=<path>`
-- `AGENT_RELAY_AUTOSAVE_VALIDATION_SUMMARY_FILE=<path>`
-- `AGENT_RELAY_AUTOSAVE_PLANNING_SNAPSHOT_FILE=<path>`
-- `AGENT_RELAY_AUTOSAVE_PROPOSED_EDITS_FILE=<path>`
+| Variable | Description |
+|----------|-------------|
+| `AGENT_RELAY_AUTOSAVE_GIT_TOUCHED_FILES=1` | Auto-save git diff of touched files |
+| `AGENT_RELAY_AUTOSAVE_RESEARCH_NOTE_FILE=<path>` | Auto-capture research notes |
+| `AGENT_RELAY_AUTOSAVE_IMPLEMENTATION_NOTE_FILE=<path>` | Auto-capture implementation notes |
+| `AGENT_RELAY_AUTOSAVE_VALIDATION_SUMMARY_FILE=<path>` | Auto-capture validation summary |
+| `AGENT_RELAY_AUTOSAVE_PLANNING_SNAPSHOT_FILE=<path>` | Auto-capture planning snapshot |
+| `AGENT_RELAY_AUTOSAVE_PROPOSED_EDITS_FILE=<path>` | Auto-capture proposed edits |
 
-Launch template overrides:
+### Launch template overrides
 
-- `AGENT_RELAY_CLAUDE_LAUNCH_TEMPLATE`
-- `AGENT_RELAY_CODEX_LAUNCH_TEMPLATE`
+| Variable | Description |
+|----------|-------------|
+| `AGENT_RELAY_CLAUDE_LAUNCH_TEMPLATE` | Custom launch command for Claude |
+| `AGENT_RELAY_CODEX_LAUNCH_TEMPLATE` | Custom launch command for Codex |
 
-Optional provider-export capture hooks:
+### Capture hook templates
 
-- `AGENT_RELAY_CLAUDE_CAPTURE_TEMPLATE`
-- `AGENT_RELAY_CODEX_CAPTURE_TEMPLATE`
+| Variable | Description |
+|----------|-------------|
+| `AGENT_RELAY_CLAUDE_CAPTURE_TEMPLATE` | Custom capture hook for Claude exports |
+| `AGENT_RELAY_CODEX_CAPTURE_TEMPLATE` | Custom capture hook for Codex exports |
 
-Available placeholders in launch and capture templates:
+### Template placeholders
 
-- `{agent}`
-- `{agent_name}`
-- `{agent_cli}`
-- `{repo_root}`
-- `{repo_root_path}`
-- `{resume_path}`
-- `{resume_path_path}`
-- `{session_id}`
+Available in both launch and capture templates:
 
-The built-in packet-aware defaults are:
+| Placeholder | Description |
+|-------------|-------------|
+| `{agent}` | Agent key (e.g. `claude`) |
+| `{agent_name}` | Display name (e.g. `Claude Code`) |
+| `{agent_cli}` | Shell-quoted CLI command |
+| `{repo_root}` | Shell-quoted repo root path |
+| `{repo_root_path}` | Unquoted repo root path |
+| `{resume_path}` | Shell-quoted path to resume packet |
+| `{resume_path_path}` | Unquoted path to resume packet |
+| `{session_id}` | Session identifier |
 
-- `claude`: `cd {repo_root} && claude -p "$(cat {resume_path})"`
-- `codex`: `cd {repo_root} && codex "$(cat {resume_path})"`
+### Built-in defaults
+
+```
+claude: cd {repo_root} && claude -p "$(cat {resume_path})"
+codex:  cd {repo_root} && codex "$(cat {resume_path})"
+```
 
 Custom launch templates must include `{resume_path}` or `{resume_path_path}`. If a template omits the packet input, `launch --execute` refuses to run it.
 
-Capture templates are optional. If you set one, it should print JSON to stdout. Relay can use fields such as:
+Capture templates are optional. If set, they should print JSON to stdout with any of these fields:
 
 - `resumable_state`
 - `planning_snapshot`
@@ -245,6 +319,7 @@ Each session lives under `.agent-relay/sessions/<session-id>/` and uses a journa
 - `refs/head.json`: latest derived head pointer
 - `derived/view.json`: current materialized session view
 - `recovery/`: pending transactions, quarantine, and repair reports
+- `turns/<turn-number>/`: turn artifacts from `run`/`chat` sessions (prompt, output, stderr, state)
 
 This keeps the session state inspectable and vendor-independent.
 
@@ -258,6 +333,7 @@ Do not commit or publish `.agent-relay/`. Session artifacts can contain:
 - captured Git status, workspace patches, and untracked-file manifests
 - generated resume packets
 - rendered launch commands and launch-template text
+- full agent conversation output (from `run`/`chat` sessions)
 
 Two practical rules:
 
