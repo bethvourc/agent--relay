@@ -8,15 +8,19 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterable
 
+from agent_relay.agents import get_agent_display_name
 from agent_relay.capture_support import (
     AUTOSAVE_GIT_TOUCHED_FILES_ENV,
     AUTOSAVE_IMPLEMENTATION_NOTE_FILE_ENV,
+    AUTOSAVE_PLANNING_SNAPSHOT_FILE_ENV,
+    AUTOSAVE_PROPOSED_EDITS_FILE_ENV,
     AUTOSAVE_RESEARCH_NOTE_FILE_ENV,
     AUTOSAVE_VALIDATION_SUMMARY_FILE_ENV,
     CaptureOptions,
     autosave_enabled,
     capture_git_touched_files,
     load_capture_text,
+    resolve_capture_text,
 )
 from agent_relay.hashing import sha256_bytes, sha256_text
 from agent_relay.integrity import require_session_mutable
@@ -74,6 +78,20 @@ class CheckpointDraft:
     validation: ValidationState
 
 
+@dataclass(frozen=True, slots=True)
+class SupplementalCaptureInputs:
+    planning_snapshot: str | None = None
+    planning_snapshot_source: Path | None = None
+    proposed_edits: str | None = None
+    proposed_edits_source: Path | None = None
+    provider_source_agent: str | None = None
+    provider_hook_name: str | None = None
+    provider_resumable_state: str | None = None
+    provider_transcript: str | None = None
+    provider_session_metadata: str | None = None
+    provider_warnings: tuple[str, ...] = ()
+
+
 def create_checkpoint_for_command(
     repo_root: Path,
     session_id: str,
@@ -92,11 +110,13 @@ def create_checkpoint_for_command(
         )
     except LifecycleViolation as exc:
         raise SystemExit(str(exc)) from exc
+    supplemental = _load_supplemental_capture_inputs(Path(view.repo_root), options)
     draft = _build_checkpoint_draft(
         view,
         options=options,
         command_name=command_name,
         transition=transition,
+        supplemental=supplemental,
     )
     capture = _capture_workspace(
         repo_root,
@@ -104,6 +124,7 @@ def create_checkpoint_for_command(
         draft=draft,
         command_name=command_name,
         snapshot_mode=options.snapshot_mode,
+        supplemental=supplemental,
     )
 
     manifest = CheckpointManifest(
@@ -170,6 +191,7 @@ def _build_checkpoint_draft(
     options: CaptureOptions,
     command_name: str,
     transition: LifecycleTransition,
+    supplemental: SupplementalCaptureInputs,
 ) -> CheckpointDraft:
     checkpoint_id = checkpoint_id_now()
     created_at = utc_now()
@@ -216,6 +238,38 @@ def _build_checkpoint_draft(
     if implementation_note:
         _append_unique(implementation_notes, implementation_note)
 
+    if supplemental.planning_snapshot:
+        _append_unique(
+            research_notes,
+            _summarize_explicit_capture("Planning snapshot captured", supplemental.planning_snapshot),
+        )
+    if supplemental.proposed_edits:
+        _append_unique(
+            implementation_notes,
+            _summarize_explicit_capture("Captured UI-only proposed edits", supplemental.proposed_edits),
+        )
+    provider_label = _provider_label(supplemental.provider_source_agent)
+    if supplemental.provider_resumable_state:
+        _append_unique(
+            research_notes,
+            f"Provider resumable state captured from {provider_label}.",
+        )
+    if supplemental.provider_transcript:
+        _append_unique(
+            research_notes,
+            f"Provider session transcript captured from {provider_label}.",
+        )
+    if supplemental.provider_session_metadata:
+        _append_unique(
+            research_notes,
+            f"Provider session metadata captured from {provider_label}.",
+        )
+    for warning in supplemental.provider_warnings:
+        _append_unique(
+            research_notes,
+            f"Provider export warning ({provider_label}): {warning}",
+        )
+
     if options.validation_summary is None:
         validation_text, _ = load_capture_text(
             Path(view.repo_root),
@@ -249,10 +303,17 @@ def _capture_workspace(
     draft: CheckpointDraft,
     command_name: str,
     snapshot_mode: str | None,
+    supplemental: SupplementalCaptureInputs,
 ) -> WorkspaceCaptureResult:
     git_repo = _detect_git_repo(repo_root)
     if snapshot_mode == "full":
-        return _capture_snapshot_workspace(repo_root, view=view, draft=draft, command_name=command_name)
+        return _capture_snapshot_workspace(
+            repo_root,
+            view=view,
+            draft=draft,
+            command_name=command_name,
+            supplemental=supplemental,
+        )
     if snapshot_mode is not None:
         raise SystemExit(f"Unsupported snapshot mode: {snapshot_mode}")
     if git_repo is None:
@@ -266,6 +327,7 @@ def _capture_workspace(
         draft=draft,
         command_name=command_name,
         head_sha=head.stdout.strip(),
+        supplemental=supplemental,
     )
 
 
@@ -276,6 +338,7 @@ def _capture_git_workspace(
     draft: CheckpointDraft,
     command_name: str,
     head_sha: str,
+    supplemental: SupplementalCaptureInputs,
 ) -> WorkspaceCaptureResult:
     branch = _git(repo_root, "symbolic-ref", "--quiet", "--short", "HEAD", check=False)
     branch_text = branch.stdout.strip() if branch.returncode == 0 else "(detached)"
@@ -309,6 +372,7 @@ def _capture_git_workspace(
     file_contents["summary.md"] = summary_text
     file_contents["git-head.txt"] = git_head_text
     file_contents["workspace.patch"] = patch.stdout
+    _append_supplemental_capture_files(file_contents, supplemental)
 
     for path in untracked_paths:
         source = repo_root / path
@@ -348,6 +412,7 @@ def _capture_snapshot_workspace(
     view: DerivedSessionView,
     draft: CheckpointDraft,
     command_name: str,
+    supplemental: SupplementalCaptureInputs,
 ) -> WorkspaceCaptureResult:
     file_contents: dict[str, str | bytes] = {}
     repo_state = _repo_state_payload(
@@ -362,6 +427,7 @@ def _capture_snapshot_workspace(
     file_contents["repo-state.json"] = _json_text(repo_state)
     file_contents["validation.json"] = _json_text(validation_payload)
     file_contents["summary.md"] = summary_text
+    _append_supplemental_capture_files(file_contents, supplemental)
 
     snapshot_entries: list[dict[str, Any]] = []
     for path in sorted(_iter_snapshot_paths(repo_root)):
@@ -552,5 +618,151 @@ def _append_unique(items: list[str], value: str) -> None:
 def _extend_unique(items: list[str], values: Iterable[str]) -> None:
     for value in values:
         _append_unique(items, value)
+
+
+def _load_supplemental_capture_inputs(repo_root: Path, options: CaptureOptions) -> SupplementalCaptureInputs:
+    planning_snapshot, planning_snapshot_source = resolve_capture_text(
+        repo_root,
+        explicit_text=options.planning_snapshot,
+        explicit_path=options.planning_snapshot_file,
+        env_var=AUTOSAVE_PLANNING_SNAPSHOT_FILE_ENV,
+    )
+    proposed_edits, proposed_edits_source = resolve_capture_text(
+        repo_root,
+        explicit_text=options.proposed_edits,
+        explicit_path=options.proposed_edits_file,
+        env_var=AUTOSAVE_PROPOSED_EDITS_FILE_ENV,
+    )
+    return SupplementalCaptureInputs(
+        planning_snapshot=planning_snapshot,
+        planning_snapshot_source=planning_snapshot_source,
+        proposed_edits=proposed_edits,
+        proposed_edits_source=proposed_edits_source,
+        provider_source_agent=options.provider_source_agent,
+        provider_hook_name=options.provider_hook_name,
+        provider_resumable_state=(
+            options.provider_resumable_state.strip()
+            if options.provider_resumable_state
+            else None
+        ),
+        provider_transcript=(options.provider_transcript.strip() if options.provider_transcript else None),
+        provider_session_metadata=(
+            options.provider_session_metadata.strip()
+            if options.provider_session_metadata
+            else None
+        ),
+        provider_warnings=tuple(
+            warning.strip()
+            for warning in options.provider_warnings
+            if isinstance(warning, str) and warning.strip()
+        ),
+    )
+
+
+def _summarize_explicit_capture(label: str, text: str, *, max_len: int = 160) -> str:
+    collapsed = " ".join(part.strip() for part in text.splitlines() if part.strip())
+    if not collapsed:
+        return label
+    if len(collapsed) > max_len:
+        collapsed = collapsed[: max_len - 3] + "..."
+    return f"{label}: {collapsed}"
+
+
+def _append_supplemental_capture_files(
+    file_contents: dict[str, str | bytes],
+    supplemental: SupplementalCaptureInputs,
+) -> None:
+    manifest: dict[str, Any] = {
+        "schema_version": 1,
+        "kind": "checkpoint_supplemental_capture_manifest",
+        "planning_snapshot_file": None,
+        "planning_snapshot_source": None,
+        "proposed_edits_file": None,
+        "proposed_edits_source": None,
+        "provider_source_agent": supplemental.provider_source_agent,
+        "provider_hook_name": supplemental.provider_hook_name,
+        "provider_resumable_state_file": None,
+        "provider_transcript_file": None,
+        "provider_session_metadata_file": None,
+        "provider_warnings_file": None,
+    }
+
+    if supplemental.planning_snapshot:
+        file_contents["captures/planning-snapshot.md"] = _ensure_trailing_newline(supplemental.planning_snapshot)
+        manifest["planning_snapshot_file"] = "captures/planning-snapshot.md"
+        if supplemental.planning_snapshot_source is not None:
+            manifest["planning_snapshot_source"] = str(supplemental.planning_snapshot_source)
+
+    if supplemental.proposed_edits:
+        proposed_relpath = _proposed_edits_capture_path(supplemental.proposed_edits)
+        file_contents[proposed_relpath] = _ensure_trailing_newline(supplemental.proposed_edits)
+        manifest["proposed_edits_file"] = proposed_relpath
+        if supplemental.proposed_edits_source is not None:
+            manifest["proposed_edits_source"] = str(supplemental.proposed_edits_source)
+
+    provider_prefix = _provider_capture_prefix(supplemental.provider_source_agent)
+    if supplemental.provider_resumable_state:
+        resumable_state_path = f"{provider_prefix}-resumable-state.json"
+        file_contents[resumable_state_path] = _ensure_trailing_newline(supplemental.provider_resumable_state)
+        manifest["provider_resumable_state_file"] = resumable_state_path
+    if supplemental.provider_transcript:
+        transcript_path = f"{provider_prefix}-transcript.md"
+        file_contents[transcript_path] = _ensure_trailing_newline(supplemental.provider_transcript)
+        manifest["provider_transcript_file"] = transcript_path
+    if supplemental.provider_session_metadata:
+        metadata_ext = ".json" if _looks_like_json(supplemental.provider_session_metadata) else ".md"
+        metadata_path = f"{provider_prefix}-session-metadata{metadata_ext}"
+        file_contents[metadata_path] = _ensure_trailing_newline(supplemental.provider_session_metadata)
+        manifest["provider_session_metadata_file"] = metadata_path
+    if supplemental.provider_warnings:
+        warnings_path = f"{provider_prefix}-warnings.md"
+        file_contents[warnings_path] = _ensure_trailing_newline(
+            "\n".join(f"- {warning}" for warning in supplemental.provider_warnings)
+        )
+        manifest["provider_warnings_file"] = warnings_path
+
+    if manifest["planning_snapshot_file"] or manifest["proposed_edits_file"]:
+        file_contents["captures/manifest.json"] = _json_text(manifest)
+    elif (
+        manifest["provider_resumable_state_file"]
+        or manifest["provider_transcript_file"]
+        or manifest["provider_session_metadata_file"]
+        or manifest["provider_warnings_file"]
+    ):
+        file_contents["captures/manifest.json"] = _json_text(manifest)
+
+
+def _proposed_edits_capture_path(text: str) -> str:
+    return "captures/proposed-edits.diff" if _looks_like_patch(text) else "captures/proposed-edits.md"
+
+
+def _looks_like_patch(text: str) -> bool:
+    stripped = text.lstrip()
+    if stripped.startswith("diff --git") or stripped.startswith("--- "):
+        return True
+    return "\n+++ " in text or "\n@@ " in text
+
+
+def _looks_like_json(text: str) -> bool:
+    stripped = text.lstrip()
+    return stripped.startswith("{") or stripped.startswith("[")
+
+
+def _provider_capture_prefix(source_agent: str | None) -> str:
+    suffix = (source_agent or "provider").replace("/", "-")
+    return f"captures/provider/{suffix}"
+
+
+def _provider_label(source_agent: str | None) -> str:
+    if not source_agent:
+        return "provider export"
+    try:
+        return get_agent_display_name(source_agent)
+    except SystemExit:
+        return source_agent
+
+
+def _ensure_trailing_newline(text: str) -> str:
+    return text if text.endswith("\n") else text + "\n"
 def utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")

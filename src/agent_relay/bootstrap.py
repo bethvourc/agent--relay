@@ -10,6 +10,7 @@ from typing import Mapping
 from agent_relay.capture_support import CaptureOptions
 from agent_relay.fs import write_json_atomic, write_text_atomic
 from agent_relay.checkpoints import (
+    SupplementalCaptureInputs,
     _build_checkpoint_draft,
     _capture_workspace,
 )
@@ -261,6 +262,7 @@ def start_session(
         options=options,
         command_name="checkpoint",
         transition=transition,
+        supplemental=SupplementalCaptureInputs(),
     )
     capture = _capture_workspace(
         repo_root,
@@ -268,6 +270,7 @@ def start_session(
         draft=draft,
         command_name="start",
         snapshot_mode=snapshot_mode,
+        supplemental=SupplementalCaptureInputs(),
     )
     checkpoint_manifest = CheckpointManifest(
         schema_version=SCHEMA_VERSION,

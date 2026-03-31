@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -21,9 +22,10 @@ from agent_relay.handoffs import (
     recover_interrupted_launches,
     resume_handoff_for_command,
 )
-from agent_relay.layout import object_dir, pending_tx_dir
+from agent_relay.layout import object_dir, pending_tx_dir, turn_dir, workspace_log_path
 from agent_relay.storage import load_session_view
 from agent_relay.tx import JournalCommitRequest, SessionTransaction, recover_session_transactions
+from agent_relay.workspace_log import LogEntry, WorkspaceLog
 from tests.session_fixtures import build_sample_session
 
 
@@ -52,6 +54,78 @@ class HandoffTests(TestCase):
             owner="test:prepare",
         )
         return fixture
+
+    def write_conversation_artifacts(self, repo_root: Path, session_id: str) -> None:
+        first_turn = turn_dir(repo_root, session_id, 1)
+        first_turn.mkdir(parents=True, exist_ok=True)
+        (first_turn / "prompt.md").write_text("Turn 1 prompt\n", encoding="utf-8")
+        (first_turn / "output.jsonl").write_text(
+            '{"message":{"role":"assistant","content":[{"type":"text","text":"Reviewed the current relay handoff flow."}]}}\n',
+            encoding="utf-8",
+        )
+        (first_turn / "state.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "kind": "relay_resumable_state",
+                    "source": "relay_turn",
+                    "summary": "Reviewed the current relay handoff flow.",
+                    "next_step": "Capture the missing planning state.",
+                    "current_plan": ["Capture the missing planning state."],
+                    "verification": ["Review recent relay artifacts"],
+                    "agent_key": "claude",
+                    "turn_number": 1,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        second_turn = turn_dir(repo_root, session_id, 2)
+        second_turn.mkdir(parents=True, exist_ok=True)
+        (second_turn / "prompt.md").write_text("Turn 2 prompt\n", encoding="utf-8")
+        (second_turn / "output.jsonl").write_text(
+            '{"type":"item.completed","item":{"type":"agent_message","text":"Identified that hidden planning state is not captured yet."}}\n',
+            encoding="utf-8",
+        )
+        (second_turn / "stderr.log").write_text("warning: rate limit soon\n", encoding="utf-8")
+        (second_turn / "state.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "kind": "relay_resumable_state",
+                    "source": "relay_turn",
+                    "summary": "Identified that hidden planning state is not captured yet.",
+                    "next_step": "Persist resumable state in handoff artifacts.",
+                    "remaining_work": ["Persist resumable state in handoff artifacts."],
+                    "intended_edits": ["src/agent_relay/handoffs.py"],
+                    "agent_key": "codex",
+                    "turn_number": 2,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        workspace_log = WorkspaceLog(workspace_log_path(repo_root, session_id))
+        workspace_log.append(LogEntry(
+            timestamp="2026-03-25T18:09:00Z",
+            agent_key="claude",
+            agent_slot=0,
+            entry_type="turn_complete",
+            summary="Reviewed the current relay handoff flow.",
+        ))
+        workspace_log.append(LogEntry(
+            timestamp="2026-03-25T18:10:00Z",
+            agent_key="codex",
+            agent_slot=1,
+            entry_type="turn_complete",
+            summary="Identified that hidden planning state is not captured yet.",
+        ))
 
     def test_same_target_repeated_failovers_remain_immutable_and_supersede_old_handoffs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -92,6 +166,58 @@ class HandoffTests(TestCase):
                 )
 
             self.assertIn("superseded", str(context.exception))
+
+    def test_standard_handoff_bundles_recent_relay_conversation_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir).resolve()
+            fixture = self.prepare_session(repo_root)
+            self.write_conversation_artifacts(repo_root, fixture["session_id"])
+
+            handoff = create_handoff_for_command(
+                repo_root,
+                fixture["session_id"],
+                to_agent="claude",
+                reason="Bundle recent relay context",
+                evidence_depth="standard",
+                owner="test:handoff:relay-context",
+            )
+
+            packet_text = Path(handoff.resume_path).read_text(encoding="utf-8")
+            handoff_dir = object_dir(repo_root, fixture["session_id"], "handoff", handoff.handoff_id)
+
+            self.assertIn("## Resumable State", packet_text)
+            self.assertIn("Persist resumable state in handoff artifacts.", packet_text)
+            self.assertIn("relay/turns/turn-002/state.json", packet_text)
+            self.assertIn("## Prior Relay Conversation", packet_text)
+            self.assertIn("Turn 1: Reviewed the current relay handoff flow.", packet_text)
+            self.assertIn("Turn 2: Identified that hidden planning state is not captured yet.", packet_text)
+            self.assertIn("relay/turns/turn-001/output.jsonl", packet_text)
+            self.assertIn("relay/workspace-log.md", packet_text)
+            self.assertTrue((handoff_dir / "relay" / "turns" / "turn-001" / "prompt.md").exists())
+            self.assertTrue((handoff_dir / "relay" / "turns" / "turn-002" / "output.jsonl").exists())
+            self.assertTrue((handoff_dir / "relay" / "turns" / "turn-002" / "state.json").exists())
+            self.assertTrue((handoff_dir / "relay" / "workspace-log.md").exists())
+
+    def test_minimal_handoff_skips_relay_conversation_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir).resolve()
+            fixture = self.prepare_session(repo_root)
+            self.write_conversation_artifacts(repo_root, fixture["session_id"])
+
+            handoff = create_handoff_for_command(
+                repo_root,
+                fixture["session_id"],
+                to_agent="claude",
+                reason="Keep packet minimal",
+                evidence_depth="minimal",
+                owner="test:handoff:minimal-relay-context",
+            )
+
+            packet_text = Path(handoff.resume_path).read_text(encoding="utf-8")
+            handoff_dir = object_dir(repo_root, fixture["session_id"], "handoff", handoff.handoff_id)
+
+            self.assertNotIn("## Prior Relay Conversation", packet_text)
+            self.assertFalse((handoff_dir / "relay").exists())
 
     def test_stale_handoff_is_rejected_after_newer_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

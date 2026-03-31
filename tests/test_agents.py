@@ -30,13 +30,13 @@ class AgentAdapterTests(TestCase):
 
             self.assertEqual(
                 launch_spec.command,
-                f"cd {shlex.quote(str(repo_root))} && codex --resume {shlex.quote(str(resume_path))}",
+                f'cd {shlex.quote(str(repo_root))} && codex "$(cat {shlex.quote(str(resume_path))})"',
             )
             self.assertEqual(launch_spec.template_source, "default")
             self.assertEqual(launch_spec.cwd, str(repo_root))
             self.assertTrue(launch_spec.packet_aware)
             self.assertEqual(launch_spec.execute_policy, "allow")
-            self.assertIn(str(resume_path), launch_spec.instructions)
+            self.assertIn("resume packet as its prompt", launch_spec.instructions)
 
     def test_adapter_renders_env_override_launch_spec(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -59,7 +59,7 @@ class AgentAdapterTests(TestCase):
             self.assertTrue(launch_spec.packet_aware)
             self.assertEqual(launch_spec.execute_policy, "allow")
             self.assertEqual(adapter.resume_packet_target, "claude")
-            self.assertIsNone(adapter.event_capture_hook_name)
+            self.assertEqual(adapter.event_capture_hook_name, "claude_export")
 
     def test_adapter_marks_unsafe_env_override_as_preview_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -77,3 +77,34 @@ class AgentAdapterTests(TestCase):
         self.assertFalse(launch_spec.packet_aware)
         self.assertEqual(launch_spec.execute_policy, "refuse")
         self.assertIn("does not pass the resume packet", launch_spec.warning or "")
+
+    def test_adapter_renders_capture_hook_spec_from_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir).resolve()
+            adapter = get_agent_adapter("claude")
+
+            with patch.dict(
+                "os.environ",
+                {"AGENT_RELAY_CLAUDE_CAPTURE_TEMPLATE": "cd {repo_root} && {agent_cli} export --session {session_id}"},
+                clear=False,
+            ):
+                capture_spec = adapter.render_capture_hook_spec(repo_root, "s-123")
+
+            self.assertIsNotNone(capture_spec)
+            assert capture_spec is not None
+            self.assertEqual(
+                capture_spec.command,
+                f"cd {shlex.quote(str(repo_root))} && claude export --session s-123",
+            )
+            self.assertEqual(capture_spec.template_source, "env")
+            self.assertEqual(capture_spec.hook_name, "claude_export")
+
+    def test_adapter_capture_hook_is_optional_when_unconfigured(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir).resolve()
+            adapter = get_agent_adapter("codex")
+
+            with patch.dict("os.environ", {}, clear=False):
+                capture_spec = adapter.render_capture_hook_spec(repo_root, "s-456")
+
+        self.assertIsNone(capture_spec)

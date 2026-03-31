@@ -3,385 +3,446 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import secrets
+import subprocess
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 
-from agent_relay.agents import AGENT_NAMES
-from agent_relay.read_views import list_sessions_for_dashboard, load_session_for_inspect
-from agent_relay.capture_support import CaptureOptions
+from agent_relay.agents import AGENT_NAMES, AGENT_REGISTRY, resolve_agent_key
 from agent_relay.errors import RelayError
-from agent_relay.lifecycle import CHECKPOINT_STATUS_DIRECTIVES
-from agent_relay.models import VALIDATION_STATUSES
-from agent_relay.resume_options import EVIDENCE_DEPTHS
+from agent_relay.relay import relay as do_relay
+from agent_relay.read_views import list_sessions_for_dashboard
 from agent_relay.ui import (
     create_console,
     emit_json,
     emit_quiet,
-    render_checkpoint_success,
+    render_conflict_inspect,
+    render_concurrent_result,
+    render_concurrent_start,
+    render_converse_result,
+    render_converse_start,
+    render_converse_turn_active,
+    render_converse_turn_done,
     render_dashboard,
+    render_discover_results,
     render_error,
-    render_failover_success,
     render_help,
-    render_inspect,
-    render_launch_executing,
-    render_launch_preview,
-    render_launch_result,
-    render_pause_success,
-    render_prepare_success,
-    render_start_success,
+    render_relay_launch_result,
+    render_relay_launching,
+    render_relay_success,
 )
-from agent_relay.checkpoints import create_checkpoint_for_command
-from agent_relay.bootstrap import start_session
-from agent_relay.handoffs import (
-    create_handoff_for_command,
-    execute_launch_for_command,
-    preview_launch_for_command,
-    resume_handoff_for_command,
-)
-from agent_relay.repair import repair_session
 
 
-def default_repo_root(repo: str | None) -> Path:
+def _resolve_repo(repo: str | None) -> Path:
     return Path(repo or os.getcwd()).resolve()
 
 
-def build_capture_options(
-    args: argparse.Namespace,
+def _should_auto_open_terminals(
     *,
-    default_status: str | None = None,
-) -> CaptureOptions:
-    status = default_status
-    if hasattr(args, "status") and args.status:
-        status = args.status
-    next_action = getattr(args, "next_action", None)
+    interactive: bool,
+    requested: bool | None,
+) -> bool:
+    if not interactive:
+        return False
+    if requested is not None:
+        return requested
+    env_value = os.getenv("AGENT_RELAY_OPEN_TERMINALS")
+    if env_value is not None:
+        return env_value.strip().lower() in {"1", "true", "yes", "on"}
+    return sys.platform == "darwin"
+
+
+def _open_tmux_session_in_terminal(tmux_session: str) -> str | None:
+    if sys.platform != "darwin":
+        return "Automatic terminal opening is currently only supported on macOS."
+
+    command = f"tmux attach-session -t {tmux_session}"
+    term_program = os.getenv("TERM_PROGRAM", "")
+    if term_program == "iTerm.app":
+        script = "\n".join(
+            [
+                'tell application "iTerm"',
+                "activate",
+                "set newWindow to (create window with default profile)",
+                "tell current session of newWindow",
+                f"write text {json.dumps(command)}",
+                "end tell",
+                "end tell",
+            ]
+        )
+    else:
+        script = "\n".join(
+            [
+                'tell application "Terminal"',
+                "activate",
+                f"do script {json.dumps(command)}",
+                "end tell",
+            ]
+        )
+
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        return f"Automatic terminal opening failed: {exc}"
+    if result.returncode == 0:
+        return None
+
+    error = result.stderr.strip() or result.stdout.strip() or "Unknown osascript error"
+    return f"Automatic terminal opening failed: {error}"
+
+
+def _load_conflict_paths(conflict_artifact_path: str | None) -> list[str]:
+    if not conflict_artifact_path:
+        return []
+    try:
+        payload = json.loads(Path(conflict_artifact_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(payload, dict):
+        return []
+    raw_paths = payload.get("paths")
+    if not isinstance(raw_paths, list):
+        return []
+    return list(
+        dict.fromkeys(
+            str(item.get("path", "")).strip()
+            for item in raw_paths
+            if isinstance(item, dict) and str(item.get("path", "")).strip()
+        )
+    )
+
+
+def _race_next_action(result: "ConcurrentResult") -> str | None:  # noqa: F821
+    if result.stop_reason == "manual_resolution_required":
+        return f"agent-relay resolve {result.session_id}"
+    if result.stop_reason == "merge_conflict":
+        return f"agent-relay resolve {result.session_id}"
+    if result.stop_reason in {"max_time", "interrupted", "incomplete", "agent_error"}:
+        return (
+            f"agent-relay race --continue {result.session_id} <agents> "
+            f'"continue the task"'
+        )
+    return None
+
+
+def _default_resolution_task(status: str) -> str:
+    normalized = status.strip().lower()
+    if normalized == "manual_resolution_required":
+        return "Resolve the remaining conflict and review the final merged result."
+    return "Resolve the merge conflict and review the final merged result."
+
+
+def _race_result_metadata(result: "ConcurrentResult") -> dict[str, object]:  # noqa: F821
+    conflict_paths = _load_conflict_paths(result.conflict_artifact_path)
+    if not conflict_paths:
+        conflict_paths = list(
+            dict.fromkeys(
+                path for outcome in result.outcomes for path in outcome.merge_conflicts
+            )
+        )
+    scope_violation_paths = list(
+        dict.fromkeys(
+            path for outcome in result.outcomes for path in outcome.scope_violations
+        )
+    )
+    metadata: dict[str, object] = {
+        "conflict_paths": conflict_paths,
+        "scope_violation_paths": scope_violation_paths,
+    }
+    next_action = _race_next_action(result)
     if next_action is not None:
-        next_action = next_action.strip()
-    return CaptureOptions(
-        status=status,
-        snapshot_mode=getattr(args, "snapshot_mode", None),
-        next_action=next_action,
-        decisions=list(getattr(args, "decision", None) or []),
-        blockers=list(getattr(args, "blocker", None) or []),
-        touched_files=list(getattr(args, "touched_file", None) or []),
-        research_notes=list(getattr(args, "research_note", None) or []),
-        implementation_notes=list(getattr(args, "implementation_note", None) or []),
-        validation_status=getattr(args, "validation_status", None),
-        validation_summary=getattr(args, "validation_summary", None),
-        research_note_file=getattr(args, "research_note_file", None),
-        implementation_note_file=getattr(args, "implementation_note_file", None),
-        validation_summary_file=getattr(args, "validation_summary_file", None),
-        capture_git_changes=bool(getattr(args, "capture_git_changes", False)),
-    )
+        metadata["next_action"] = next_action
+    return metadata
 
 
-def run_capture_command(
-    args: argparse.Namespace,
-    *,
-    command_name: str,
-) -> int:
-    repo_root = default_repo_root(args.repo)
-    options = build_capture_options(args, default_status=None)
-    result = create_checkpoint_for_command(
-        repo_root,
-        args.session,
-        command_name=command_name,
-        options=options,
-        owner=f"cli:{command_name}",
-    )
+def cmd_inspect_conflicts(args: argparse.Namespace) -> int:
+    from agent_relay.concurrent import load_conflict_artifact_summary
+
+    repo_root = _resolve_repo(args.repo)
+    summary = load_conflict_artifact_summary(repo_root, args.session_id)
 
     if args.json:
-        emit_json({
-            "command": command_name,
-            "session_id": args.session,
-            "checkpoint_id": result.checkpoint_id,
-            "status": result.phase,
-            "next_action": result.next_action,
-            "validation_status": result.validation_status,
-            "capture_mode": result.capture_mode,
-        })
+        emit_json(
+            {
+                "command": "inspect-conflicts",
+                **summary,
+            }
+        )
     elif args.quiet:
-        emit_quiet(result.checkpoint_id)
-    elif command_name == "pause":
-        render_pause_success(args.console, args.session, result.checkpoint_id, result.next_action)
-    elif command_name == "prepare":
-        render_prepare_success(args.console, args.session, result.checkpoint_id, result.next_action)
+        emit_quiet(str(summary.get("conflict_artifact_path", "")))
     else:
-        render_checkpoint_success(args.console, args.session, result.checkpoint_id)
+        render_conflict_inspect(args.console, summary)
+
     return 0
 
 
-def cmd_start(args: argparse.Namespace) -> int:
-    repo_root = default_repo_root(args.repo)
-    session_id = datetime.now(UTC).strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(3)
-    result = start_session(
-        repo_root,
-        session_id=session_id,
-        objective=args.task,
-        workstream_kind=args.workstream_kind,
-        initial_agent=args.agent,
-        next_action=args.next_action or "",
-        snapshot_mode=getattr(args, "snapshot_mode", None),
-        owner="cli:start",
+def cmd_resolve(args: argparse.Namespace) -> int:
+    from agent_relay.concurrent import (
+        infer_conflict_resolution_context,
+        latest_unresolved_conflict_session_id,
+        run_concurrent,
     )
-    state_path = result.session_path
+
+    repo_root = _resolve_repo(args.repo)
+    console = args.console
+    interactive = not args.json and not args.quiet
+
+    if getattr(args, "latest", False) and getattr(args, "session_id", None):
+        raise SystemExit("Choose either a session id or --latest, not both.")
+
+    target_session_id = getattr(args, "session_id", None)
+    if getattr(args, "latest", False) or target_session_id is None:
+        target_session_id = latest_unresolved_conflict_session_id(repo_root)
+        if target_session_id is None:
+            raise SystemExit("No unresolved conflict sessions found.")
+
+    context = infer_conflict_resolution_context(repo_root, target_session_id)
+    override_agents = getattr(args, "agent_overrides", None) or []
+    agents = (
+        [resolve_agent_key(agent) for agent in override_agents]
+        if override_agents
+        else list(context["agents"])
+    )
+    if len(agents) < 2:
+        raise SystemExit("Conflict resolution requires at least 2 agents.")
+    task = getattr(args, "task_flag", None) or _default_resolution_task(
+        str(context["status"])
+    )
+    max_time = args.max_time
+    auto_open_terminals = _should_auto_open_terminals(
+        interactive=interactive,
+        requested=getattr(args, "open_terminals", None),
+    )
+
+    if interactive:
+        render_concurrent_start(
+            console,
+            agents,
+            task,
+            max_time,
+            continue_session=target_session_id,
+        )
+
+    def on_agent_start(slot: int, agent_key: str, tmux_session: str) -> None:
+        if interactive:
+            from agent_relay.agents import get_agent_display_name
+
+            name = get_agent_display_name(agent_key)
+            console.print(
+                f"  [brand]▸[/] Slot {slot}: [bold]{name}[/] started  [muted]({tmux_session})[/]",
+                highlight=False,
+            )
+            console.print(
+                f"      [muted]Open another terminal to control it:[/] tmux attach-session -t {tmux_session}",
+                highlight=False,
+            )
+            if auto_open_terminals:
+                error = _open_tmux_session_in_terminal(tmux_session)
+                if error is not None:
+                    console.print(f"      [warning]{error}[/]", highlight=False)
+
+    def on_agent_done(outcome: "AgentOutcome") -> None:  # noqa: F821
+        if interactive:
+            from agent_relay.agents import get_agent_display_name
+
+            name = get_agent_display_name(outcome.agent_key)
+            if outcome.exit_code == 0 and outcome.control_status == "done":
+                status = "[success]done[/]"
+            elif outcome.exit_code == 0:
+                status = f"[warning]{outcome.control_status}[/]"
+            else:
+                status = f"[warning]exit {outcome.exit_code}[/]"
+            phase_label = (
+                f"[muted]{outcome.phase}[/] "
+                if outcome.phase != "implementation"
+                else ""
+            )
+            console.print(
+                f"  [brand]▸[/] Slot {outcome.slot}: [bold]{name}[/] {phase_label}{status} — {outcome.summary}",
+                highlight=False,
+            )
+
+    result = run_concurrent(
+        repo_root,
+        agents=agents,
+        task=task,
+        continue_from_session_id=target_session_id,
+        max_time_seconds=max_time,
+        owner="cli:resolve",
+        on_agent_start=on_agent_start if interactive else None,
+        on_agent_done=on_agent_done if interactive else None,
+    )
 
     if args.json:
-        emit_json({
-            "command": "start",
-            "session_id": session_id,
-            "state_path": state_path,
-            "agent": args.agent,
-            "objective": args.task,
-            "status": result.phase,
-            "checkpoint_id": result.checkpoint_id,
-            "storage_model": "journal_v2",
-        })
+        emit_json(
+            {
+                "command": "resolve",
+                "session_id": result.session_id,
+                "source_session_id": target_session_id,
+                "agents": list(result.agents),
+                "tmux_sessions": list(result.tmux_sessions),
+                "continued_from_session_id": result.continued_from_session_id,
+                "claim_ledger_path": result.claim_ledger_path,
+                "conflict_artifact_path": result.conflict_artifact_path,
+                "stop_reason": result.stop_reason,
+                "elapsed_seconds": result.elapsed_seconds,
+                **_race_result_metadata(result),
+                "outcomes": [
+                    {
+                        "slot": o.slot,
+                        "agent": o.agent_key,
+                        "tmux_session": o.tmux_session,
+                        "phase": o.phase,
+                        "worktree_path": o.worktree_path,
+                        "exit_code": o.exit_code,
+                        "summary": o.summary,
+                        "done_signal": o.done_signal,
+                        "completion_status": o.control_status,
+                        "completion_reason": o.control_reason,
+                        "claims": list(o.claims),
+                        "claim_specs": [
+                            {"path": claim.path, "role": claim.role}
+                            for claim in o.claim_specs
+                        ],
+                        "changed_paths": list(o.changed_paths),
+                        "merged_paths": list(o.merged_paths),
+                        "merge_conflicts": list(o.merge_conflicts),
+                        "scope_violations": list(o.scope_violations),
+                        "remaining_work": list(o.remaining_work),
+                        "verification": list(o.verification),
+                        "started_at": o.started_at,
+                        "finished_at": o.finished_at,
+                    }
+                    for o in result.outcomes
+                ],
+            }
+        )
     elif args.quiet:
-        emit_quiet(session_id)
+        emit_quiet(result.session_id)
     else:
-        render_start_success(args.console, session_id, state_path, args.agent, args.task)
+        render_concurrent_result(console, result)
+
     return 0
 
 
-def cmd_checkpoint(args: argparse.Namespace) -> int:
-    return run_capture_command(args, command_name="checkpoint")
+def cmd_relay(args: argparse.Namespace) -> int:
+    repo_root = _resolve_repo(args.repo)
+    to_agent = args.to
+    from_agent = getattr(args, "from_agent", None)
+    task = getattr(args, "task", None)
+    planning_note = getattr(args, "planning_note", None)
+    planning_note_file = getattr(args, "planning_note_file", None)
+    proposed_edits = getattr(args, "proposed_edits", None)
+    proposed_edits_file = getattr(args, "proposed_edits_file", None)
+    no_launch = getattr(args, "no_launch", False)
 
-
-def cmd_pause(args: argparse.Namespace) -> int:
-    return run_capture_command(args, command_name="pause")
-
-
-def cmd_prepare(args: argparse.Namespace) -> int:
-    return run_capture_command(args, command_name="prepare")
-
-
-def cmd_failover(args: argparse.Namespace) -> int:
-    repo_root = default_repo_root(args.repo)
-    result = create_handoff_for_command(
+    result = do_relay(
         repo_root,
-        args.session,
-        to_agent=args.to_agent,
-        reason=args.reason,
-        evidence_depth=args.resume_evidence_depth,
-        owner="cli:failover",
+        to_agent=to_agent,
+        from_agent=from_agent,
+        task=task,
+        planning_note=planning_note,
+        planning_note_file=planning_note_file,
+        proposed_edits=proposed_edits,
+        proposed_edits_file=proposed_edits_file,
+        no_launch=no_launch,
+        owner="cli:relay",
     )
+
     if args.json:
-        emit_json({
-            "command": "failover",
-            "session_id": args.session,
-            "handoff_id": result.handoff_id,
-            "to_agent": result.to_agent,
-            "resume_path": result.resume_path,
-            "launch_command": result.launch_command,
-            "launch_instructions": result.launch_instructions,
-        })
+        emit_json(
+            {
+                "command": "relay",
+                "session_id": result.session_id,
+                "from_agent": result.from_agent,
+                "to_agent": result.to_agent,
+                "handoff_id": result.handoff_id,
+                "resume_path": result.resume_path,
+                "launch_command": result.launch_command,
+                "created_session": result.created_session,
+            }
+        )
     elif args.quiet:
         emit_quiet(result.resume_path)
-        emit_quiet(result.launch_command)
     else:
-        session_view = load_session_for_inspect(repo_root, args.session)
-        render_failover_success(
+        render_relay_success(
             args.console,
-            session_view["current_agent"],
+            result.from_agent,
             result.to_agent,
-            args.reason,
+            result.session_id,
             result.resume_path,
             result.launch_command,
+            created_session=result.created_session,
+            no_launch=no_launch,
         )
-    return 0
 
+    if not no_launch:
+        from agent_relay.handoffs import execute_launch_for_command
 
-def cmd_launch(args: argparse.Namespace) -> int:
-    repo_root = default_repo_root(args.repo)
-    preview = preview_launch_for_command(
-        repo_root,
-        args.session,
-        handoff_id=getattr(args, "handoff_id", None),
-        owner="cli:launch",
-    )
+        if (
+            not args.json
+            and not args.quiet
+            and not getattr(args, "yes", False)
+            and sys.stdin.isatty()
+        ):
+            from rich.prompt import Confirm
 
-    if not args.execute:
-        if args.json:
-            emit_json({
-                "command": "launch",
-                "mode": "dry_run",
-                "session_id": args.session,
-                "handoff_id": preview.handoff_id,
-                "target": preview.to_agent,
-                "resume_path": preview.resume_path,
-                "launch_command": preview.launch_command,
-                "launch_instructions": preview.launch_instructions,
-                "packet_aware": preview.packet_aware,
-                "execute_policy": preview.execute_policy,
-                "warning": preview.warning,
-            })
-        elif args.quiet:
-            emit_quiet(preview.launch_command)
-        else:
-            render_launch_preview(
-                args.console,
-                preview.to_agent,
-                preview.resume_path,
-                preview.launch_command,
-                preview.launch_instructions,
-                warning=preview.warning,
-            )
-        return 0
+            if not Confirm.ask(
+                "\n  [brand]Launch target agent?[/]", console=args.console, default=True
+            ):
+                args.console.print(
+                    "  [muted]Launch skipped. Run manually with the command above.[/]"
+                )
+                return 0
 
-    if not args.json and not args.quiet and not getattr(args, "yes", False) and sys.stdin.isatty():
-        from rich.prompt import Confirm
-
-        render_launch_preview(
-            args.console,
-            preview.to_agent,
-            preview.resume_path,
-            preview.launch_command,
-            preview.launch_instructions,
-            warning=preview.warning,
-        )
-        if not Confirm.ask("\n  [brand]Execute launch?[/]", console=args.console, default=True):
-            args.console.print("  [muted]Launch cancelled.[/]")
-            return 0
-
-    if not args.json and not args.quiet:
-        with render_launch_executing(args.console):
-            result = execute_launch_for_command(
+        if not args.json and not args.quiet:
+            args.console.print("\n  [brand]∴ Launching target agent...[/]\n")
+            launch_result = execute_launch_for_command(
                 repo_root,
-                args.session,
-                handoff_id=getattr(args, "handoff_id", None),
-                owner="cli:launch",
+                result.session_id,
+                handoff_id=result.handoff_id,
+                owner="cli:relay:launch",
             )
-        render_launch_result(args.console, result.exit_code == 0, result.exit_code)
-    else:
-        result = execute_launch_for_command(
-            repo_root,
-            args.session,
-            handoff_id=getattr(args, "handoff_id", None),
-            owner="cli:launch",
-        )
+            render_relay_launch_result(
+                args.console, launch_result.exit_code == 0, launch_result.exit_code
+            )
+        else:
+            launch_result = execute_launch_for_command(
+                repo_root,
+                result.session_id,
+                handoff_id=result.handoff_id,
+                owner="cli:relay:launch",
+            )
 
-    if args.json:
-        emit_json({
-            "command": "launch",
-            "mode": "execute",
-            "session_id": args.session,
-            "handoff_id": result.handoff_id,
-            "launch_id": result.launch_id,
-            "target": result.to_agent,
-            "exit_code": result.exit_code,
-            "launch_status": result.launch_status,
-            "stdout_path": result.stdout_path,
-            "stderr_path": result.stderr_path,
-            "ownership_transferred": False,
-        })
-    elif not args.quiet:
-        args.console.print(
-            "  [muted]Process dispatch does not transfer ownership. "
-            "Run `agent-relay resume` after the target agent adopts the packet.[/]",
-            highlight=False,
-        )
+        return launch_result.exit_code
 
-    return result.exit_code
-
-
-def cmd_resume(args: argparse.Namespace) -> int:
-    repo_root = default_repo_root(args.repo)
-    result = resume_handoff_for_command(
-        repo_root,
-        args.session,
-        handoff_id=getattr(args, "handoff_id", None),
-        owner="cli:resume",
-    )
-    if args.json:
-        emit_json({
-            "command": "resume",
-            "session_id": args.session,
-            "handoff_id": result.handoff_id,
-            "current_agent": result.current_agent,
-            "status": result.phase,
-        })
-    elif args.quiet:
-        emit_quiet(result.handoff_id)
-    else:
-        args.console.print(
-            f"[success]Resume accepted[/]  [label]handoff:[/] [brand]{result.handoff_id}[/]  "
-            f"[label]agent:[/] {result.current_agent}",
-            highlight=False,
-        )
     return 0
 
 
-def cmd_repair(args: argparse.Namespace) -> int:
-    repo_root = default_repo_root(args.repo)
-    selected = [
-        ("rebuild_view", bool(getattr(args, "rebuild_view", False))),
-        ("rollback_pending", bool(getattr(args, "rollback_pending", False))),
-        ("promote_last_good", bool(getattr(args, "promote_last_good", False))),
-    ]
-    actions = [name for name, enabled in selected if enabled]
-    if len(actions) != 1:
-        raise SystemExit(
-            "repair requires exactly one action: --rebuild-view, --rollback-pending, "
-            "or --promote-last-good"
-        )
-
-    result = repair_session(
-        repo_root,
-        args.session,
-        action=actions[0],
-        owner="cli:repair",
-    )
-    if args.json:
-        emit_json(result.to_dict())
-    elif args.quiet:
-        emit_quiet(result.repair_log_path)
-    else:
-        args.console.print(
-            f"[success]Repair complete[/]  [label]session:[/] [brand]{args.session}[/]  "
-            f"[label]action:[/] {actions[0]}  [label]health:[/] {result.health_before} -> {result.health_after}",
-            highlight=False,
-        )
-        args.console.print(f"  [label]Receipt:[/] [path]{result.repair_log_path}[/]", highlight=False)
-        if result.repair_event_id:
-            args.console.print(f"  [label]Event:[/] [muted]{result.repair_event_id}[/]", highlight=False)
-    return 0
-
-
-def cmd_inspect(args: argparse.Namespace) -> int:
-    repo_root = default_repo_root(args.repo)
-    session = load_session_for_inspect(repo_root, args.session)
-    if args.json:
-        emit_json(session)
-    elif args.quiet:
-        emit_quiet(str(session["session_id"]))
-    else:
-        render_inspect(args.console, session)
-    return 0
-
-
-def cmd_dashboard(args: argparse.Namespace) -> int:
-    repo_root = default_repo_root(args.repo)
+def cmd_status(args: argparse.Namespace) -> int:
+    repo_root = _resolve_repo(args.repo)
     sessions = list_sessions_for_dashboard(repo_root)
 
     if args.json:
-        emit_json({
-            "command": "dashboard",
-            "sessions": [
-                {
-                    "session_id": s["session_id"],
-                    "agent": s["current_agent"],
-                    "status": s["current_status"],
-                    "objective": s["objective"],
-                    "updated_at": s["updated_at"],
-                    "storage_model": s.get("storage_model"),
-                    "health": s.get("health"),
-                    "error": s.get("error"),
-                }
-                for s in sessions
-            ],
-        })
+        emit_json(
+            {
+                "command": "status",
+                "sessions": [
+                    {
+                        "session_id": s["session_id"],
+                        "agent": s["current_agent"],
+                        "status": s["current_status"],
+                        "objective": s["objective"],
+                        "updated_at": s["updated_at"],
+                    }
+                    for s in sessions
+                ],
+            }
+        )
     elif args.quiet:
         for s in sessions:
             emit_quiet(str(s["session_id"]))
@@ -390,123 +451,656 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_clean(args: argparse.Namespace) -> int:
+    import shutil
+    from agent_relay.layout import relay_root, sessions_root, session_root
+    from agent_relay.storage import is_session
+
+    repo_root = _resolve_repo(args.repo)
+    root = relay_root(repo_root)
+
+    if not root.exists():
+        if args.json:
+            emit_json({"command": "clean", "removed": 0})
+        elif not args.quiet:
+            args.console.print("  [muted]Nothing to clean.[/]")
+        return 0
+
+    if getattr(args, "all", False):
+        # Remove the entire .agent-relay directory
+        shutil.rmtree(root)
+        if args.json:
+            emit_json({"command": "clean", "mode": "all", "removed_path": str(root)})
+        elif args.quiet:
+            emit_quiet(str(root))
+        else:
+            args.console.print(
+                "[success]Cleaned[/]  Removed all relay data.", highlight=False
+            )
+        return 0
+
+    # Remove all sessions
+    sess_root = sessions_root(repo_root)
+    if not sess_root.exists():
+        if args.json:
+            emit_json({"command": "clean", "removed": 0})
+        elif not args.quiet:
+            args.console.print("  [muted]No sessions to clean.[/]")
+        return 0
+
+    removed = []
+    for session_dir in sorted(sess_root.iterdir()):
+        if not session_dir.is_dir():
+            continue
+        session_id = session_dir.name
+        shutil.rmtree(session_dir)
+        removed.append(session_id)
+
+    if args.json:
+        emit_json({"command": "clean", "removed": len(removed), "session_ids": removed})
+    elif args.quiet:
+        emit_quiet(str(len(removed)))
+    else:
+        args.console.print(
+            f"[success]Cleaned[/]  Removed {len(removed)} session{'s' if len(removed) != 1 else ''}.",
+            highlight=False,
+        )
+    return 0
+
+
+def cmd_discover(args: argparse.Namespace) -> int:
+    from agent_relay.agents import discover
+
+    results = discover()
+
+    if args.json:
+        emit_json(
+            {
+                "command": "discover",
+                "agents": [
+                    {
+                        "key": r.key,
+                        "display_name": r.display_name,
+                        "cli_command": r.cli_command,
+                        "alias": r.alias,
+                        "available": r.available,
+                        "cli_path": r.cli_path,
+                        "version": r.version,
+                    }
+                    for r in results
+                ],
+            }
+        )
+    elif args.quiet:
+        for r in results:
+            if r.available:
+                emit_quiet(r.key)
+    else:
+        render_discover_results(args.console, results)
+
+    return 0
+
+
+def _parse_agents_and_task(
+    args: argparse.Namespace, min_agents: int = 2
+) -> tuple[list[str], str]:
+    """Parse the positional args into agent keys and a task string.
+
+    Supports two forms:
+        agent-relay chat c x "fix tests"       # task as last positional
+        agent-relay chat c x -t "fix tests"    # task via flag
+    """
+    from agent_relay.agents import AGENT_ALIASES, AGENT_REGISTRY
+
+    raw_args: list[str] = args.args
+    task_flag: str | None = getattr(args, "task_flag", None)
+
+    # If -t was given, all positional args are agents
+    if task_flag:
+        agents = [resolve_agent_key(a) for a in raw_args]
+        task = task_flag
+    else:
+        # Last arg is the task if it's not a known agent key/alias
+        if not raw_args:
+            raise SystemExit("Usage: agent-relay chat <agent> [<agent>...] <task>")
+
+        last = raw_args[-1]
+        if last in AGENT_REGISTRY or last in AGENT_ALIASES:
+            raise SystemExit(
+                "Missing task. Provide a task as the last argument or with -t:\n"
+                '  agent-relay chat c x "fix the tests"\n'
+                '  agent-relay chat c x -t "fix the tests"'
+            )
+        agents = [resolve_agent_key(a) for a in raw_args[:-1]]
+        task = last
+
+    if len(agents) < min_agents:
+        raise SystemExit(f"Need at least {min_agents} agents.")
+
+    return agents, task
+
+
+def _parse_run_task(args: argparse.Namespace, repo_root: Path) -> str:
+    positional_task: str | None = getattr(args, "task", None)
+    task_flag: str | None = getattr(args, "task_flag", None)
+    continue_session: str | None = getattr(args, "continue_session", None)
+
+    if positional_task and task_flag:
+        raise SystemExit("Choose either a positional task or --task, not both.")
+
+    if task_flag:
+        return task_flag
+    if positional_task:
+        return positional_task
+    if continue_session:
+        from agent_relay.storage import load_session_view
+
+        return load_session_view(repo_root, continue_session).objective
+
+    raise SystemExit(
+        "Missing task. Provide a task positionally or with -t:\n"
+        '  agent-relay run claude "fix the tests"\n'
+        '  agent-relay run claude -t "fix the tests"'
+    )
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    from agent_relay.run_session import run_session as do_run
+
+    repo_root = _resolve_repo(args.repo)
+    console = args.console
+    interactive = not args.json and not args.quiet
+    agent = resolve_agent_key(args.agent)
+    task = _parse_run_task(args, repo_root)
+
+    if interactive:
+        render_converse_start(console, [agent], task, args.max_turns)
+
+    _spinner_ctx = None
+
+    def on_turn_start(agent_key: str, turn_number: int, max_turns: int) -> None:
+        nonlocal _spinner_ctx
+        if interactive:
+            _spinner_ctx = render_converse_turn_active(
+                console, agent_key, turn_number, max_turns
+            )
+            _spinner_ctx.__enter__()
+
+    def on_turn_complete(turn: "TurnResult") -> None:  # noqa: F821
+        nonlocal _spinner_ctx
+        if _spinner_ctx is not None:
+            _spinner_ctx.__exit__(None, None, None)
+            _spinner_ctx = None
+        if interactive:
+            render_converse_turn_done(
+                console,
+                turn.turn_number,
+                turn.agent_key,
+                turn.summary,
+                turn.exit_code,
+                turn.text,
+            )
+
+    result = do_run(
+        repo_root,
+        agent=agent,
+        task=task,
+        max_turns=args.max_turns,
+        continue_from_session_id=getattr(args, "continue_session", None),
+        owner="cli:run",
+        on_turn_start=on_turn_start if interactive else None,
+        on_turn_complete=on_turn_complete if interactive else None,
+    )
+
+    if _spinner_ctx is not None:
+        _spinner_ctx.__exit__(None, None, None)
+
+    if args.json:
+        emit_json(
+            {
+                "command": "run",
+                "session_id": result.session_id,
+                "agent": agent,
+                "continued_from_session_id": result.continued_from_session_id,
+                "turns_completed": result.turns_completed,
+                "stop_reason": result.stop_reason,
+                "turns": [
+                    {
+                        "turn": t.turn_number,
+                        "agent": t.agent_key,
+                        "exit_code": t.exit_code,
+                        "summary": t.summary,
+                        "done_signal": t.done_signal,
+                        "completion_status": t.control_status,
+                        "completion_reason": t.control_reason,
+                        "remaining_work": list(t.remaining_work),
+                        "verification": list(t.verification),
+                        "started_at": t.started_at,
+                        "finished_at": t.finished_at,
+                    }
+                    for t in result.turn_results
+                ],
+            }
+        )
+    elif args.quiet:
+        emit_quiet(result.session_id)
+    else:
+        render_converse_result(
+            console,
+            result.session_id,
+            result.agents,
+            result.turns_completed,
+            result.stop_reason,
+        )
+
+    return 0
+
+
+def cmd_chat(args: argparse.Namespace) -> int:
+    from agent_relay.converse import converse as do_converse
+
+    repo_root = _resolve_repo(args.repo)
+    console = args.console
+    interactive = not args.json and not args.quiet
+    agents, task = _parse_agents_and_task(args)
+
+    if interactive:
+        render_converse_start(console, agents, task, args.max_turns)
+
+    _spinner_ctx = None
+
+    def on_turn_start(agent_key: str, turn_number: int, max_turns: int) -> None:
+        nonlocal _spinner_ctx
+        if interactive:
+            _spinner_ctx = render_converse_turn_active(
+                console, agent_key, turn_number, max_turns
+            )
+            _spinner_ctx.__enter__()
+
+    def on_turn_complete(turn: "TurnResult") -> None:  # noqa: F821
+        nonlocal _spinner_ctx
+        if _spinner_ctx is not None:
+            _spinner_ctx.__exit__(None, None, None)
+            _spinner_ctx = None
+        if interactive:
+            render_converse_turn_done(
+                console,
+                turn.turn_number,
+                turn.agent_key,
+                turn.summary,
+                turn.exit_code,
+                turn.text,
+            )
+
+    result = do_converse(
+        repo_root,
+        agents=agents,
+        task=task,
+        max_turns=args.max_turns,
+        continue_from_session_id=getattr(args, "continue_session", None),
+        owner="cli:chat",
+        on_turn_start=on_turn_start if interactive else None,
+        on_turn_complete=on_turn_complete if interactive else None,
+    )
+
+    if _spinner_ctx is not None:
+        _spinner_ctx.__exit__(None, None, None)
+
+    if args.json:
+        emit_json(
+            {
+                "command": "chat",
+                "session_id": result.session_id,
+                "agents": list(result.agents),
+                "continued_from_session_id": result.continued_from_session_id,
+                "turns_completed": result.turns_completed,
+                "stop_reason": result.stop_reason,
+                "turns": [
+                    {
+                        "turn": t.turn_number,
+                        "agent": t.agent_key,
+                        "exit_code": t.exit_code,
+                        "summary": t.summary,
+                        "done_signal": t.done_signal,
+                        "completion_status": t.control_status,
+                        "completion_reason": t.control_reason,
+                        "remaining_work": list(t.remaining_work),
+                        "verification": list(t.verification),
+                        "started_at": t.started_at,
+                        "finished_at": t.finished_at,
+                    }
+                    for t in result.turn_results
+                ],
+            }
+        )
+    elif args.quiet:
+        emit_quiet(result.session_id)
+    else:
+        render_converse_result(
+            console,
+            result.session_id,
+            result.agents,
+            result.turns_completed,
+            result.stop_reason,
+        )
+
+    return 0
+
+
+def cmd_race(args: argparse.Namespace) -> int:
+    from agent_relay.concurrent import run_concurrent
+
+    repo_root = _resolve_repo(args.repo)
+    console = args.console
+    interactive = not args.json and not args.quiet
+    auto_open_terminals = _should_auto_open_terminals(
+        interactive=interactive,
+        requested=getattr(args, "open_terminals", None),
+    )
+    agents, task = _parse_agents_and_task(args)
+    max_time = args.max_time
+
+    if interactive:
+        render_concurrent_start(
+            console,
+            agents,
+            task,
+            max_time,
+            continue_session=getattr(args, "continue_session", None),
+        )
+
+    def on_agent_start(slot: int, agent_key: str, tmux_session: str) -> None:
+        if interactive:
+            from agent_relay.agents import get_agent_display_name
+
+            name = get_agent_display_name(agent_key)
+            console.print(
+                f"  [brand]▸[/] Slot {slot}: [bold]{name}[/] started  [muted]({tmux_session})[/]",
+                highlight=False,
+            )
+            console.print(
+                f"      [muted]Open another terminal to control it:[/] tmux attach-session -t {tmux_session}",
+                highlight=False,
+            )
+            if auto_open_terminals:
+                error = _open_tmux_session_in_terminal(tmux_session)
+                if error is not None:
+                    console.print(f"      [warning]{error}[/]", highlight=False)
+
+    def on_agent_done(outcome: "AgentOutcome") -> None:  # noqa: F821
+        if interactive:
+            from agent_relay.agents import get_agent_display_name
+
+            name = get_agent_display_name(outcome.agent_key)
+            if outcome.exit_code == 0 and outcome.control_status == "done":
+                status = "[success]done[/]"
+            elif outcome.exit_code == 0:
+                status = f"[warning]{outcome.control_status}[/]"
+            else:
+                status = f"[warning]exit {outcome.exit_code}[/]"
+            phase_label = (
+                f"[muted]{outcome.phase}[/] "
+                if outcome.phase != "implementation"
+                else ""
+            )
+            console.print(
+                f"  [brand]▸[/] Slot {outcome.slot}: [bold]{name}[/] {phase_label}{status} — {outcome.summary}",
+                highlight=False,
+            )
+
+    result = run_concurrent(
+        repo_root,
+        agents=agents,
+        task=task,
+        continue_from_session_id=getattr(args, "continue_session", None),
+        max_time_seconds=max_time,
+        owner="cli:race",
+        on_agent_start=on_agent_start if interactive else None,
+        on_agent_done=on_agent_done if interactive else None,
+    )
+
+    if args.json:
+        emit_json(
+            {
+                "command": "race",
+                "session_id": result.session_id,
+                "agents": list(result.agents),
+                "tmux_sessions": list(result.tmux_sessions),
+                "continued_from_session_id": result.continued_from_session_id,
+                "claim_ledger_path": result.claim_ledger_path,
+                "conflict_artifact_path": result.conflict_artifact_path,
+                "stop_reason": result.stop_reason,
+                "elapsed_seconds": result.elapsed_seconds,
+                **_race_result_metadata(result),
+                "outcomes": [
+                    {
+                        "slot": o.slot,
+                        "agent": o.agent_key,
+                        "tmux_session": o.tmux_session,
+                        "phase": o.phase,
+                        "worktree_path": o.worktree_path,
+                        "exit_code": o.exit_code,
+                        "summary": o.summary,
+                        "done_signal": o.done_signal,
+                        "completion_status": o.control_status,
+                        "completion_reason": o.control_reason,
+                        "claims": list(o.claims),
+                        "claim_specs": [
+                            {"path": claim.path, "role": claim.role}
+                            for claim in o.claim_specs
+                        ],
+                        "changed_paths": list(o.changed_paths),
+                        "merged_paths": list(o.merged_paths),
+                        "merge_conflicts": list(o.merge_conflicts),
+                        "scope_violations": list(o.scope_violations),
+                        "remaining_work": list(o.remaining_work),
+                        "verification": list(o.verification),
+                        "started_at": o.started_at,
+                        "finished_at": o.finished_at,
+                    }
+                    for o in result.outcomes
+                ],
+            }
+        )
+    elif args.quiet:
+        emit_quiet(result.session_id)
+    else:
+        render_concurrent_result(console, result)
+
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agent-relay", add_help=False)
     parser.add_argument("--help", "-h", action="store_true", default=False)
-    parser.add_argument("--json", action="store_true", help="Machine-readable JSON output")
+    parser.add_argument(
+        "--json", action="store_true", help="Machine-readable JSON output"
+    )
     parser.add_argument("--quiet", "-q", action="store_true", help="Minimal output")
     subparsers = parser.add_subparsers(dest="command")
 
-    start = subparsers.add_parser("start", help="Create a new relay session")
-    start.add_argument("--agent", required=True, choices=AGENT_NAMES)
-    start.add_argument("--task", required=True)
-    start.add_argument("--workstream-kind", default="mixed", choices=["research", "implementation", "mixed"])
-    start.add_argument("--next-action")
-    start.add_argument(
-        "--snapshot-mode",
-        choices=["full"],
-        help="For non-Git repos, require an explicit full workspace snapshot for the initial checkpoint",
+    # agent-relay <agent> — the one command users need
+    for agent_key in AGENT_NAMES:
+        agent_cmd = subparsers.add_parser(
+            agent_key, help=f"Relay to {AGENT_REGISTRY[agent_key].display_name}"
+        )
+        agent_cmd.add_argument(
+            "--from",
+            dest="from_agent",
+            choices=AGENT_NAMES,
+            help="Source agent (auto-detected)",
+        )
+        agent_cmd.add_argument("--task", "-t", help="What the next agent should do")
+        agent_cmd.add_argument(
+            "--planning-note",
+            help="Planning snapshot to preserve even when no code changed",
+        )
+        agent_cmd.add_argument(
+            "--planning-note-file", help="Path to a planning snapshot file"
+        )
+        agent_cmd.add_argument(
+            "--proposed-edits",
+            help="UI-only or not-yet-applied proposed edits to preserve",
+        )
+        agent_cmd.add_argument(
+            "--proposed-edits-file", help="Path to a proposed edits file or diff"
+        )
+        agent_cmd.add_argument(
+            "--no-launch", action="store_true", help="Just create the packet"
+        )
+        agent_cmd.add_argument(
+            "--yes", "-y", action="store_true", help="Skip confirmation"
+        )
+        agent_cmd.add_argument("--repo", help="Repository path (default: cwd)")
+        agent_cmd.set_defaults(func=cmd_relay, to=agent_key)
+
+    # agent-relay status — view sessions
+    status = subparsers.add_parser("status", help="Show relay sessions")
+    status.add_argument("--repo")
+    status.set_defaults(func=cmd_status)
+
+    # agent-relay clean — remove sessions
+    clean = subparsers.add_parser("clean", help="Remove all relay sessions")
+    clean.add_argument(
+        "--all", action="store_true", help="Remove the entire .agent-relay directory"
     )
-    start.add_argument("--repo")
-    start.set_defaults(func=cmd_start)
+    clean.add_argument("--repo")
+    clean.set_defaults(func=cmd_clean)
 
-    checkpoint = subparsers.add_parser("checkpoint", help="Update session state and create a checkpoint")
-    checkpoint.add_argument("session")
-    add_capture_arguments(checkpoint, allow_status=True)
-    checkpoint.add_argument("--repo")
-    checkpoint.set_defaults(func=cmd_checkpoint)
+    # agent-relay discover — detect available agent CLIs
+    disc = subparsers.add_parser("discover", help="Detect available agent CLIs")
+    disc.set_defaults(func=cmd_discover)
 
-    pause = subparsers.add_parser("pause", help="Pause a session and write a final checkpoint")
-    pause.add_argument("session")
-    add_capture_arguments(pause, allow_status=False)
-    pause.add_argument("--repo")
-    pause.set_defaults(func=cmd_pause)
-
-    prepare = subparsers.add_parser("prepare", help="Capture a clean pre-handoff checkpoint")
-    prepare.add_argument("session")
-    add_capture_arguments(prepare, allow_status=False)
-    prepare.add_argument("--repo")
-    prepare.set_defaults(func=cmd_prepare)
-
-    failover = subparsers.add_parser("failover", help="Prepare a handoff packet")
-    failover.add_argument("session")
-    failover.add_argument("--to-agent", required=True, choices=AGENT_NAMES)
-    failover.add_argument("--reason", required=True)
-    failover.add_argument(
-        "--resume-evidence-depth",
-        default="standard",
-        choices=sorted(EVIDENCE_DEPTHS),
-        help="How much latest-checkpoint evidence to include in the resume packet",
+    # agent-relay run <agent> <task> — single-agent managed session
+    run = subparsers.add_parser(
+        "run", help="Run a single agent in a Relay-managed session"
     )
-    failover.add_argument("--repo")
-    failover.set_defaults(func=cmd_failover)
+    run.add_argument("agent", help="Agent key or alias")
+    run.add_argument("task", nargs="?", help="Task (omit when using -t or --continue)")
+    run.add_argument(
+        "--task",
+        "-t",
+        dest="task_flag",
+        default=None,
+        help="Task (alternative to positional)",
+    )
+    run.add_argument(
+        "--continue",
+        dest="continue_session",
+        help="Continue from a prior relay session id",
+    )
+    run.add_argument(
+        "--max-turns", "-n", type=int, default=10, help="Maximum turns (default: 10)"
+    )
+    run.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
+    run.add_argument("--repo", help="Repository path (default: cwd)")
+    run.set_defaults(func=cmd_run)
 
-    launch = subparsers.add_parser("launch", help="Launch the latest prepared handoff")
-    launch.add_argument("session")
-    launch.add_argument("--repo")
-    launch.add_argument("--handoff-id", help="Launch this prepared handoff id")
-    launch.add_argument(
-        "--execute",
+    # agent-relay chat <agent> [<agent>...] <task> — turn-based conversation
+    chat = subparsers.add_parser("chat", help="Turn-based agent-to-agent conversation")
+    chat.add_argument(
+        "args",
+        nargs="+",
+        metavar="AGENT_OR_TASK",
+        help="Agents and task (last arg is task, or use -t)",
+    )
+    chat.add_argument(
+        "--task",
+        "-t",
+        dest="task_flag",
+        default=None,
+        help="Task (alternative to positional)",
+    )
+    chat.add_argument(
+        "--continue",
+        dest="continue_session",
+        help="Continue from a prior relay session id",
+    )
+    chat.add_argument(
+        "--max-turns", "-n", type=int, default=10, help="Maximum turns (default: 10)"
+    )
+    chat.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
+    chat.add_argument("--repo", help="Repository path (default: cwd)")
+    chat.set_defaults(func=cmd_chat)
+
+    # agent-relay race <agent> [<agent>...] <task> — concurrent agents with tmux
+    race = subparsers.add_parser(
+        "race", help="Concurrent workflow with planning, worktrees, and conflict recovery"
+    )
+    race.add_argument(
+        "args",
+        nargs="+",
+        metavar="AGENT_OR_TASK",
+        help="Agents and task (last arg is task, or use -t)",
+    )
+    race.add_argument(
+        "--task",
+        "-t",
+        dest="task_flag",
+        default=None,
+        help="Task (alternative to positional)",
+    )
+    race.add_argument(
+        "--continue",
+        dest="continue_session",
+        help="Continue from a prior race session id",
+    )
+    race.add_argument(
+        "--max-time", type=int, default=600, help="Max seconds (default: 600)"
+    )
+    race.add_argument(
+        "--open-terminals",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Auto-open a terminal window/tab for each tmux session on supported platforms",
+    )
+    race.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
+    race.add_argument("--repo", help="Repository path (default: cwd)")
+    race.set_defaults(func=cmd_race)
+
+    resolve = subparsers.add_parser(
+        "resolve", help="Resume unresolved race conflicts from saved artifacts"
+    )
+    resolve.add_argument(
+        "session_id",
+        nargs="?",
+        help="Relay session id (defaults to latest unresolved conflict)",
+    )
+    resolve.add_argument(
+        "--latest",
         action="store_true",
-        help="Run the prepared launch command instead of printing it",
+        help="Resolve the latest unresolved conflict session",
     )
-    launch.add_argument(
-        "--yes", "-y",
-        action="store_true",
-        help="Skip confirmation prompt",
+    resolve.add_argument(
+        "--agent",
+        dest="agent_overrides",
+        action="append",
+        help="Override the inferred resolver agents",
     )
-    launch.set_defaults(func=cmd_launch)
+    resolve.add_argument(
+        "--task", "-t", dest="task_flag", default=None, help="Resolution task override"
+    )
+    resolve.add_argument(
+        "--max-time", type=int, default=600, help="Max seconds (default: 600)"
+    )
+    resolve.add_argument(
+        "--open-terminals",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Auto-open a terminal window/tab for each tmux session on supported platforms",
+    )
+    resolve.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
+    resolve.add_argument("--repo", help="Repository path (default: cwd)")
+    resolve.set_defaults(func=cmd_resolve)
 
-    resume = subparsers.add_parser("resume", help="Accept a prepared handoff and transfer ownership")
-    resume.add_argument("session")
-    resume.add_argument("--repo")
-    resume.add_argument("--handoff-id", help="Resume this prepared handoff id")
-    resume.set_defaults(func=cmd_resume)
-
-    repair = subparsers.add_parser("repair", help="Repair session integrity explicitly")
-    repair.add_argument("session")
-    repair.add_argument("--repo")
-    repair.add_argument("--rebuild-view", action="store_true", help="Rebuild refs/ and derived/ from a healthy journal")
-    repair.add_argument("--rollback-pending", action="store_true", help="Quarantine pending transaction residue")
-    repair.add_argument("--promote-last-good", action="store_true", help="Quarantine the corrupted journal tail and recover to the last verified event")
-    repair.set_defaults(func=cmd_repair)
-
-    inspect = subparsers.add_parser("inspect", help="Print session state")
-    inspect.add_argument("session")
-    inspect.add_argument("--repo")
-    inspect.set_defaults(func=cmd_inspect)
-
-    dashboard = subparsers.add_parser("dashboard", help="Show all sessions in this repo")
-    dashboard.add_argument("--repo")
-    dashboard.set_defaults(func=cmd_dashboard)
-
-    list_cmd = subparsers.add_parser("list", help="Show all sessions (alias for dashboard)")
-    list_cmd.add_argument("--repo")
-    list_cmd.set_defaults(func=cmd_dashboard)
+    inspect_conflicts = subparsers.add_parser(
+        "inspect-conflicts", help="Inspect saved race conflict artifacts and versions"
+    )
+    inspect_conflicts.add_argument("session_id", help="Relay session id")
+    inspect_conflicts.add_argument("--repo", help="Repository path (default: cwd)")
+    inspect_conflicts.set_defaults(func=cmd_inspect_conflicts)
 
     return parser
-
-
-def add_capture_arguments(parser: argparse.ArgumentParser, *, allow_status: bool) -> None:
-    if allow_status:
-        parser.add_argument("--status", choices=sorted(CHECKPOINT_STATUS_DIRECTIVES))
-    parser.add_argument(
-        "--snapshot-mode",
-        choices=["full"],
-        help="Require explicit full workspace snapshot capture instead of Git-backed capture",
-    )
-    parser.add_argument("--next-action", "-n")
-    parser.add_argument("--decision", "-d", action="append")
-    parser.add_argument("--blocker", "-b", action="append")
-    parser.add_argument("--touched-file", "-f", action="append")
-    parser.add_argument("--research-note", "-r", action="append")
-    parser.add_argument("--implementation-note", "-i", action="append")
-    parser.add_argument("--research-note-file")
-    parser.add_argument("--implementation-note-file")
-    parser.add_argument("--validation-status", choices=sorted(VALIDATION_STATUSES))
-    parser.add_argument("--validation-summary")
-    parser.add_argument("--validation-summary-file")
-    parser.add_argument("--capture-git-changes", "-g", action="store_true")
 
 
 def main() -> int:

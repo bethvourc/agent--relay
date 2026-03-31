@@ -46,7 +46,7 @@ class AgentRelaySessionViewsCliTests(TestCase):
             self.assertTrue(view_path.exists())
             self.assertTrue(head_path.exists())
 
-    def test_dashboard_surfaces_corrupt_session(self) -> None:
+    def test_status_surfaces_corrupt_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir).resolve()
             fixture = build_sample_session(repo_root, session_id="20260325-180000-good111")
@@ -54,7 +54,7 @@ class AgentRelaySessionViewsCliTests(TestCase):
             bad_manifest = repo_root / ".agent-relay" / "sessions" / "20260325-180500-bad222" / "session.json"
             bad_manifest.write_text("{bad json\n", encoding="utf-8")
 
-            result = self.run_cli("--json", "dashboard", "--repo", tmpdir)
+            result = self.run_cli("--json", "status", "--repo", tmpdir)
             self.assertEqual(result.returncode, 0, result.stderr)
 
             data = json.loads(result.stdout)

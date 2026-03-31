@@ -11,6 +11,8 @@ AUTOSAVE_GIT_TOUCHED_FILES_ENV = "AGENT_RELAY_AUTOSAVE_GIT_TOUCHED_FILES"
 AUTOSAVE_RESEARCH_NOTE_FILE_ENV = "AGENT_RELAY_AUTOSAVE_RESEARCH_NOTE_FILE"
 AUTOSAVE_IMPLEMENTATION_NOTE_FILE_ENV = "AGENT_RELAY_AUTOSAVE_IMPLEMENTATION_NOTE_FILE"
 AUTOSAVE_VALIDATION_SUMMARY_FILE_ENV = "AGENT_RELAY_AUTOSAVE_VALIDATION_SUMMARY_FILE"
+AUTOSAVE_PLANNING_SNAPSHOT_FILE_ENV = "AGENT_RELAY_AUTOSAVE_PLANNING_SNAPSHOT_FILE"
+AUTOSAVE_PROPOSED_EDITS_FILE_ENV = "AGENT_RELAY_AUTOSAVE_PROPOSED_EDITS_FILE"
 
 _TRUTHY_ENV_VALUES = {"1", "true", "yes", "on"}
 
@@ -25,6 +27,16 @@ class CaptureOptions:
     touched_files: list[str] = field(default_factory=list)
     research_notes: list[str] = field(default_factory=list)
     implementation_notes: list[str] = field(default_factory=list)
+    planning_snapshot: str | None = None
+    planning_snapshot_file: str | None = None
+    proposed_edits: str | None = None
+    proposed_edits_file: str | None = None
+    provider_source_agent: str | None = None
+    provider_hook_name: str | None = None
+    provider_resumable_state: str | None = None
+    provider_transcript: str | None = None
+    provider_session_metadata: str | None = None
+    provider_warnings: list[str] = field(default_factory=list)
     validation_status: str | None = None
     validation_summary: str | None = None
     research_note_file: str | None = None
@@ -78,6 +90,19 @@ def load_capture_text(
     if not default_path:
         return None, None
     return _read_capture_text(repo_root, default_path, required=False)
+
+
+def resolve_capture_text(
+    repo_root: Path,
+    *,
+    explicit_text: str | None,
+    explicit_path: str | None,
+    env_var: str,
+) -> tuple[str | None, Path | None]:
+    if explicit_text is not None:
+        stripped = explicit_text.strip()
+        return (stripped if stripped else None), None
+    return load_capture_text(repo_root, explicit_path=explicit_path, env_var=env_var)
 
 
 def _read_capture_text(

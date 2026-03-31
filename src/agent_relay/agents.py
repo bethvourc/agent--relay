@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shlex
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,15 +32,27 @@ class LaunchSpec:
 
 
 @dataclass(frozen=True)
+class CaptureHookSpec:
+    command: str
+    template: str
+    template_source: str
+    cwd: str
+    hook_name: str
+
+
+@dataclass(frozen=True)
 class AgentAdapter:
     key: str
     display_name: str
     cli_command: str
+    alias: str                      # Short alias (e.g. "c" for claude)
     launch_template_env: str
     default_launch_template: str
     launch_instructions_template: str
     resume_packet_target: str
     event_capture_hook_name: str | None = None
+    capture_template_env: str | None = None
+    default_capture_template: str | None = None
 
     def resolve_launch_template(self) -> tuple[str, str]:
         template = os.getenv(self.launch_template_env)
@@ -87,17 +100,56 @@ class AgentAdapter:
             warning=warning,
         )
 
-    def _template_values(self, repo_root: Path, resume_path: Path) -> dict[str, str]:
-        return {
+    def resolve_capture_template(self) -> tuple[str | None, str | None]:
+        if not self.capture_template_env:
+            return None, None
+        template = os.getenv(self.capture_template_env)
+        if template:
+            return template, "env"
+        if self.default_capture_template:
+            return self.default_capture_template, "default"
+        return None, None
+
+    def render_capture_hook_spec(self, repo_root: Path, session_id: str) -> CaptureHookSpec | None:
+        template, source = self.resolve_capture_template()
+        if template is None or source is None or self.event_capture_hook_name is None:
+            return None
+        try:
+            command = template.format(**self._template_values(repo_root, session_id=session_id))
+        except KeyError as exc:
+            raise SystemExit(
+                f"Capture hook template for {self.key} references unknown placeholder: {exc.args[0]}"
+            ) from exc
+        return CaptureHookSpec(
+            command=command,
+            template=template,
+            template_source=source,
+            cwd=str(repo_root),
+            hook_name=self.event_capture_hook_name,
+        )
+
+    def _template_values(
+        self,
+        repo_root: Path,
+        resume_path: Path | None = None,
+        session_id: str | None = None,
+    ) -> dict[str, str]:
+        values = {
             "agent": self.key,
             "agent_name": self.display_name,
             "agent_cli": shlex.quote(self.cli_command),
             "repo_root": shlex.quote(str(repo_root)),
             "repo_root_path": str(repo_root),
-            "resume_path": shlex.quote(str(resume_path)),
-            "resume_path_path": str(resume_path),
             "resume_packet_target": self.resume_packet_target,
+            "session_id": session_id or "",
         }
+        if resume_path is not None:
+            values["resume_path"] = shlex.quote(str(resume_path))
+            values["resume_path_path"] = str(resume_path)
+        else:
+            values["resume_path"] = ""
+            values["resume_path_path"] = ""
+        return values
 
 
 class ClaudeCodeAdapter(AgentAdapter):
@@ -106,14 +158,15 @@ class ClaudeCodeAdapter(AgentAdapter):
             key="claude",
             display_name="Claude Code",
             cli_command="claude",
+            alias="c",
             launch_template_env="AGENT_RELAY_CLAUDE_LAUNCH_TEMPLATE",
-            default_launch_template="cd {repo_root} && {agent_cli} --resume {resume_path}",
+            default_launch_template='cd {repo_root} && {agent_cli} -p "$(cat {resume_path})"',
             launch_instructions_template=(
-                "Start {agent_name} in {repo_root_path} with {resume_path_path} as the "
-                "resume packet input."
+                "Start {agent_name} in {repo_root_path} with the resume packet as its prompt."
             ),
             resume_packet_target="claude",
-            event_capture_hook_name=None,
+            event_capture_hook_name="claude_export",
+            capture_template_env="AGENT_RELAY_CLAUDE_CAPTURE_TEMPLATE",
         )
 
 
@@ -123,14 +176,15 @@ class CodexAdapter(AgentAdapter):
             key="codex",
             display_name="Codex",
             cli_command="codex",
+            alias="x",
             launch_template_env="AGENT_RELAY_CODEX_LAUNCH_TEMPLATE",
-            default_launch_template="cd {repo_root} && {agent_cli} --resume {resume_path}",
+            default_launch_template='cd {repo_root} && {agent_cli} "$(cat {resume_path})"',
             launch_instructions_template=(
-                "Start {agent_name} in {repo_root_path} with {resume_path_path} as the "
-                "resume packet input."
+                "Start {agent_name} in {repo_root_path} with the resume packet as its prompt."
             ),
             resume_packet_target="codex",
-            event_capture_hook_name=None,
+            event_capture_hook_name="codex_export",
+            capture_template_env="AGENT_RELAY_CODEX_CAPTURE_TEMPLATE",
         )
 
 
@@ -144,6 +198,27 @@ AGENT_REGISTRY: dict[str, AgentAdapter] = {
 
 AGENT_NAMES = tuple(AGENT_REGISTRY)
 
+# Alias → key lookup (e.g. "c" → "claude", "x" → "codex")
+AGENT_ALIASES: dict[str, str] = {
+    adapter.alias: adapter.key
+    for adapter in AGENT_REGISTRY.values()
+}
+
+
+def resolve_agent_key(name_or_alias: str) -> str:
+    """Resolve a full agent key or short alias to the canonical key.
+
+    Raises SystemExit if the name is not recognized.
+    """
+    if name_or_alias in AGENT_REGISTRY:
+        return name_or_alias
+    if name_or_alias in AGENT_ALIASES:
+        return AGENT_ALIASES[name_or_alias]
+    allowed = ", ".join(
+        f"{a.key} ({a.alias})" for a in AGENT_REGISTRY.values()
+    )
+    raise SystemExit(f"Unknown agent: {name_or_alias}. Choose from: {allowed}")
+
 
 def get_agent_adapter(agent: str) -> AgentAdapter:
     try:
@@ -154,3 +229,71 @@ def get_agent_adapter(agent: str) -> AgentAdapter:
 
 def get_agent_display_name(agent: str) -> str:
     return get_agent_adapter(agent).display_name
+
+
+# ---------------------------------------------------------------------------
+# Agent discovery
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, slots=True)
+class DiscoveryResult:
+    key: str
+    display_name: str
+    cli_command: str
+    alias: str
+    available: bool
+    cli_path: str | None
+    version: str | None
+
+
+def _detect_version(cli_command: str) -> str | None:
+    """Try to get version string from a CLI tool."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            [cli_command, "--version"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip().splitlines()[0]
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
+    return None
+
+
+def discover(keys: Iterable[str] | None = None) -> list[DiscoveryResult]:
+    """Check which registered agents have their CLI available on PATH."""
+    import shutil
+    target_keys = keys if keys is not None else AGENT_REGISTRY.keys()
+    results: list[DiscoveryResult] = []
+    for key in target_keys:
+        adapter = AGENT_REGISTRY.get(key)
+        if adapter is None:
+            continue
+        cli_path = shutil.which(adapter.cli_command)
+        version = _detect_version(adapter.cli_command) if cli_path else None
+        results.append(DiscoveryResult(
+            key=adapter.key,
+            display_name=adapter.display_name,
+            cli_command=adapter.cli_command,
+            alias=adapter.alias,
+            available=cli_path is not None,
+            cli_path=cli_path,
+            version=version,
+        ))
+    return results
+
+
+def require_available(keys: Iterable[str]) -> None:
+    """Raise SystemExit if any specified agent CLI is not installed."""
+    import shutil
+    for key in keys:
+        adapter = AGENT_REGISTRY.get(key)
+        if adapter is None:
+            allowed = ", ".join(sorted(AGENT_REGISTRY))
+            raise SystemExit(f"Unknown agent: {key}. Choose from: {allowed}")
+        if shutil.which(adapter.cli_command) is None:
+            raise SystemExit(
+                f"{adapter.display_name} CLI ({adapter.cli_command}) not found on PATH. "
+                f"Install it or check your $PATH."
+            )
