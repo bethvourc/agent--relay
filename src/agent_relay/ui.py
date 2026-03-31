@@ -805,17 +805,20 @@ def render_help(console: Console) -> None:
             '  [brand]agent-relay chat c x "fix tests"[/]    Turn-based conversation'
         )
         console.print(
-            '  [brand]agent-relay race c x "build auth"[/]   Concurrent agents (tmux)'
+            '  [brand]agent-relay race c x "build auth"[/]   Parallel workflow with planning'
         )
         console.print(
-            "  [brand]agent-relay resolve [id][/]            Resume a race conflict"
+            '  [brand]agent-relay race --continue <id> ...[/] Continue a race session'
+        )
+        console.print(
+            "  [brand]agent-relay resolve [id][/]            Resume unresolved race conflicts"
         )
         console.print(
             "  [brand]agent-relay discover[/]                Show available agents"
         )
         console.print("  [brand]agent-relay status[/]                  View sessions")
         console.print(
-            "  [brand]agent-relay inspect-conflicts <id>[/]  Inspect race conflicts"
+            "  [brand]agent-relay inspect-conflicts <id>[/]  Inspect saved conflict artifacts"
         )
         console.print(
             "  [brand]agent-relay clean[/]                   Remove all sessions"
@@ -844,12 +847,22 @@ def render_help(console: Console) -> None:
         'agent-relay chat c x "fix tests"', "Turn-based agent conversation"
     )
     examples.add_row('agent-relay chat c x c "review" -n 6', "3-agent, 6 turns max")
-    examples.add_row('agent-relay race c x "build auth"', "Concurrent agents (tmux)")
+    examples.add_row(
+        'agent-relay race c x "build auth"',
+        "Parallel workflow: planning, worktrees, and conflict recovery",
+    )
+    examples.add_row(
+        'agent-relay race --continue <session> c x "continue"',
+        "Continue an interrupted, timed-out, or incomplete race",
+    )
     examples.add_row(
         "agent-relay resolve <session>", "Resume an unresolved race conflict"
     )
     examples.add_row(
-        "agent-relay inspect-conflicts <session>", "Inspect saved conflict artifacts"
+        "agent-relay resolve --latest", "Resume the latest unresolved race conflict"
+    )
+    examples.add_row(
+        "agent-relay inspect-conflicts <session>", "Inspect saved conflict artifacts and versions"
     )
     examples.add_row("agent-relay discover", "Show available agents & aliases")
     examples.add_row("agent-relay status", "View all relay sessions")
@@ -877,6 +890,10 @@ def render_help(console: Console) -> None:
     opts.add_row("--continue", "Continue from a prior relay session id")
     opts.add_row("-n", "Max turns for run/chat (default: 10)")
     opts.add_row("--max-time", "Max seconds for race (default: 600)")
+    opts.add_row(
+        "--open-terminals",
+        "Auto-open terminal windows or tabs for race/resolve on supported platforms",
+    )
     opts.add_row("--from", "Source agent for relay (auto-detected)")
     opts.add_row("--no-launch", "Just create the handoff packet")
     opts.add_row("--yes    -y", "Skip confirmation prompt")

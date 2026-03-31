@@ -38,6 +38,12 @@ agent-relay chat c x "Fix the failing tests"
 # Concurrent agents working simultaneously (tmux)
 agent-relay race c x "Build the auth module"
 
+# Resume the latest unresolved concurrent conflict
+agent-relay resolve --latest
+
+# Inspect saved conflict artifacts
+agent-relay inspect-conflicts <session-id>
+
 # See what agents are available
 agent-relay discover
 
@@ -94,11 +100,49 @@ agent-relay run c "Fix the failing tests"
 # Turn-based handoff-friendly collaboration
 agent-relay chat c x "Fix the failing tests"
 
-# Concurrent work with tmux sessions
+# Concurrent work with planning, isolated worktrees, and conflict recovery
 agent-relay race c x "Build the auth module"
 ```
 
 Use `run` when one agent should stay in control from the first prompt. Use `chat` when multiple agents should take turns. Use `race` when multiple agents should work in parallel.
+
+### Use `race` when you want enforced delegation before edits land
+
+`race` is now a phased concurrent workflow, not just two agents launched side by side.
+
+1. Planning: every agent must claim a concrete slice before implementation begins.
+2. Implementation: each agent works inside its own isolated git worktree.
+3. Merge and review: Relay only merges in-scope work back to the main repo.
+4. Conflict handling: Relay saves conflict artifacts, can run an automatic resolver/reviewer pass, and hands off to `resolve` when human judgment is still needed.
+
+Claim roles:
+
+- `owner`: exclusive editor for that path or directory
+- `shared`: multiple agents may edit that scope intentionally
+- `reviewer`: review-only overlap; edits in reviewer-only scope are blocked
+
+Useful concurrent commands:
+
+```bash
+# Start a concurrent run
+agent-relay race c x "Build the auth module"
+
+# Continue an interrupted or timed-out concurrent session
+agent-relay race --continue <session-id> c x "Continue the task"
+
+# Inspect saved conflict artifacts and versions
+agent-relay inspect-conflicts <session-id>
+
+# Resume unresolved conflict resolution
+agent-relay resolve <session-id>
+agent-relay resolve --latest
+```
+
+Notes:
+
+- On macOS, Relay can auto-open one terminal window or tab per tmux session. Use `--open-terminals` or `--no-open-terminals` to control that behavior explicitly.
+- If a concurrent run ends in `manual_resolution_required`, use `inspect-conflicts` first when you want to see the saved versions, then `resolve` to continue the resolution workflow.
+- If a concurrent run ends in `max_time`, `interrupted`, `incomplete`, or `agent_error`, use `race --continue <session-id> ...` to continue the broader task.
 
 ### Switch agents after one stops
 
@@ -130,7 +174,9 @@ This is the best fallback when an agent did useful planning but did not write co
 
 - `agent-relay <agent>`: relay to an agent and, by default, launch it (e.g. `agent-relay codex`, `agent-relay claude`)
 - `agent-relay chat <agents> <task>`: turn-based agent conversation
-- `agent-relay race <agents> <task>`: concurrent agents with live visibility (tmux)
+- `agent-relay race <agents> <task>`: concurrent workflow with planning, claims, isolated worktrees, and conflict handling (tmux)
+- `agent-relay resolve [session-id]`: resume unresolved race conflicts (defaults to the latest unresolved conflict)
+- `agent-relay inspect-conflicts <session-id>`: inspect saved race conflict artifacts, versions, and manual-resolution hints
 - `agent-relay discover`: show available agents and aliases
 - `agent-relay status`: show sessions in the current repo
 - `agent-relay clean`: remove all sessions

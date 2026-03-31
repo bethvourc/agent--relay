@@ -1025,7 +1025,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # agent-relay race <agent> [<agent>...] <task> — concurrent agents with tmux
     race = subparsers.add_parser(
-        "race", help="Run agents concurrently with live visibility"
+        "race", help="Concurrent workflow with planning, worktrees, and conflict recovery"
     )
     race.add_argument(
         "args",
@@ -1043,7 +1043,7 @@ def build_parser() -> argparse.ArgumentParser:
     race.add_argument(
         "--continue",
         dest="continue_session",
-        help="Continue from a prior relay session id",
+        help="Continue from a prior race session id",
     )
     race.add_argument(
         "--max-time", type=int, default=600, help="Max seconds (default: 600)"
@@ -1059,7 +1059,7 @@ def build_parser() -> argparse.ArgumentParser:
     race.set_defaults(func=cmd_race)
 
     resolve = subparsers.add_parser(
-        "resolve", help="Resume an unresolved race conflict"
+        "resolve", help="Resume unresolved race conflicts from saved artifacts"
     )
     resolve.add_argument(
         "session_id",
@@ -1075,7 +1075,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--agent",
         dest="agent_overrides",
         action="append",
-        help="Override inferred resolver agents",
+        help="Override the inferred resolver agents",
     )
     resolve.add_argument(
         "--task", "-t", dest="task_flag", default=None, help="Resolution task override"
@@ -1094,7 +1094,7 @@ def build_parser() -> argparse.ArgumentParser:
     resolve.set_defaults(func=cmd_resolve)
 
     inspect_conflicts = subparsers.add_parser(
-        "inspect-conflicts", help="Inspect saved concurrent conflict artifacts"
+        "inspect-conflicts", help="Inspect saved race conflict artifacts and versions"
     )
     inspect_conflicts.add_argument("session_id", help="Relay session id")
     inspect_conflicts.add_argument("--repo", help="Repository path (default: cwd)")

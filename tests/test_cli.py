@@ -657,3 +657,12 @@ class RaceCliHelpersTests(TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(run_mock.call_args.kwargs["continue_from_session_id"], "sess-latest")
+
+    def test_parser_help_describes_race_resolution_commands(self) -> None:
+        parser = build_parser()
+        help_text = parser.format_help()
+        self.assertIn("race", help_text)
+        self.assertIn("resolve", help_text)
+        self.assertIn("inspect-conflicts", help_text)
+        self.assertIn("Concurrent workflow with planning, worktrees, and", help_text)
+        self.assertIn("conflict recovery", help_text)
