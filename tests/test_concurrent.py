@@ -617,7 +617,13 @@ class RunConcurrentTests(TestCase):
             for call in tmux_mock.call_args_list
             if call.args and call.args[0] == "new-session"
         ]
+        respawn_calls = [
+            call.args
+            for call in tmux_mock.call_args_list
+            if call.args and call.args[0] == "respawn-pane"
+        ]
         self.assertEqual(len(new_session_calls), 4)
+        self.assertEqual(len(respawn_calls), 4)
         self.assertIn(
             ("set-option", "-t", f"relay-{session_id}-planning-00", "mouse", "on"),
             [call.args[:5] for call in tmux_mock.call_args_list if len(call.args) >= 5],

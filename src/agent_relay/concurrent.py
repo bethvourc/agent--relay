@@ -195,6 +195,7 @@ def _tmux_capture_pane(session_name: str, pane_index: int) -> str:
     """Capture the visible content of a tmux pane."""
     result = _tmux(
         "capture-pane", "-t", f"{session_name}:{0}.{pane_index}",
+        "-S", "-",  # include pane scrollback so fast command output is preserved
         "-p",  # print to stdout
         check=False,
     )
@@ -343,7 +344,11 @@ def _path_hash_or_none(path: Path) -> str | None:
 
 
 def _is_runtime_metadata_path(relative_path: str) -> bool:
-    return relative_path == ".agent-relay" or relative_path.startswith(".agent-relay/") or relative_path.startswith(".git/")
+    return (
+        relative_path in {".agent-relay", ".git"}
+        or relative_path.startswith(".agent-relay/")
+        or relative_path.startswith(".git/")
+    )
 
 
 def _scan_runtime_manifest(root: Path) -> dict[str, str]:
@@ -2021,7 +2026,6 @@ def _run_concurrent_phase(
             "new-session", "-d",
             "-s", tmux_session,
             "-x", "200", "-y", "50",
-            commands[slot],
         )
         _tmux(
             "set-window-option",
@@ -2036,6 +2040,12 @@ def _run_concurrent_phase(
             "mouse",
             "on",
             check=False,
+        )
+        _tmux(
+            "respawn-pane",
+            "-k",
+            "-t", f"{tmux_session}:0.0",
+            commands[slot],
         )
 
         wlog.append(LogEntry(
