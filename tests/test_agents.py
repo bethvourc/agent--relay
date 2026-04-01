@@ -11,14 +11,15 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from agent_relay.agents import AGENT_NAMES, get_agent_adapter, get_agent_display_name  # noqa: E402
+from agent_relay.agents import AGENT_NAMES, AGENT_ALIASES, get_agent_adapter, get_agent_display_name, resolve_agent_key  # noqa: E402
 
 
 class AgentAdapterTests(TestCase):
     def test_agent_registry_exposes_supported_adapters(self) -> None:
-        self.assertEqual(set(AGENT_NAMES), {"claude", "codex"})
+        self.assertEqual(set(AGENT_NAMES), {"claude", "codex", "gemini"})
         self.assertEqual(get_agent_display_name("claude"), "Claude Code")
         self.assertEqual(get_agent_display_name("codex"), "Codex")
+        self.assertEqual(get_agent_display_name("gemini"), "Gemini")
 
     def test_adapter_renders_default_launch_spec(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -108,3 +109,27 @@ class AgentAdapterTests(TestCase):
                 capture_spec = adapter.render_capture_hook_spec(repo_root, "s-456")
 
         self.assertIsNone(capture_spec)
+
+    def test_gemini_adapter_renders_default_launch_spec(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir).resolve()
+            resume_path = repo_root / ".agent-relay" / "sessions" / "s1" / "resume" / "gemini.md"
+            adapter = get_agent_adapter("gemini")
+
+            launch_spec = adapter.render_launch_spec(repo_root, resume_path)
+
+            self.assertEqual(
+                launch_spec.command,
+                f'cd {shlex.quote(str(repo_root))} && gemini -p "$(cat {shlex.quote(str(resume_path))})"',
+            )
+            self.assertEqual(launch_spec.template_source, "default")
+            self.assertEqual(launch_spec.cwd, str(repo_root))
+            self.assertTrue(launch_spec.packet_aware)
+            self.assertEqual(launch_spec.execute_policy, "allow")
+            self.assertEqual(adapter.resume_packet_target, "gemini")
+            self.assertEqual(adapter.event_capture_hook_name, "gemini_export")
+
+    def test_gemini_alias_resolves(self) -> None:
+        self.assertEqual(resolve_agent_key("g"), "gemini")
+        self.assertEqual(resolve_agent_key("gemini"), "gemini")
+        self.assertIn("g", AGENT_ALIASES)

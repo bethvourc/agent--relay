@@ -47,6 +47,7 @@ RELAY_THEME = Theme(
         "status.not_run": "dim",
         "agent.claude": "bold #FFB000",
         "agent.codex": "bold cyan",
+        "agent.gemini": "bold #4285F4",
         "muted": "dim",
         "banner.border": "#B87A00",
         "banner.accent": "bold #FFB000",
@@ -82,6 +83,7 @@ STATUS_SYMBOLS = {
 AGENT_SYMBOLS = {
     "claude": "◆",
     "codex": "◇",
+    "gemini": "◈",
 }
 
 BANNER_COMPACT = (
@@ -214,8 +216,8 @@ def status_badge(status: str) -> Text:
     return text
 
 
-AGENT_NAMES_DISPLAY = {"claude": "Claude Code", "codex": "Codex"}
-AGENT_NAMES_SHORT = {"claude": "Claude", "codex": "Codex"}
+AGENT_NAMES_DISPLAY = {"claude": "Claude Code", "codex": "Codex", "gemini": "Gemini"}
+AGENT_NAMES_SHORT = {"claude": "Claude", "codex": "Codex", "gemini": "Gemini"}
 
 
 def agent_badge(agent_key: str, short: bool = False) -> Text:

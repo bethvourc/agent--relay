@@ -17,6 +17,7 @@ from agent_relay.converse import (
     detect_done_signal,
     normalize_claude_output,
     normalize_codex_output,
+    normalize_gemini_output,
     parse_turn_state,
     parse_turn_control,
     _make_summary,
@@ -196,6 +197,65 @@ class NormalizeCodexOutputTests(TestCase):
         self.assertEqual(result, "raw codex output")
 
 
+class NormalizeGeminiOutputTests(TestCase):
+    def test_extracts_text_from_model_message(self) -> None:
+        lines = [
+            json.dumps({"type": "init", "session_id": "s1"}),
+            json.dumps(
+                {
+                    "message": {
+                        "role": "model",
+                        "content": [{"type": "text", "text": "Hello from Gemini"}],
+                    }
+                }
+            ),
+        ]
+        raw = "\n".join(lines)
+        result = normalize_gemini_output(raw)
+        self.assertIn("Hello from Gemini", result)
+
+    def test_extracts_text_from_result_event(self) -> None:
+        lines = [
+            json.dumps({"type": "result", "text": "Final answer"}),
+        ]
+        raw = "\n".join(lines)
+        result = normalize_gemini_output(raw)
+        self.assertIn("Final answer", result)
+
+    def test_ignores_tool_use_events(self) -> None:
+        lines = [
+            json.dumps({"type": "tool_use", "name": "ReadFile", "input": {}}),
+            json.dumps(
+                {
+                    "message": {
+                        "role": "model",
+                        "content": [{"type": "text", "text": "after tool"}],
+                    }
+                }
+            ),
+        ]
+        raw = "\n".join(lines)
+        result = normalize_gemini_output(raw)
+        self.assertNotIn("ReadFile", result)
+        self.assertIn("after tool", result)
+
+    def test_falls_back_to_raw(self) -> None:
+        raw = "raw gemini output"
+        result = normalize_gemini_output(raw)
+        self.assertEqual(result, "raw gemini output")
+
+    def test_handles_empty_input(self) -> None:
+        result = normalize_gemini_output("")
+        self.assertEqual(result, "")
+
+    def test_handles_flat_model_message(self) -> None:
+        raw = json.dumps(
+            {"role": "model", "content": [{"type": "text", "text": "flat reply"}]}
+        )
+        result = normalize_gemini_output(raw)
+        self.assertIn("flat reply", result)
+
+
 class NormalizeOutputDispatchTests(TestCase):
     def test_dispatches_to_claude(self) -> None:
         raw = json.dumps(
@@ -214,6 +274,13 @@ class NormalizeOutputDispatchTests(TestCase):
         )
         result = _normalize_output("codex", raw)
         self.assertIn("codex", result)
+
+    def test_dispatches_to_gemini(self) -> None:
+        raw = json.dumps(
+            {"role": "model", "content": [{"type": "text", "text": "gemini"}]}
+        )
+        result = _normalize_output("gemini", raw)
+        self.assertIn("gemini", result)
 
     def test_unknown_agent_returns_raw(self) -> None:
         result = _normalize_output("unknown", "raw text")

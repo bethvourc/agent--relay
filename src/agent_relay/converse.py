@@ -138,11 +138,46 @@ def normalize_codex_output(raw_stdout: str) -> str:
     return "\n".join(texts) if texts else raw_stdout.strip()
 
 
+def normalize_gemini_output(raw_stdout: str) -> str:
+    """Parse Gemini --output-format stream-json JSONL, extract model text."""
+    texts: list[str] = []
+    for line in raw_stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        # Gemini stream-json emits message events with role "model"
+        msg = event.get("message") or event
+        if isinstance(msg, dict) and msg.get("role") == "model":
+            for block in msg.get("content", []):
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text = block.get("text", "")
+                    if text:
+                        texts.append(text)
+            # Also handle flat text field on the message
+            flat_text = msg.get("text", "")
+            if isinstance(flat_text, str) and flat_text and flat_text not in texts:
+                texts.append(flat_text)
+        # Gemini result event contains final output
+        if event.get("type") == "result":
+            text = event.get("text", "")
+            if isinstance(text, str) and text:
+                texts.append(text)
+    return "\n".join(texts) if texts else raw_stdout.strip()
+
+
 def _normalize_output(agent_key: str, raw_stdout: str) -> str:
     if agent_key == "claude":
         return normalize_claude_output(raw_stdout)
     elif agent_key == "codex":
         return normalize_codex_output(raw_stdout)
+    elif agent_key == "gemini":
+        return normalize_gemini_output(raw_stdout)
     # Fallback: return raw output
     return raw_stdout.strip()
 
@@ -502,6 +537,8 @@ def _build_agent_command(agent_key: str, prompt_path: Path, repo_root: Path) -> 
         )
     elif agent_key == "codex":
         return f'cd {rr} && {cli} exec "$(cat {pp})" --json'
+    elif agent_key == "gemini":
+        return f'cd {rr} && {cli} -p "$(cat {pp})" --output-format stream-json'
     else:
         # Generic fallback
         return f'cd {rr} && {cli} "$(cat {pp})"'

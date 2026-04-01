@@ -741,10 +741,7 @@ def _render_resume_packet(
     supplemental_context: SupplementalCheckpointContext,
     relay_context: RelayConversationContext,
 ) -> str:
-    if get_agent_adapter(target_agent).resume_packet_target == "claude":
-        title = "# Claude Code Resume Packet"
-    else:
-        title = "# Codex Resume Packet"
+    title = f"# {get_agent_adapter(target_agent).display_name} Resume Packet"
 
     has_code_changes = bool(checkpoint.touched_files)
 
@@ -1371,12 +1368,18 @@ def _normalize_relay_output(raw_output: str) -> str:
                 texts.append(text.strip())
 
         message = event.get("message") if isinstance(event.get("message"), dict) else event
-        if isinstance(message, dict) and message.get("role") == "assistant":
+        if isinstance(message, dict) and message.get("role") in {"assistant", "model"}:
             for block in message.get("content", []):
                 if isinstance(block, dict) and block.get("type") in {"text", "output_text"}:
                     text = block.get("text", "")
                     if isinstance(text, str) and text.strip():
                         texts.append(text.strip())
+
+        # Gemini result event
+        if event.get("type") == "result":
+            text = event.get("text", "")
+            if isinstance(text, str) and text.strip():
+                texts.append(text.strip())
 
     if texts:
         return _strip_relay_control_lines("\n".join(texts))
