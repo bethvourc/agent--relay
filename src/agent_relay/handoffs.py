@@ -804,11 +804,10 @@ def _render_resume_packet(
 
 
 def _append_section(lines: list[str], heading: str, items: tuple[str, ...]) -> None:
+    if not items:
+        return
     lines.append(heading)
-    if items:
-        lines.extend(f"- {item}" for item in items)
-    else:
-        lines.append("- None recorded")
+    lines.extend(f"- {item}" for item in items)
     lines.append("")
 
 

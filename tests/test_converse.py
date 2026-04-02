@@ -437,7 +437,24 @@ class BuildTurnPromptTests(TestCase):
     def test_three_agent_prompt_lists_all_participants(self) -> None:
         from pathlib import Path
 
-        # claude + codex + claude: unique others from claude's perspective is just codex
+        # Turn 1: full preamble lists other participants
+        prompt = build_turn_prompt(
+            task="Collaborate on design",
+            turn_history=[],
+            current_agent="codex",
+            all_agents=["claude", "codex", "claude"],
+            turn_number=1,
+            repo_root=Path("/tmp/repo"),
+        )
+        self.assertIn("Collaborate on design", prompt)
+        self.assertIn("Codex", prompt)
+        self.assertIn("Claude Code", prompt)
+        # From codex's perspective, the unique other agent is claude (1 unique)
+        self.assertIn("1 other AI agent", prompt)
+
+    def test_turn2_uses_abbreviated_preamble(self) -> None:
+        from pathlib import Path
+
         prompt = build_turn_prompt(
             task="Collaborate on design",
             turn_history=[],
@@ -446,11 +463,10 @@ class BuildTurnPromptTests(TestCase):
             turn_number=2,
             repo_root=Path("/tmp/repo"),
         )
-        self.assertIn("Collaborate on design", prompt)
-        self.assertIn("Codex", prompt)
-        self.assertIn("Claude Code", prompt)
-        # From codex's perspective, the unique other agent is claude (1 unique)
-        self.assertIn("1 other AI agent", prompt)
+        self.assertIn("You are Codex (codex). Workspace:", prompt)
+        # Full preamble details should NOT appear on turn 2
+        self.assertNotIn("## Rules", prompt)
+        self.assertNotIn("Other participants", prompt)
 
     def test_three_distinct_agents_lists_two_others(self) -> None:
         """When three distinct agents converse, each sees 2 others."""
@@ -482,6 +498,54 @@ class BuildTurnPromptTests(TestCase):
         self.assertIn("1 other AI agent", prompt)
         # Should not have trailing 's'
         self.assertNotIn("1 other AI agents", prompt)
+
+
+    def test_turn2_uses_abbreviated_completion_protocol(self) -> None:
+        from pathlib import Path
+
+        prompt = build_turn_prompt(
+            task="Do something",
+            turn_history=[],
+            current_agent="claude",
+            all_agents=["claude", "codex"],
+            turn_number=2,
+            repo_root=Path("/tmp/repo"),
+        )
+        self.assertIn("(Same as Turn 1.)", prompt)
+        # Full protocol details should NOT appear on turn 2
+        self.assertNotIn("RELAY_STATE:", prompt)
+        self.assertNotIn("Allowed status values:", prompt)
+
+    def test_older_turns_are_summarized(self) -> None:
+        from pathlib import Path
+
+        long_text_1 = "First turn detailed output. " * 10  # ~270 chars, summary truncates to 50
+        long_text_2 = "Second turn detailed work. " * 10
+        history = [
+            self._make_turn(1, "claude", long_text_1),
+            self._make_turn(2, "codex", long_text_2),
+            self._make_turn(3, "claude", "Third turn refactored the handler."),
+            self._make_turn(4, "codex", "Fourth turn ran all tests and they pass."),
+            self._make_turn(5, "claude", "Fifth turn updated the docs."),
+        ]
+        prompt = build_turn_prompt(
+            task="Fix the tests",
+            turn_history=history,
+            current_agent="codex",
+            all_agents=["claude", "codex"],
+            turn_number=6,
+            repo_root=Path("/tmp/repo"),
+        )
+        # Last 3 turns (3, 4, 5) should have full text
+        self.assertIn("Fifth turn updated the docs.", prompt)
+        self.assertIn("Fourth turn ran all tests and they pass.", prompt)
+        self.assertIn("Third turn refactored the handler.", prompt)
+        # Older turns (1, 2) should be summarized — header says "(summary)"
+        self.assertIn("Turn 1 — Claude Code (summary)", prompt)
+        self.assertIn("Turn 2 — Codex (summary)", prompt)
+        # Full long text of older turns should NOT appear
+        self.assertNotIn(long_text_1, prompt)
+        self.assertNotIn(long_text_2, prompt)
 
 
 class StripDoneMarkerTests(TestCase):
