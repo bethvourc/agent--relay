@@ -745,48 +745,32 @@ def _render_resume_packet(
 
     has_code_changes = bool(checkpoint.touched_files)
 
-    lines = [
-        title,
-        "",
-        "Resume this Agent Relay session from the state captured below.",
-        "",
-    ]
+    lines = [title, ""]
 
     # Task briefing — the most important context for the target agent
     if handoff_reason:
-        lines.append("## Task")
-        lines.append("")
-        lines.append(handoff_reason)
-        lines.append("")
+        lines.extend(["## Task", "", handoff_reason, ""])
 
     if not has_code_changes:
-        lines.append(
-            "Note: No code changes were made in the previous session. "
-            "The prior agent may have been planning, researching, or discussing the approach. "
-            "Review the task above and continue from where they left off."
-        )
-        lines.append("")
+        lines.extend([
+            "Note: No code changes in the previous session — the prior agent may have been planning or researching.",
+            "",
+        ])
 
+    source_name = get_agent_display_name(view.current_agent)
+    next_action = checkpoint.next_action or "Not recorded"
+    validation_summary = checkpoint.validation.summary or "None recorded"
     lines.extend([
         "## Session snapshot",
         "",
         f"- Objective: {view.objective}",
-        f"- Repository root: {view.repo_root}",
-        f"- Current phase: {view.phase}",
-        f"- Source agent: {get_agent_display_name(view.current_agent)}",
-        f"- Prepared at: {prepared_at}",
+        f"- Repo: {view.repo_root} | Phase: {view.phase} | Source: {source_name} | At: {prepared_at}",
         "",
-        "## Latest checkpoint",
+        f"## Checkpoint ({checkpoint.object_id})",
         "",
-        f"- Checkpoint id: {checkpoint.object_id}",
-        f"- Created at: {checkpoint.created_at}",
-        f"- Phase hint: {checkpoint.phase_hint}",
-        f"- Task status: {checkpoint.task_status}",
-        f"- Recorded next action: {checkpoint.next_action or 'Not recorded'}",
-        "",
-        "Validation:",
-        f"- Status: {checkpoint.validation.status}",
-        f"- Summary: {checkpoint.validation.summary or 'None recorded'}",
+        f"- Created: {checkpoint.created_at} | Status: {checkpoint.task_status} | Phase: {checkpoint.phase_hint}",
+        f"- Next action: {next_action}",
+        f"- Validation: {checkpoint.validation.status} — {validation_summary}",
         "",
     ])
     _append_section(lines, "Decisions:", checkpoint.decisions)
