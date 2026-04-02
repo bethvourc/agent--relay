@@ -538,15 +538,18 @@ def build_turn_prompt(
         history_parts.reverse()
         lines.extend(history_parts)
 
-    lines.extend(
-        [
-            f"## Your turn (Turn {turn_number})",
-            "",
-            f"You are {current_name}. Continue working on the task above.",
-            "Review what has been done so far and take the next step.",
-            "",
-        ]
-    )
+    if turn_number == 1:
+        lines.extend(
+            [
+                f"## Your turn (Turn {turn_number})",
+                "",
+                f"You are {current_name}. Continue working on the task above.",
+                "Review what has been done so far and take the next step.",
+                "",
+            ]
+        )
+    else:
+        lines.extend([f"## Your turn (Turn {turn_number})", ""])
 
     return "\n".join(lines)
 
