@@ -741,55 +741,36 @@ def _render_resume_packet(
     supplemental_context: SupplementalCheckpointContext,
     relay_context: RelayConversationContext,
 ) -> str:
-    if get_agent_adapter(target_agent).resume_packet_target == "claude":
-        title = "# Claude Code Resume Packet"
-    else:
-        title = "# Codex Resume Packet"
+    title = f"# {get_agent_adapter(target_agent).display_name} Resume Packet"
 
     has_code_changes = bool(checkpoint.touched_files)
 
-    lines = [
-        title,
-        "",
-        "Resume this Agent Relay session from the state captured below.",
-        "",
-    ]
+    lines = [title, ""]
 
     # Task briefing — the most important context for the target agent
     if handoff_reason:
-        lines.append("## Task")
-        lines.append("")
-        lines.append(handoff_reason)
-        lines.append("")
+        lines.extend(["## Task", "", handoff_reason, ""])
 
     if not has_code_changes:
-        lines.append(
-            "Note: No code changes were made in the previous session. "
-            "The prior agent may have been planning, researching, or discussing the approach. "
-            "Review the task above and continue from where they left off."
-        )
-        lines.append("")
+        lines.extend([
+            "Note: No code changes in the previous session — the prior agent may have been planning or researching.",
+            "",
+        ])
 
+    source_name = get_agent_display_name(view.current_agent)
+    next_action = checkpoint.next_action or "Not recorded"
+    validation_summary = checkpoint.validation.summary or "None recorded"
     lines.extend([
         "## Session snapshot",
         "",
         f"- Objective: {view.objective}",
-        f"- Repository root: {view.repo_root}",
-        f"- Current phase: {view.phase}",
-        f"- Source agent: {get_agent_display_name(view.current_agent)}",
-        f"- Prepared at: {prepared_at}",
+        f"- Repo: {view.repo_root} | Phase: {view.phase} | Source: {source_name} | At: {prepared_at}",
         "",
-        "## Latest checkpoint",
+        f"## Checkpoint ({checkpoint.object_id})",
         "",
-        f"- Checkpoint id: {checkpoint.object_id}",
-        f"- Created at: {checkpoint.created_at}",
-        f"- Phase hint: {checkpoint.phase_hint}",
-        f"- Task status: {checkpoint.task_status}",
-        f"- Recorded next action: {checkpoint.next_action or 'Not recorded'}",
-        "",
-        "Validation:",
-        f"- Status: {checkpoint.validation.status}",
-        f"- Summary: {checkpoint.validation.summary or 'None recorded'}",
+        f"- Created: {checkpoint.created_at} | Status: {checkpoint.task_status} | Phase: {checkpoint.phase_hint}",
+        f"- Next action: {next_action}",
+        f"- Validation: {checkpoint.validation.status} — {validation_summary}",
         "",
     ])
     _append_section(lines, "Decisions:", checkpoint.decisions)
@@ -807,11 +788,10 @@ def _render_resume_packet(
 
 
 def _append_section(lines: list[str], heading: str, items: tuple[str, ...]) -> None:
+    if not items:
+        return
     lines.append(heading)
-    if items:
-        lines.extend(f"- {item}" for item in items)
-    else:
-        lines.append("- None recorded")
+    lines.extend(f"- {item}" for item in items)
     lines.append("")
 
 
@@ -1371,12 +1351,18 @@ def _normalize_relay_output(raw_output: str) -> str:
                 texts.append(text.strip())
 
         message = event.get("message") if isinstance(event.get("message"), dict) else event
-        if isinstance(message, dict) and message.get("role") == "assistant":
+        if isinstance(message, dict) and message.get("role") in {"assistant", "model"}:
             for block in message.get("content", []):
                 if isinstance(block, dict) and block.get("type") in {"text", "output_text"}:
                     text = block.get("text", "")
                     if isinstance(text, str) and text.strip():
                         texts.append(text.strip())
+
+        # Gemini result event
+        if event.get("type") == "result":
+            text = event.get("text", "")
+            if isinstance(text, str) and text.strip():
+                texts.append(text.strip())
 
     if texts:
         return _strip_relay_control_lines("\n".join(texts))

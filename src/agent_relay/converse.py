@@ -138,11 +138,46 @@ def normalize_codex_output(raw_stdout: str) -> str:
     return "\n".join(texts) if texts else raw_stdout.strip()
 
 
+def normalize_gemini_output(raw_stdout: str) -> str:
+    """Parse Gemini --output-format stream-json JSONL, extract model text."""
+    texts: list[str] = []
+    for line in raw_stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        # Gemini stream-json emits message events with role "model"
+        msg = event.get("message") or event
+        if isinstance(msg, dict) and msg.get("role") == "model":
+            for block in msg.get("content", []):
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text = block.get("text", "")
+                    if text:
+                        texts.append(text)
+            # Also handle flat text field on the message
+            flat_text = msg.get("text", "")
+            if isinstance(flat_text, str) and flat_text and flat_text not in texts:
+                texts.append(flat_text)
+        # Gemini result event contains final output
+        if event.get("type") == "result":
+            text = event.get("text", "")
+            if isinstance(text, str) and text:
+                texts.append(text)
+    return "\n".join(texts) if texts else raw_stdout.strip()
+
+
 def _normalize_output(agent_key: str, raw_stdout: str) -> str:
     if agent_key == "claude":
         return normalize_claude_output(raw_stdout)
     elif agent_key == "codex":
         return normalize_codex_output(raw_stdout)
+    elif agent_key == "gemini":
+        return normalize_gemini_output(raw_stdout)
     # Fallback: return raw output
     return raw_stdout.strip()
 
@@ -267,7 +302,8 @@ def parse_turn_state(text: str) -> dict[str, object] | None:
 # Prompt builder
 # ---------------------------------------------------------------------------
 
-_MAX_HISTORY_CHARS = 100_000
+_MAX_HISTORY_CHARS = 50_000
+_FULL_HISTORY_TURNS = 3
 
 _SYSTEM_PREAMBLE = """\
 You are participating in a turn-based conversation with {other_count} other AI agent{plural}.
@@ -323,21 +359,26 @@ def build_turn_prompt(
         participants_section = ""
 
     other_count = len(set(all_agents) - {current_agent})
-    if single_agent:
-        preamble = _SINGLE_AGENT_PREAMBLE.format(
-            current_agent_name=current_name,
-            current_agent_key=current_agent,
-            repo_root=str(repo_root),
-        )
+    if turn_number == 1:
+        # Full preamble with rules on the first turn.
+        if single_agent:
+            preamble = _SINGLE_AGENT_PREAMBLE.format(
+                current_agent_name=current_name,
+                current_agent_key=current_agent,
+                repo_root=str(repo_root),
+            )
+        else:
+            preamble = _SYSTEM_PREAMBLE.format(
+                current_agent_name=current_name,
+                current_agent_key=current_agent,
+                other_count=other_count,
+                plural="s" if other_count != 1 else "",
+                participants_section=participants_section,
+                repo_root=str(repo_root),
+            )
     else:
-        preamble = _SYSTEM_PREAMBLE.format(
-            current_agent_name=current_name,
-            current_agent_key=current_agent,
-            other_count=other_count,
-            plural="s" if other_count != 1 else "",
-            participants_section=participants_section,
-            repo_root=str(repo_root),
-        )
+        # Abbreviated preamble on subsequent turns.
+        preamble = f"You are {current_name} ({current_agent}). Workspace: {repo_root}\n"
 
     lines: list[str] = [
         preamble,
@@ -357,64 +398,81 @@ def build_turn_prompt(
             ]
         )
 
-    if single_agent:
-        lines.extend(
-            [
-                "## Completion Protocol",
-                "",
-                "You may include one optional structured line immediately before the status line:",
-                'RELAY_STATE: {"summary":"...","current_plan":["..."],"assumptions":[],"blockers":[],"intended_edits":["..."],"next_step":"..."}',
-                "",
-                "End every turn with exactly one machine-readable line in this format:",
-                'RELAY_STATUS: {"status":"continue","reason":"...","remaining_work":["..."],"verification":[]}',
-                "",
-                "Allowed status values:",
-                "- continue: there is still meaningful work to do.",
-                "- blocked: you cannot proceed without human input or an external dependency.",
-                "- propose_done: the task is complete and verification lists concrete checks.",
-                "",
-                "Protocol rules:",
-                "- Use propose_done when the task is complete.",
-                "- Use blocked when you need human input or an external dependency.",
-                "- When using propose_done, remaining_work must be [].",
-                "",
-                "## Completion State",
-                "",
-                "- This is a single-agent run.",
-                "- Use status propose_done when the task is complete.",
-                "- Use status blocked when you cannot continue without outside help.",
-                "",
-            ]
-        )
+    if turn_number == 1:
+        # Full protocol on first turn so the agent learns the format.
+        if single_agent:
+            lines.extend(
+                [
+                    "## Completion Protocol",
+                    "",
+                    "You may include one optional structured line immediately before the status line:",
+                    'RELAY_STATE: {"summary":"...","current_plan":["..."],"assumptions":[],"blockers":[],"intended_edits":["..."],"next_step":"..."}',
+                    "",
+                    "End every turn with exactly one machine-readable line in this format:",
+                    'RELAY_STATUS: {"status":"continue","reason":"...","remaining_work":["..."],"verification":[]}',
+                    "",
+                    "Allowed status values:",
+                    "- continue: there is still meaningful work to do.",
+                    "- blocked: you cannot proceed without human input or an external dependency.",
+                    "- propose_done: the task is complete and verification lists concrete checks.",
+                    "",
+                    "Protocol rules:",
+                    "- Use propose_done when the task is complete.",
+                    "- Use blocked when you need human input or an external dependency.",
+                    "- When using propose_done, remaining_work must be [].",
+                    "",
+                    "## Completion State",
+                    "",
+                    "- This is a single-agent run.",
+                    "- Use status propose_done when the task is complete.",
+                    "- Use status blocked when you cannot continue without outside help.",
+                    "",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    "## Completion Protocol",
+                    "",
+                    "You may include one optional structured line immediately before the status line:",
+                    'RELAY_STATE: {"summary":"...","current_plan":["..."],"assumptions":[],"blockers":[],"intended_edits":["..."],"next_step":"..."}',
+                    "",
+                    "End every turn with exactly one machine-readable line in this format:",
+                    'RELAY_STATUS: {"status":"continue","reason":"...","remaining_work":["..."],"verification":[]}',
+                    "",
+                    "Allowed status values:",
+                    "- continue: there is still meaningful work to do.",
+                    "- blocked: you cannot proceed without human input or an external dependency.",
+                    "- propose_done: you believe the task is complete. Only use this after every agent has spoken at least once, remaining_work is empty, and verification lists concrete checks.",
+                    "- agree_done: another agent already proposed completion and you agree the task is complete.",
+                    "- reopen: there is an active completion proposal, but you found remaining work, a bug, or a disagreement.",
+                    "",
+                    "Protocol rules:",
+                    "- NEVER use propose_done or agree_done on your first turn.",
+                    "- If there is an active completion proposal and you disagree, use reopen, not continue.",
+                    "- If you made edits, found a bug, or uncovered missing verification after a completion proposal, use reopen.",
+                    "- When using propose_done or agree_done, remaining_work must be [].",
+                    "",
+                    "## Completion State",
+                    "",
+                ]
+            )
     else:
+        # Abbreviated protocol reminder on subsequent turns.
         lines.extend(
             [
                 "## Completion Protocol",
                 "",
-                "You may include one optional structured line immediately before the status line:",
-                'RELAY_STATE: {"summary":"...","current_plan":["..."],"assumptions":[],"blockers":[],"intended_edits":["..."],"next_step":"..."}',
-                "",
-                "End every turn with exactly one machine-readable line in this format:",
-                'RELAY_STATUS: {"status":"continue","reason":"...","remaining_work":["..."],"verification":[]}',
-                "",
-                "Allowed status values:",
-                "- continue: there is still meaningful work to do.",
-                "- blocked: you cannot proceed without human input or an external dependency.",
-                "- propose_done: you believe the task is complete. Only use this after every agent has spoken at least once, remaining_work is empty, and verification lists concrete checks.",
-                "- agree_done: another agent already proposed completion and you agree the task is complete.",
-                "- reopen: there is an active completion proposal, but you found remaining work, a bug, or a disagreement.",
-                "",
-                "Protocol rules:",
-                "- NEVER use propose_done or agree_done on your first turn.",
-                "- If there is an active completion proposal and you disagree, use reopen, not continue.",
-                "- If you made edits, found a bug, or uncovered missing verification after a completion proposal, use reopen.",
-                "- When using propose_done or agree_done, remaining_work must be [].",
-                "",
-                "## Completion State",
+                "(Same as Turn 1.) End your response with a RELAY_STATUS JSON line.",
                 "",
             ]
         )
 
+    # Multi-agent completion state (epoch tracking) — needed every turn.
+    if not single_agent and turn_number > 1:
+        lines.extend(["## Completion State", ""])
+
+    if not single_agent:
         if completion_state.active_epoch is None:
             lines.extend(
                 [
@@ -454,12 +512,21 @@ def build_turn_prompt(
         lines.append("## Conversation so far")
         lines.append("")
 
+        # Keep the last N turns in full; summarize older turns to save tokens.
+        recent_cutoff = len(turn_history) - _FULL_HISTORY_TURNS
+
         # Build history, truncating oldest turns if over budget
         history_parts: list[str] = []
         total_chars = 0
         for turn in reversed(turn_history):
             agent_name = get_agent_display_name(turn.agent_key)
-            part = f"### Turn {turn.turn_number} — {agent_name}\n\n{turn.text}\n"
+            idx = turn_history.index(turn)
+            if idx < recent_cutoff:
+                # Compact summary for older turns
+                remaining = ", ".join(turn.remaining_work) if turn.remaining_work else "none noted"
+                part = f"### Turn {turn.turn_number} — {agent_name} (summary)\n\n{turn.summary}\nRemaining: {remaining}\n"
+            else:
+                part = f"### Turn {turn.turn_number} — {agent_name}\n\n{turn.text}\n"
             total_chars += len(part)
             if total_chars > _MAX_HISTORY_CHARS:
                 history_parts.append(
@@ -471,15 +538,18 @@ def build_turn_prompt(
         history_parts.reverse()
         lines.extend(history_parts)
 
-    lines.extend(
-        [
-            f"## Your turn (Turn {turn_number})",
-            "",
-            f"You are {current_name}. Continue working on the task above.",
-            "Review what has been done so far and take the next step.",
-            "",
-        ]
-    )
+    if turn_number == 1:
+        lines.extend(
+            [
+                f"## Your turn (Turn {turn_number})",
+                "",
+                f"You are {current_name}. Continue working on the task above.",
+                "Review what has been done so far and take the next step.",
+                "",
+            ]
+        )
+    else:
+        lines.extend([f"## Your turn (Turn {turn_number})", ""])
 
     return "\n".join(lines)
 
@@ -502,6 +572,8 @@ def _build_agent_command(agent_key: str, prompt_path: Path, repo_root: Path) -> 
         )
     elif agent_key == "codex":
         return f'cd {rr} && {cli} exec "$(cat {pp})" --json'
+    elif agent_key == "gemini":
+        return f'cd {rr} && {cli} -p "$(cat {pp})" --output-format stream-json'
     else:
         # Generic fallback
         return f'cd {rr} && {cli} "$(cat {pp})"'

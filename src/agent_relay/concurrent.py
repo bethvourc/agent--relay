@@ -1959,6 +1959,9 @@ def _build_agent_command(agent_key: str, prompt_path: Path, repo_root: Path) -> 
         return f'cd {rr} && {cli} --permission-mode dontAsk -p "$(cat {pp})"'
     elif agent_key == "codex":
         return f'cd {rr} && {cli} -a never -s workspace-write "$(cat {pp})"'
+    elif agent_key == "gemini":
+        # --yolo auto-approves all tool calls in concurrent mode.
+        return f'cd {rr} && {cli} --yolo -p "$(cat {pp})"'
     else:
         return f'cd {rr} && {cli} "$(cat {pp})"'
 

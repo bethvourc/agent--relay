@@ -188,11 +188,30 @@ class CodexAdapter(AgentAdapter):
         )
 
 
+class GeminiAdapter(AgentAdapter):
+    def __init__(self) -> None:
+        super().__init__(
+            key="gemini",
+            display_name="Gemini",
+            cli_command="gemini",
+            alias="g",
+            launch_template_env="AGENT_RELAY_GEMINI_LAUNCH_TEMPLATE",
+            default_launch_template='cd {repo_root} && {agent_cli} -p "$(cat {resume_path})"',
+            launch_instructions_template=(
+                "Start {agent_name} in {repo_root_path} with the resume packet as its prompt."
+            ),
+            resume_packet_target="gemini",
+            event_capture_hook_name="gemini_export",
+            capture_template_env="AGENT_RELAY_GEMINI_CAPTURE_TEMPLATE",
+        )
+
+
 AGENT_REGISTRY: dict[str, AgentAdapter] = {
     adapter.key: adapter
     for adapter in (
         ClaudeCodeAdapter(),
         CodexAdapter(),
+        GeminiAdapter(),
     )
 }
 
