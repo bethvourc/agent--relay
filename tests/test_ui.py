@@ -88,7 +88,7 @@ class BannerTests(TestCase):
         render_banner(console)
         output = buf.getvalue()
         self.assertIn("Agent Relay", output)
-        self.assertIn("v0.1.0", output)
+        self.assertIn("v0.3.0", output)
         self.assertIn("agent-relay --help", output)
 
     def test_compact_banner_is_single_line(self) -> None:
