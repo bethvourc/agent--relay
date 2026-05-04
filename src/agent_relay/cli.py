@@ -11,6 +11,13 @@ from agent_relay.agents import AGENT_NAMES, AGENT_REGISTRY, resolve_agent_key
 from agent_relay.errors import RelayError
 from agent_relay.relay import relay as do_relay
 from agent_relay.read_views import list_sessions_for_dashboard
+from agent_relay.storage import is_session
+from agent_relay.watch import WatchSource, pick_latest_active_session
+from agent_relay.watch_ui import (
+    render_watch_live,
+    stream_json_events,
+    stream_quiet_lines,
+)
 from agent_relay.ui import (
     create_console,
     emit_json,
@@ -449,6 +456,48 @@ def cmd_status(args: argparse.Namespace) -> int:
     else:
         render_dashboard(args.console, sessions)
     return 0
+
+
+def cmd_watch(args: argparse.Namespace) -> int:
+    """Live view of an in-progress session.
+
+    With no session id, picks the most recently updated active session.
+    Default mode: full Rich TUI. ``--json`` streams one JSON event per line.
+    ``--quiet`` streams one terse line per event.
+    """
+    repo_root = _resolve_repo(args.repo)
+
+    session_id = args.session_id
+    if session_id is None:
+        session_id = pick_latest_active_session(repo_root)
+        if session_id is None:
+            render_error(
+                args.console,
+                "No active session to watch. Pass an explicit session id "
+                "or start a session with `agent-relay run/chat/race`.",
+            )
+            return 2
+
+    if not is_session(repo_root, session_id):
+        render_error(args.console, f"Session not found: {session_id}")
+        return 2
+
+    try:
+        source = WatchSource(
+            repo_root,
+            session_id,
+            poll_interval=args.poll_interval,
+            follow=not args.no_follow,
+        )
+    except ValueError as exc:
+        render_error(args.console, str(exc))
+        return 2
+
+    if args.json:
+        return stream_json_events(source)
+    if args.quiet:
+        return stream_quiet_lines(source)
+    return render_watch_live(args.console, source)
 
 
 def cmd_clean(args: argparse.Namespace) -> int:
@@ -958,6 +1007,31 @@ def build_parser() -> argparse.ArgumentParser:
     status = subparsers.add_parser("status", help="Show relay sessions")
     status.add_argument("--repo")
     status.set_defaults(func=cmd_status)
+
+    # agent-relay watch — live view of an in-progress session
+    watch = subparsers.add_parser(
+        "watch",
+        help="Live view of an in-progress session (auto-picks newest active)",
+    )
+    watch.add_argument(
+        "session_id",
+        nargs="?",
+        default=None,
+        help="Session id (omit to auto-pick the newest active session)",
+    )
+    watch.add_argument(
+        "--no-follow",
+        action="store_true",
+        help="Print one snapshot pass and exit instead of following",
+    )
+    watch.add_argument(
+        "--poll-interval",
+        type=float,
+        default=0.25,
+        help="Seconds between polls (default: 0.25)",
+    )
+    watch.add_argument("--repo")
+    watch.set_defaults(func=cmd_watch)
 
     # agent-relay clean — remove sessions
     clean = subparsers.add_parser("clean", help="Remove all relay sessions")
