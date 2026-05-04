@@ -120,12 +120,50 @@ class WatchParserTests(TestCase):
 
 
 class CmdWatchSessionResolutionTests(TestCase):
-    def test_errors_when_no_active_session_and_no_arg(self) -> None:
+    def test_errors_when_no_sessions_at_all(self) -> None:
         with TemporaryDirectory() as tmp:
             args = _make_args(repo=tmp, session_id=None, json_mode=True)
             # No sessions on disk.
             rc = cmd_watch(args)
             self.assertEqual(rc, 2)
+
+    def test_falls_back_to_latest_session_when_none_active(self) -> None:
+        with TemporaryDirectory() as tmp:
+            args = _make_args(
+                repo=tmp,
+                session_id=None,
+                no_follow=True,
+                quiet=True,
+            )
+            captured: dict[str, str] = {}
+
+            class _FakeSource:
+                def __init__(self, repo, session_id, **kwargs) -> None:
+                    captured["session_id"] = session_id
+
+                def iter_events(self):
+                    return iter(())
+
+            with (
+                patch(
+                    "agent_relay.cli.pick_latest_active_session",
+                    return_value=None,
+                ),
+                patch(
+                    "agent_relay.cli.pick_latest_session",
+                    return_value={
+                        "session_id": "old-completed",
+                        "current_status": "completed",
+                    },
+                ),
+                patch("agent_relay.cli.is_session", return_value=True),
+                patch("agent_relay.cli.WatchSource", _FakeSource),
+            ):
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    rc = cmd_watch(args)
+            self.assertEqual(rc, 0)
+            self.assertEqual(captured["session_id"], "old-completed")
 
     def test_errors_with_unknown_explicit_session(self) -> None:
         with TemporaryDirectory() as tmp:

@@ -147,6 +147,20 @@ def pick_latest_active_session(repo_root: Path) -> str | None:
     return candidates[0]["session_id"]
 
 
+def pick_latest_session(repo_root: Path) -> dict[str, Any] | None:
+    """Return the most recently updated session of any status.
+
+    Returns the full dashboard entry (with session_id, current_status, etc.)
+    so callers can communicate the fallback context. Skips corrupt sessions.
+    Returns ``None`` if there are no sessions at all.
+    """
+    entries = list_sessions_for_dashboard(repo_root)
+    for entry in entries:
+        if entry.get("health") != "corrupt":
+            return entry
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Pollers
 # ---------------------------------------------------------------------------

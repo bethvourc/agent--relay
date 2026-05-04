@@ -699,7 +699,7 @@ def _store_turn_artifacts(
 # ---------------------------------------------------------------------------
 
 
-def _make_summary(text: str, max_len: int = 120) -> str:
+def _make_summary(text: str, max_len: int = 400) -> str:
     """Extract a one-line summary from agent output."""
     # Take first non-empty line
     for line in text.splitlines():

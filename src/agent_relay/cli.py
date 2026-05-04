@@ -12,7 +12,11 @@ from agent_relay.errors import RelayError
 from agent_relay.relay import relay as do_relay
 from agent_relay.read_views import list_sessions_for_dashboard
 from agent_relay.storage import is_session
-from agent_relay.watch import WatchSource, pick_latest_active_session
+from agent_relay.watch import (
+    WatchSource,
+    pick_latest_active_session,
+    pick_latest_session,
+)
 from agent_relay.watch_ui import (
     render_watch_live,
     stream_json_events,
@@ -468,15 +472,28 @@ def cmd_watch(args: argparse.Namespace) -> int:
     repo_root = _resolve_repo(args.repo)
 
     session_id = args.session_id
+    fallback_notice: str | None = None
     if session_id is None:
         session_id = pick_latest_active_session(repo_root)
         if session_id is None:
-            render_error(
-                args.console,
-                "No active session to watch. Pass an explicit session id "
-                "or start a session with `agent-relay run/chat/race`.",
+            # Fall back to the newest session of any status so the user gets
+            # *something* useful instead of a hard error. Surface the fact
+            # that nothing is currently active so the experience isn't
+            # silently misleading.
+            latest = pick_latest_session(repo_root)
+            if latest is None:
+                render_error(
+                    args.console,
+                    "No relay sessions found in this repo. Start one with "
+                    "`agent-relay run/chat/race`.",
+                )
+                return 2
+            session_id = latest["session_id"]
+            fallback_notice = (
+                f"No active session — falling back to the most recent session "
+                f"({session_id}, status: {latest.get('current_status') or 'unknown'}). "
+                f"Use `agent-relay watch <session-id>` to pin a different one."
             )
-            return 2
 
     if not is_session(repo_root, session_id):
         render_error(args.console, f"Session not found: {session_id}")
@@ -496,7 +513,11 @@ def cmd_watch(args: argparse.Namespace) -> int:
     if args.json:
         return stream_json_events(source)
     if args.quiet:
+        if fallback_notice:
+            sys.stderr.write(fallback_notice + "\n")
         return stream_quiet_lines(source)
+    if fallback_notice:
+        args.console.print(f"[warning]{fallback_notice}[/]")
     return render_watch_live(args.console, source)
 
 
