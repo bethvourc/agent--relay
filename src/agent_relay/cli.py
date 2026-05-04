@@ -22,6 +22,18 @@ from agent_relay.watch_ui import (
     stream_json_events,
     stream_quiet_lines,
 )
+from agent_relay.metrics import (
+    extract_cross_session_metrics,
+    extract_session_metrics,
+)
+from agent_relay.metrics_ui import (
+    emit_cross_session_metrics_json,
+    emit_cross_session_metrics_quiet,
+    emit_session_metrics_json,
+    emit_session_metrics_quiet,
+    render_cross_session_metrics,
+    render_session_metrics,
+)
 from agent_relay.ui import (
     create_console,
     emit_json,
@@ -519,6 +531,81 @@ def cmd_watch(args: argparse.Namespace) -> int:
     if fallback_notice:
         args.console.print(f"[warning]{fallback_notice}[/]")
     return render_watch_live(args.console, source)
+
+
+def cmd_metrics(args: argparse.Namespace) -> int:
+    """Token / cost / latency metrics for one or all sessions.
+
+    With a session id (or no args), shows that session's rollup. With
+    ``--all``, aggregates across every session in the repo. ``--json`` and
+    ``--quiet`` are honored as on every other command.
+    """
+    repo_root = _resolve_repo(args.repo)
+
+    since_dt = None
+    if getattr(args, "since", None):
+        try:
+            since_dt = _parse_since(args.since)
+        except ValueError as exc:
+            render_error(args.console, str(exc))
+            return 2
+
+    agents_filter = getattr(args, "agent", None) or None
+
+    if args.all:
+        cross = extract_cross_session_metrics(
+            repo_root, since=since_dt, agents=agents_filter
+        )
+        if args.json:
+            emit_cross_session_metrics_json(cross)
+        elif args.quiet:
+            emit_cross_session_metrics_quiet(cross)
+        else:
+            render_cross_session_metrics(args.console, cross)
+        return 0
+
+    session_id = args.session_id
+    if session_id is None:
+        # Auto-pick the newest session of any status — metrics are most
+        # useful right after a run finishes.
+        latest = pick_latest_session(repo_root)
+        if latest is None:
+            render_error(
+                args.console,
+                "No relay sessions found in this repo. Start one with "
+                "`agent-relay run/chat/race`.",
+            )
+            return 2
+        session_id = latest["session_id"]
+
+    if not is_session(repo_root, session_id):
+        render_error(args.console, f"Session not found: {session_id}")
+        return 2
+
+    metrics = extract_session_metrics(repo_root, session_id)
+    if args.json:
+        emit_session_metrics_json(metrics)
+    elif args.quiet:
+        emit_session_metrics_quiet(metrics)
+    else:
+        render_session_metrics(args.console, metrics)
+    return 0
+
+
+def _parse_since(value: str):
+    """Parse `--since` (YYYY-MM-DD or ISO-8601). Raises ValueError on bad input."""
+    from datetime import datetime, timezone
+
+    text = value.strip()
+    try:
+        if len(text) == 10:
+            dt = datetime.strptime(text, "%Y-%m-%d")
+            return dt.replace(tzinfo=timezone.utc)
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(
+            f"--since must be YYYY-MM-DD or ISO-8601 (got: {value!r})"
+        ) from exc
 
 
 def cmd_clean(args: argparse.Namespace) -> int:
@@ -1053,6 +1140,34 @@ def build_parser() -> argparse.ArgumentParser:
     )
     watch.add_argument("--repo")
     watch.set_defaults(func=cmd_watch)
+
+    # agent-relay metrics — cost / token / latency rollups
+    metrics = subparsers.add_parser(
+        "metrics",
+        help="Token / cost / latency metrics for sessions",
+    )
+    metrics.add_argument(
+        "session_id",
+        nargs="?",
+        default=None,
+        help="Session id (omit to auto-pick the most recent session)",
+    )
+    metrics.add_argument(
+        "--all",
+        action="store_true",
+        help="Aggregate metrics across every session in the repo",
+    )
+    metrics.add_argument(
+        "--since",
+        help="Lower bound on session start (YYYY-MM-DD or ISO-8601)",
+    )
+    metrics.add_argument(
+        "--agent",
+        action="append",
+        help="Filter to one or more agent keys (repeatable)",
+    )
+    metrics.add_argument("--repo")
+    metrics.set_defaults(func=cmd_metrics)
 
     # agent-relay clean — remove sessions
     clean = subparsers.add_parser("clean", help="Remove all relay sessions")
