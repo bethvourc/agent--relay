@@ -7,10 +7,12 @@ output, and feeds it as context to the next agent's turn.
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import shlex
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -579,20 +581,84 @@ def _build_agent_command(agent_key: str, prompt_path: Path, repo_root: Path) -> 
         return f'cd {rr} && {cli} "$(cat {pp})"'
 
 
+_PROGRESSIVE_FSYNC_EVERY_N_LINES = 10
+
+
 def run_agent_turn(
     agent_key: str,
     prompt_path: Path,
     repo_root: Path,
+    output_path: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Run a single agent turn with full output capture."""
+    """Run a single agent turn with full output capture.
+
+    If ``output_path`` is provided, stdout is tee'd to that file line-by-line as
+    the agent emits it, so external readers (e.g. ``agent-relay watch``) can
+    tail the live agent stream-json. The returned ``CompletedProcess`` still
+    contains the full accumulated stdout/stderr so callers behave identically.
+    """
     command = _build_agent_command(agent_key, prompt_path, repo_root)
-    return subprocess.run(
+
+    if output_path is None:
+        return subprocess.run(
+            command,
+            cwd=str(repo_root),
+            shell=True,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.Popen(
         command,
         cwd=str(repo_root),
         shell=True,
-        check=False,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
+        bufsize=1,
+    )
+
+    stderr_chunks: list[str] = []
+
+    def _drain_stderr() -> None:
+        if proc.stderr is None:
+            return
+        for chunk in proc.stderr:
+            stderr_chunks.append(chunk)
+
+    stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+    stderr_thread.start()
+
+    stdout_chunks: list[str] = []
+    line_count = 0
+    try:
+        with open(output_path, "w", encoding="utf-8", buffering=1) as fh:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                stdout_chunks.append(line)
+                fh.write(line)
+                fh.flush()
+                line_count += 1
+                if line_count % _PROGRESSIVE_FSYNC_EVERY_N_LINES == 0:
+                    try:
+                        os.fsync(fh.fileno())
+                    except OSError:
+                        pass
+            try:
+                os.fsync(fh.fileno())
+            except OSError:
+                pass
+    finally:
+        returncode = proc.wait()
+        stderr_thread.join()
+
+    return subprocess.CompletedProcess(
+        args=command,
+        returncode=returncode,
+        stdout="".join(stdout_chunks),
+        stderr="".join(stderr_chunks),
     )
 
 
@@ -615,7 +681,9 @@ def _store_turn_artifacts(
     tdir.mkdir(parents=True, exist_ok=True)
 
     (tdir / "prompt.md").write_text(prompt_text, encoding="utf-8")
-    (tdir / "output.jsonl").write_text(raw_stdout, encoding="utf-8")
+    output_path = tdir / "output.jsonl"
+    if not output_path.exists():
+        output_path.write_text(raw_stdout, encoding="utf-8")
     if raw_stderr.strip():
         (tdir / "stderr.log").write_text(raw_stderr, encoding="utf-8")
     if state_payload is not None:
@@ -631,7 +699,7 @@ def _store_turn_artifacts(
 # ---------------------------------------------------------------------------
 
 
-def _make_summary(text: str, max_len: int = 120) -> str:
+def _make_summary(text: str, max_len: int = 400) -> str:
     """Extract a one-line summary from agent output."""
     # Take first non-empty line
     for line in text.splitlines():
@@ -873,9 +941,15 @@ def converse(
             prompt_path = tdir / "prompt.md"
             prompt_path.write_text(prompt_text, encoding="utf-8")
 
-            # Run agent
+            # Run agent (tee stdout to turns/<n>/output.jsonl progressively
+            # so `agent-relay watch` can tail the live stream).
             started_at = _utc_now()
-            result = run_agent_turn(current_agent, prompt_path, repo_root)
+            result = run_agent_turn(
+                current_agent,
+                prompt_path,
+                repo_root,
+                output_path=tdir / "output.jsonl",
+            )
             finished_at = _utc_now()
 
             # Normalize output

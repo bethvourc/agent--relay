@@ -52,6 +52,9 @@ agent-relay discover
 
 # View sessions
 agent-relay status
+
+# Live view of an in-progress session (auto-picks newest active)
+agent-relay watch
 ```
 
 Agent aliases: `c` = Claude, `x` = Codex. Use `agent-relay discover` to see all available agents and aliases.
@@ -161,6 +164,7 @@ If an agent was working outside of Relay and needs to hand off, open a new termi
 |---------|-------------|
 | `agent-relay discover` | Show available agents, aliases, and CLI paths. |
 | `agent-relay status` | List all relay sessions in the current repo. |
+| `agent-relay watch [session-id]` | Live TUI of an in-progress session. Auto-picks newest active when no id is given. `--json` streams JSONL events; `--quiet` streams one terse line per event; `--no-follow` prints a single snapshot and exits. |
 | `agent-relay clean` | Remove all sessions. Use `--all` to remove entire `.agent-relay/` directory. |
 
 ### Options
@@ -201,6 +205,29 @@ agent-relay chat c x "Fix the failing tests"
 # Three agents, 6 turns max
 agent-relay chat c x c "Review and fix" -n 6
 ```
+
+### Live monitoring of a running session
+
+While a session is in flight, open a second terminal in the same repo and run:
+
+```bash
+# Auto-pick the newest active session
+agent-relay watch
+
+# Or pin to a specific session
+agent-relay watch <session-id>
+
+# Stream events as JSONL — pipe into other tools
+agent-relay watch --json | jq -c '{ts: .timestamp, kind: .kind}'
+
+# Print a single snapshot of current state and exit
+agent-relay watch --no-follow
+```
+
+The live TUI surfaces journal events, workspace activity, the current turn's
+elapsed time and progressive agent output, and the latest turn state — all in
+real time. The watcher exits cleanly when the session reaches a terminal
+status (`completed`, `ready_for_handoff`) or on Ctrl-C.
 
 ### Concurrent work with conflict recovery
 

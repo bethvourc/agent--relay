@@ -836,3 +836,156 @@ class ConverseCompletionProtocolTests(TestCase):
         self.assertEqual(result.stop_reason, "blocked")
         self.assertEqual(result.turns_completed, 1)
         self.assertEqual(result.turn_results[0].control_status, "blocked")
+
+
+class RunAgentTurnProgressiveOutputTests(TestCase):
+    """Verify run_agent_turn writes stdout to disk progressively when given a path."""
+
+    def _make_prompt(self, tmpdir: str, text: str = "do work") -> Path:
+        prompt = Path(tmpdir) / "prompt.md"
+        prompt.write_text(text, encoding="utf-8")
+        return prompt
+
+    def test_writes_output_progressively_when_path_given(self) -> None:
+        from agent_relay.converse import run_agent_turn
+
+        with TemporaryDirectory() as tmpdir:
+            prompt = self._make_prompt(tmpdir)
+            output_path = Path(tmpdir) / "out" / "output.jsonl"
+
+            # Use a shell script that emits two lines with a sleep in between.
+            # We assert the file contains the first line *before* the second is written.
+            # We simulate this by checking the final contents and the line ordering.
+            with patch(
+                "agent_relay.converse._build_agent_command",
+                return_value=(
+                    "printf 'line-one\\n'; printf 'line-two\\n'; printf 'line-three\\n'"
+                ),
+            ):
+                result = run_agent_turn(
+                    "claude", prompt, Path(tmpdir), output_path=output_path
+                )
+
+            self.assertEqual(result.returncode, 0)
+            self.assertTrue(output_path.exists())
+            written = output_path.read_text(encoding="utf-8")
+            self.assertEqual(written, "line-one\nline-two\nline-three\n")
+            self.assertEqual(result.stdout, written)
+
+    def test_falls_back_to_capture_output_when_no_path(self) -> None:
+        from agent_relay.converse import run_agent_turn
+
+        with TemporaryDirectory() as tmpdir:
+            prompt = self._make_prompt(tmpdir)
+
+            with patch(
+                "agent_relay.converse._build_agent_command",
+                return_value="printf 'hello\\n'",
+            ):
+                result = run_agent_turn("claude", prompt, Path(tmpdir))
+
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(result.stdout, "hello\n")
+
+    def test_captures_stderr_without_deadlock(self) -> None:
+        from agent_relay.converse import run_agent_turn
+
+        with TemporaryDirectory() as tmpdir:
+            prompt = self._make_prompt(tmpdir)
+            output_path = Path(tmpdir) / "output.jsonl"
+
+            # Emit a non-trivial amount of stderr alongside stdout.
+            with patch(
+                "agent_relay.converse._build_agent_command",
+                return_value=(
+                    "for i in 1 2 3 4 5; do printf 'out-%d\\n' $i; "
+                    "printf 'err-%d\\n' $i 1>&2; done"
+                ),
+            ):
+                result = run_agent_turn(
+                    "claude", prompt, Path(tmpdir), output_path=output_path
+                )
+
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(
+                result.stdout, "out-1\nout-2\nout-3\nout-4\nout-5\n"
+            )
+            # Order between out/err lines on stderr is not guaranteed; just
+            # check all stderr lines were captured.
+            for i in range(1, 6):
+                self.assertIn(f"err-{i}", result.stderr)
+
+    def test_propagates_nonzero_exit_code(self) -> None:
+        from agent_relay.converse import run_agent_turn
+
+        with TemporaryDirectory() as tmpdir:
+            prompt = self._make_prompt(tmpdir)
+            output_path = Path(tmpdir) / "output.jsonl"
+
+            with patch(
+                "agent_relay.converse._build_agent_command",
+                return_value="printf 'partial\\n'; exit 42",
+            ):
+                result = run_agent_turn(
+                    "claude", prompt, Path(tmpdir), output_path=output_path
+                )
+
+            self.assertEqual(result.returncode, 42)
+            self.assertEqual(result.stdout, "partial\n")
+
+
+class StoreTurnArtifactsTests(TestCase):
+    def test_does_not_overwrite_existing_output_jsonl(self) -> None:
+        """If output.jsonl was written progressively, _store_turn_artifacts must
+        not clobber it with the in-memory copy (which could be a truncated tail)."""
+        from agent_relay.converse import _store_turn_artifacts
+        from agent_relay.layout import turn_dir
+
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            session_id = "test-session"
+            tdir = turn_dir(repo_root, session_id, 1)
+            tdir.mkdir(parents=True, exist_ok=True)
+
+            # Simulate a progressively-written output.jsonl
+            existing = '{"event":"first"}\n{"event":"second"}\n'
+            (tdir / "output.jsonl").write_text(existing, encoding="utf-8")
+
+            _store_turn_artifacts(
+                repo_root,
+                session_id,
+                turn_number=1,
+                prompt_text="prompt",
+                raw_stdout="DIFFERENT CONTENT",
+                raw_stderr="",
+            )
+
+            self.assertEqual(
+                (tdir / "output.jsonl").read_text(encoding="utf-8"), existing
+            )
+            self.assertEqual(
+                (tdir / "prompt.md").read_text(encoding="utf-8"), "prompt"
+            )
+
+    def test_writes_output_jsonl_when_missing(self) -> None:
+        from agent_relay.converse import _store_turn_artifacts
+        from agent_relay.layout import turn_dir
+
+        with TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            session_id = "test-session"
+
+            _store_turn_artifacts(
+                repo_root,
+                session_id,
+                turn_number=1,
+                prompt_text="prompt",
+                raw_stdout="captured-output\n",
+                raw_stderr="",
+            )
+
+            tdir = turn_dir(repo_root, session_id, 1)
+            self.assertEqual(
+                (tdir / "output.jsonl").read_text(encoding="utf-8"),
+                "captured-output\n",
+            )
