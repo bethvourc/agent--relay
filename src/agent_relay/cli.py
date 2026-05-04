@@ -34,6 +34,7 @@ from agent_relay.metrics_ui import (
     render_cross_session_metrics,
     render_session_metrics,
 )
+from agent_relay.exporters.jsonl import parse_header_pairs, tail_jsonl
 from agent_relay.ui import (
     create_console,
     emit_json,
@@ -590,6 +591,63 @@ def cmd_metrics(args: argparse.Namespace) -> int:
     else:
         render_session_metrics(args.console, metrics)
     return 0
+
+
+def cmd_metrics_tail(args: argparse.Namespace) -> int:
+    """Stream metric events as JSONL — one line per turn_completed plus a
+    final session rollup. Optional webhook delivery via ``--webhook URL``.
+    """
+    repo_root = _resolve_repo(args.repo)
+
+    session_id = args.session_id
+    fallback_notice: str | None = None
+    if session_id is None:
+        session_id = pick_latest_active_session(repo_root)
+        if session_id is None:
+            latest = pick_latest_session(repo_root)
+            if latest is None:
+                render_error(
+                    args.console,
+                    "No relay sessions found in this repo. Start one with "
+                    "`agent-relay run/chat/race`.",
+                )
+                return 2
+            session_id = latest["session_id"]
+            fallback_notice = (
+                f"No active session — falling back to {session_id} "
+                f"(status: {latest.get('current_status') or 'unknown'})."
+            )
+
+    if not is_session(repo_root, session_id):
+        render_error(args.console, f"Session not found: {session_id}")
+        return 2
+
+    try:
+        webhook_headers = parse_header_pairs(args.webhook_header)
+    except ValueError as exc:
+        render_error(args.console, str(exc))
+        return 2
+
+    try:
+        source = WatchSource(
+            repo_root,
+            session_id,
+            poll_interval=args.poll_interval,
+            follow=not args.no_follow,
+        )
+    except ValueError as exc:
+        render_error(args.console, str(exc))
+        return 2
+
+    if fallback_notice:
+        sys.stderr.write(fallback_notice + "\n")
+
+    return tail_jsonl(
+        source,
+        webhook_url=args.webhook,
+        webhook_headers=webhook_headers,
+        webhook_timeout=args.webhook_timeout,
+    )
 
 
 def _parse_since(value: str):
@@ -1168,6 +1226,47 @@ def build_parser() -> argparse.ArgumentParser:
     )
     metrics.add_argument("--repo")
     metrics.set_defaults(func=cmd_metrics)
+
+    # agent-relay metrics-tail — JSONL stream of metric events
+    metrics_tail = subparsers.add_parser(
+        "metrics-tail",
+        help="Stream metric events as JSONL (one line per turn) with optional webhook",
+    )
+    metrics_tail.add_argument(
+        "session_id",
+        nargs="?",
+        default=None,
+        help="Session id (omit to auto-pick the newest active session)",
+    )
+    metrics_tail.add_argument(
+        "--no-follow",
+        action="store_true",
+        help="Emit a single rollup line and exit instead of following",
+    )
+    metrics_tail.add_argument(
+        "--poll-interval",
+        type=float,
+        default=0.25,
+        help="Seconds between polls (default: 0.25)",
+    )
+    metrics_tail.add_argument(
+        "--webhook",
+        help="POST each JSONL line to this URL (Content-Type: application/json)",
+    )
+    metrics_tail.add_argument(
+        "--webhook-header",
+        action="append",
+        default=[],
+        help="Header for webhook requests (repeatable, 'Key: Value' or 'Key=Value')",
+    )
+    metrics_tail.add_argument(
+        "--webhook-timeout",
+        type=float,
+        default=5.0,
+        help="Seconds to wait for webhook response (default: 5.0)",
+    )
+    metrics_tail.add_argument("--repo")
+    metrics_tail.set_defaults(func=cmd_metrics_tail)
 
     # agent-relay clean — remove sessions
     clean = subparsers.add_parser("clean", help="Remove all relay sessions")
