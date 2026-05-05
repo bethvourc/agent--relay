@@ -35,6 +35,7 @@ from agent_relay.metrics_ui import (
     render_session_metrics,
 )
 from agent_relay.exporters.jsonl import parse_header_pairs, tail_jsonl
+from agent_relay.exporters.prometheus import serve_prometheus
 from agent_relay.ui import (
     create_console,
     emit_json,
@@ -591,6 +592,67 @@ def cmd_metrics(args: argparse.Namespace) -> int:
     else:
         render_session_metrics(args.console, metrics)
     return 0
+
+
+def cmd_metrics_serve(args: argparse.Namespace) -> int:
+    """Run a metrics exporter (Prometheus and/or OTLP)."""
+    repo_root = _resolve_repo(args.repo)
+
+    if not args.prometheus and not args.otlp:
+        render_error(
+            args.console,
+            "metrics-serve requires --prometheus HOST:PORT and/or --otlp URL",
+        )
+        return 2
+
+    if args.otlp:
+        # Wired in step 5 (OTLP exporter PR).
+        render_error(args.console, "OTLP exporter is not yet implemented")
+        return 2
+
+    host, port = _parse_host_port(args.prometheus)
+    if host is None:
+        render_error(
+            args.console,
+            f"--prometheus must be HOST:PORT or :PORT (got: {args.prometheus!r})",
+        )
+        return 2
+
+    sys.stderr.write(
+        f"Prometheus exporter listening on http://{host}:{port}/metrics "
+        f"(refresh: {args.prometheus_refresh:.1f}s)\n"
+    )
+    try:
+        return serve_prometheus(
+            repo_root,
+            host,
+            port,
+            refresh_interval=args.prometheus_refresh,
+        )
+    except OSError as exc:
+        render_error(args.console, f"failed to bind {host}:{port}: {exc}")
+        return 2
+
+
+def _parse_host_port(value: str) -> tuple[str | None, int]:
+    """Parse 'host:port' or ':port' into (host, port). Returns (None, 0) on failure."""
+    if not value:
+        return None, 0
+    text = value.strip()
+    if text.startswith(":"):
+        host = "127.0.0.1"
+        port_str = text[1:]
+    elif ":" in text:
+        host, port_str = text.rsplit(":", 1)
+    else:
+        return None, 0
+    try:
+        port = int(port_str)
+    except ValueError:
+        return None, 0
+    if not (0 < port < 65536):
+        return None, 0
+    return host, port
 
 
 def cmd_metrics_tail(args: argparse.Namespace) -> int:
@@ -1267,6 +1329,42 @@ def build_parser() -> argparse.ArgumentParser:
     )
     metrics_tail.add_argument("--repo")
     metrics_tail.set_defaults(func=cmd_metrics_tail)
+
+    # agent-relay metrics-serve — Prometheus / OTLP exporters
+    metrics_serve = subparsers.add_parser(
+        "metrics-serve",
+        help="Run a metrics exporter (Prometheus scrape, OTLP push)",
+    )
+    metrics_serve.add_argument(
+        "--prometheus",
+        metavar="HOST:PORT",
+        help="Listen address for Prometheus /metrics (e.g. ':9464' or '0.0.0.0:9464')",
+    )
+    metrics_serve.add_argument(
+        "--prometheus-refresh",
+        type=float,
+        default=5.0,
+        help="Seconds to cache scraped metrics (default: 5.0)",
+    )
+    metrics_serve.add_argument(
+        "--otlp",
+        metavar="URL",
+        help="OTLP HTTP/JSON metrics endpoint (e.g. http://localhost:4318/v1/metrics)",
+    )
+    metrics_serve.add_argument(
+        "--otlp-header",
+        action="append",
+        default=[],
+        help="Header for OTLP requests (repeatable, 'Key: Value' or 'Key=Value')",
+    )
+    metrics_serve.add_argument(
+        "--otlp-interval",
+        type=float,
+        default=30.0,
+        help="Seconds between OTLP pushes (default: 30.0)",
+    )
+    metrics_serve.add_argument("--repo")
+    metrics_serve.set_defaults(func=cmd_metrics_serve)
 
     # agent-relay clean — remove sessions
     clean = subparsers.add_parser("clean", help="Remove all relay sessions")
