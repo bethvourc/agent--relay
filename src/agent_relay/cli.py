@@ -35,6 +35,7 @@ from agent_relay.metrics_ui import (
     render_session_metrics,
 )
 from agent_relay.exporters.jsonl import parse_header_pairs, tail_jsonl
+from agent_relay.exporters.otlp import serve_otlp
 from agent_relay.exporters.prometheus import serve_prometheus
 from agent_relay.ui import (
     create_console,
@@ -605,33 +606,78 @@ def cmd_metrics_serve(args: argparse.Namespace) -> int:
         )
         return 2
 
-    if args.otlp:
-        # Wired in step 5 (OTLP exporter PR).
-        render_error(args.console, "OTLP exporter is not yet implemented")
-        return 2
-
-    host, port = _parse_host_port(args.prometheus)
-    if host is None:
-        render_error(
-            args.console,
-            f"--prometheus must be HOST:PORT or :PORT (got: {args.prometheus!r})",
-        )
-        return 2
-
-    sys.stderr.write(
-        f"Prometheus exporter listening on http://{host}:{port}/metrics "
-        f"(refresh: {args.prometheus_refresh:.1f}s)\n"
-    )
     try:
-        return serve_prometheus(
-            repo_root,
-            host,
-            port,
-            refresh_interval=args.prometheus_refresh,
-        )
-    except OSError as exc:
-        render_error(args.console, f"failed to bind {host}:{port}: {exc}")
+        otlp_headers = parse_header_pairs(args.otlp_header)
+    except ValueError as exc:
+        render_error(args.console, str(exc))
         return 2
+
+    host: str | None = None
+    port: int = 0
+    if args.prometheus:
+        host, port = _parse_host_port(args.prometheus)
+        if host is None:
+            render_error(
+                args.console,
+                f"--prometheus must be HOST:PORT or :PORT (got: {args.prometheus!r})",
+            )
+            return 2
+
+    # Run OTLP in a background thread when requested. Prometheus blocks
+    # the main thread; if no Prometheus, OTLP blocks the main thread.
+    import threading as _threading
+
+    otlp_stop = _threading.Event()
+    otlp_thread: _threading.Thread | None = None
+    if args.otlp:
+        sys.stderr.write(
+            f"OTLP exporter pushing to {args.otlp} every "
+            f"{args.otlp_interval:.1f}s\n"
+        )
+        otlp_thread = _threading.Thread(
+            target=serve_otlp,
+            kwargs={
+                "repo_root": repo_root,
+                "endpoint": args.otlp,
+                "interval_seconds": args.otlp_interval,
+                "headers": otlp_headers or None,
+                "stop_event": otlp_stop,
+            },
+            daemon=True,
+        )
+        otlp_thread.start()
+
+    try:
+        if args.prometheus:
+            assert host is not None
+            sys.stderr.write(
+                f"Prometheus exporter listening on http://{host}:{port}/metrics "
+                f"(refresh: {args.prometheus_refresh:.1f}s)\n"
+            )
+            try:
+                rc = serve_prometheus(
+                    repo_root,
+                    host,
+                    port,
+                    refresh_interval=args.prometheus_refresh,
+                )
+            except OSError as exc:
+                render_error(args.console, f"failed to bind {host}:{port}: {exc}")
+                return 2
+        else:
+            # OTLP-only — block on the OTLP thread.
+            rc = 0
+            try:
+                while otlp_thread and otlp_thread.is_alive():
+                    otlp_thread.join(timeout=0.5)
+            except KeyboardInterrupt:
+                rc = 130
+    finally:
+        otlp_stop.set()
+        if otlp_thread is not None:
+            otlp_thread.join(timeout=2.0)
+
+    return rc
 
 
 def _parse_host_port(value: str) -> tuple[str | None, int]:

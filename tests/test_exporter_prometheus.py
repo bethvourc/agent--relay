@@ -342,10 +342,6 @@ class CmdMetricsServeTests(TestCase):
         rc = cmd_metrics_serve(_make_serve_args(prometheus="not-an-address"))
         self.assertEqual(rc, 2)
 
-    def test_otlp_only_returns_not_implemented(self) -> None:
-        rc = cmd_metrics_serve(_make_serve_args(otlp="http://x/y"))
-        self.assertEqual(rc, 2)
-
     def test_dispatches_to_serve_prometheus(self) -> None:
         with TemporaryDirectory() as tmp:
             args = _make_serve_args(prometheus="127.0.0.1:9464", repo=tmp)
