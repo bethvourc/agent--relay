@@ -11,6 +11,7 @@ from tempfile import TemporaryDirectory
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
+from agent_relay.alerts import AlertConfig
 from agent_relay.cli import build_parser, cmd_metrics_tail
 from agent_relay.exporters.jsonl import (
     parse_header_pairs,
@@ -247,6 +248,51 @@ class TailJsonlEmissionTests(TestCase):
 
         rc = tail_jsonl(_Boom(), output=io.StringIO())
         self.assertEqual(rc, 130)
+
+
+# ---------------------------------------------------------------------------
+# Alert integration
+# ---------------------------------------------------------------------------
+
+
+class TailJsonlAlertsTests(TestCase):
+    def test_threshold_breach_emits_metrics_alert_line(self) -> None:
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            _scaffold(repo, "s1")
+            _write_view(repo, "s1")
+            _write_turn(repo, "s1", 1)
+            cfg = AlertConfig(cost_per_turn_usd=0.0001)
+            source = _FakeSource(repo, "s1", [_turn_completed_event(1)])
+            buf = io.StringIO()
+            tail_jsonl(source, output=buf, alert_config=cfg)
+        lines = [
+            json.loads(line)
+            for line in buf.getvalue().splitlines()
+            if line.strip()
+        ]
+        kinds = [obj["kind"] for obj in lines]
+        self.assertIn("metrics.alert", kinds)
+        alert = next(obj for obj in lines if obj["kind"] == "metrics.alert")
+        self.assertEqual(alert["rule"], "cost_per_turn")
+        self.assertEqual(alert["session_id"], "s1")
+        self.assertEqual(alert["turn_number"], 1)
+
+    def test_no_alerts_when_config_empty(self) -> None:
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            _scaffold(repo, "s1")
+            _write_view(repo, "s1")
+            _write_turn(repo, "s1", 1)
+            source = _FakeSource(repo, "s1", [_turn_completed_event(1)])
+            buf = io.StringIO()
+            tail_jsonl(source, output=buf, alert_config=AlertConfig())
+        kinds = [
+            json.loads(line)["kind"]
+            for line in buf.getvalue().splitlines()
+            if line.strip()
+        ]
+        self.assertNotIn("metrics.alert", kinds)
 
 
 # ---------------------------------------------------------------------------
