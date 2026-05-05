@@ -22,6 +22,21 @@ from agent_relay.watch_ui import (
     stream_json_events,
     stream_quiet_lines,
 )
+from agent_relay.metrics import (
+    extract_cross_session_metrics,
+    extract_session_metrics,
+)
+from agent_relay.metrics_ui import (
+    emit_cross_session_metrics_json,
+    emit_cross_session_metrics_quiet,
+    emit_session_metrics_json,
+    emit_session_metrics_quiet,
+    render_cross_session_metrics,
+    render_session_metrics,
+)
+from agent_relay.exporters.jsonl import parse_header_pairs, tail_jsonl
+from agent_relay.exporters.otlp import serve_otlp
+from agent_relay.exporters.prometheus import serve_prometheus
 from agent_relay.ui import (
     create_console,
     emit_json,
@@ -518,7 +533,247 @@ def cmd_watch(args: argparse.Namespace) -> int:
         return stream_quiet_lines(source)
     if fallback_notice:
         args.console.print(f"[warning]{fallback_notice}[/]")
-    return render_watch_live(args.console, source)
+    return render_watch_live(
+        args.console, source, show_metrics=getattr(args, "metrics", False)
+    )
+
+
+def cmd_metrics(args: argparse.Namespace) -> int:
+    """Token / cost / latency metrics for one or all sessions.
+
+    With a session id (or no args), shows that session's rollup. With
+    ``--all``, aggregates across every session in the repo. ``--json`` and
+    ``--quiet`` are honored as on every other command.
+    """
+    repo_root = _resolve_repo(args.repo)
+
+    since_dt = None
+    if getattr(args, "since", None):
+        try:
+            since_dt = _parse_since(args.since)
+        except ValueError as exc:
+            render_error(args.console, str(exc))
+            return 2
+
+    agents_filter = getattr(args, "agent", None) or None
+
+    if args.all:
+        cross = extract_cross_session_metrics(
+            repo_root, since=since_dt, agents=agents_filter
+        )
+        if args.json:
+            emit_cross_session_metrics_json(cross)
+        elif args.quiet:
+            emit_cross_session_metrics_quiet(cross)
+        else:
+            render_cross_session_metrics(args.console, cross)
+        return 0
+
+    session_id = args.session_id
+    if session_id is None:
+        # Auto-pick the newest session of any status — metrics are most
+        # useful right after a run finishes.
+        latest = pick_latest_session(repo_root)
+        if latest is None:
+            render_error(
+                args.console,
+                "No relay sessions found in this repo. Start one with "
+                "`agent-relay run/chat/race`.",
+            )
+            return 2
+        session_id = latest["session_id"]
+
+    if not is_session(repo_root, session_id):
+        render_error(args.console, f"Session not found: {session_id}")
+        return 2
+
+    metrics = extract_session_metrics(repo_root, session_id)
+    if args.json:
+        emit_session_metrics_json(metrics)
+    elif args.quiet:
+        emit_session_metrics_quiet(metrics)
+    else:
+        render_session_metrics(args.console, metrics)
+    return 0
+
+
+def cmd_metrics_serve(args: argparse.Namespace) -> int:
+    """Run a metrics exporter (Prometheus and/or OTLP)."""
+    repo_root = _resolve_repo(args.repo)
+
+    if not args.prometheus and not args.otlp:
+        render_error(
+            args.console,
+            "metrics-serve requires --prometheus HOST:PORT and/or --otlp URL",
+        )
+        return 2
+
+    try:
+        otlp_headers = parse_header_pairs(args.otlp_header)
+    except ValueError as exc:
+        render_error(args.console, str(exc))
+        return 2
+
+    host: str | None = None
+    port: int = 0
+    if args.prometheus:
+        host, port = _parse_host_port(args.prometheus)
+        if host is None:
+            render_error(
+                args.console,
+                f"--prometheus must be HOST:PORT or :PORT (got: {args.prometheus!r})",
+            )
+            return 2
+
+    # Run OTLP in a background thread when requested. Prometheus blocks
+    # the main thread; if no Prometheus, OTLP blocks the main thread.
+    import threading as _threading
+
+    otlp_stop = _threading.Event()
+    otlp_thread: _threading.Thread | None = None
+    if args.otlp:
+        sys.stderr.write(
+            f"OTLP exporter pushing to {args.otlp} every "
+            f"{args.otlp_interval:.1f}s\n"
+        )
+        otlp_thread = _threading.Thread(
+            target=serve_otlp,
+            kwargs={
+                "repo_root": repo_root,
+                "endpoint": args.otlp,
+                "interval_seconds": args.otlp_interval,
+                "headers": otlp_headers or None,
+                "stop_event": otlp_stop,
+            },
+            daemon=True,
+        )
+        otlp_thread.start()
+
+    try:
+        if args.prometheus:
+            assert host is not None
+            sys.stderr.write(
+                f"Prometheus exporter listening on http://{host}:{port}/metrics "
+                f"(refresh: {args.prometheus_refresh:.1f}s)\n"
+            )
+            try:
+                rc = serve_prometheus(
+                    repo_root,
+                    host,
+                    port,
+                    refresh_interval=args.prometheus_refresh,
+                )
+            except OSError as exc:
+                render_error(args.console, f"failed to bind {host}:{port}: {exc}")
+                return 2
+        else:
+            # OTLP-only — block on the OTLP thread.
+            rc = 0
+            try:
+                while otlp_thread and otlp_thread.is_alive():
+                    otlp_thread.join(timeout=0.5)
+            except KeyboardInterrupt:
+                rc = 130
+    finally:
+        otlp_stop.set()
+        if otlp_thread is not None:
+            otlp_thread.join(timeout=2.0)
+
+    return rc
+
+
+def _parse_host_port(value: str) -> tuple[str | None, int]:
+    """Parse 'host:port' or ':port' into (host, port). Returns (None, 0) on failure."""
+    if not value:
+        return None, 0
+    text = value.strip()
+    if text.startswith(":"):
+        host = "127.0.0.1"
+        port_str = text[1:]
+    elif ":" in text:
+        host, port_str = text.rsplit(":", 1)
+    else:
+        return None, 0
+    try:
+        port = int(port_str)
+    except ValueError:
+        return None, 0
+    if not (0 < port < 65536):
+        return None, 0
+    return host, port
+
+
+def cmd_metrics_tail(args: argparse.Namespace) -> int:
+    """Stream metric events as JSONL — one line per turn_completed plus a
+    final session rollup. Optional webhook delivery via ``--webhook URL``.
+    """
+    repo_root = _resolve_repo(args.repo)
+
+    session_id = args.session_id
+    fallback_notice: str | None = None
+    if session_id is None:
+        session_id = pick_latest_active_session(repo_root)
+        if session_id is None:
+            latest = pick_latest_session(repo_root)
+            if latest is None:
+                render_error(
+                    args.console,
+                    "No relay sessions found in this repo. Start one with "
+                    "`agent-relay run/chat/race`.",
+                )
+                return 2
+            session_id = latest["session_id"]
+            fallback_notice = (
+                f"No active session — falling back to {session_id} "
+                f"(status: {latest.get('current_status') or 'unknown'})."
+            )
+
+    if not is_session(repo_root, session_id):
+        render_error(args.console, f"Session not found: {session_id}")
+        return 2
+
+    try:
+        webhook_headers = parse_header_pairs(args.webhook_header)
+    except ValueError as exc:
+        render_error(args.console, str(exc))
+        return 2
+
+    try:
+        source = WatchSource(
+            repo_root,
+            session_id,
+            poll_interval=args.poll_interval,
+            follow=not args.no_follow,
+        )
+    except ValueError as exc:
+        render_error(args.console, str(exc))
+        return 2
+
+    if fallback_notice:
+        sys.stderr.write(fallback_notice + "\n")
+
+    return tail_jsonl(
+        source,
+        webhook_url=args.webhook,
+        webhook_headers=webhook_headers,
+        webhook_timeout=args.webhook_timeout,
+    )
+
+
+def _parse_since(value: str):
+    """Parse `--since` (YYYY-MM-DD or ISO-8601). Raises ValueError on bad input."""
+    from datetime import datetime, timezone
+
+    text = value.strip()
+    try:
+        if len(text) == 10:
+            dt = datetime.strptime(text, "%Y-%m-%d")
+            return dt.replace(tzinfo=timezone.utc)
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(
+            f"--since must be YYYY-MM-DD or ISO-8601 (got: {value!r})"
+        ) from exc
 
 
 def cmd_clean(args: argparse.Namespace) -> int:
@@ -1051,8 +1306,118 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.25,
         help="Seconds between polls (default: 0.25)",
     )
+    watch.add_argument(
+        "--metrics",
+        action="store_true",
+        help="Show a token / cost / duration panel that refreshes per turn",
+    )
     watch.add_argument("--repo")
     watch.set_defaults(func=cmd_watch)
+
+    # agent-relay metrics — cost / token / latency rollups
+    metrics = subparsers.add_parser(
+        "metrics",
+        help="Token / cost / latency metrics for sessions",
+    )
+    metrics.add_argument(
+        "session_id",
+        nargs="?",
+        default=None,
+        help="Session id (omit to auto-pick the most recent session)",
+    )
+    metrics.add_argument(
+        "--all",
+        action="store_true",
+        help="Aggregate metrics across every session in the repo",
+    )
+    metrics.add_argument(
+        "--since",
+        help="Lower bound on session start (YYYY-MM-DD or ISO-8601)",
+    )
+    metrics.add_argument(
+        "--agent",
+        action="append",
+        help="Filter to one or more agent keys (repeatable)",
+    )
+    metrics.add_argument("--repo")
+    metrics.set_defaults(func=cmd_metrics)
+
+    # agent-relay metrics-tail — JSONL stream of metric events
+    metrics_tail = subparsers.add_parser(
+        "metrics-tail",
+        help="Stream metric events as JSONL (one line per turn) with optional webhook",
+    )
+    metrics_tail.add_argument(
+        "session_id",
+        nargs="?",
+        default=None,
+        help="Session id (omit to auto-pick the newest active session)",
+    )
+    metrics_tail.add_argument(
+        "--no-follow",
+        action="store_true",
+        help="Emit a single rollup line and exit instead of following",
+    )
+    metrics_tail.add_argument(
+        "--poll-interval",
+        type=float,
+        default=0.25,
+        help="Seconds between polls (default: 0.25)",
+    )
+    metrics_tail.add_argument(
+        "--webhook",
+        help="POST each JSONL line to this URL (Content-Type: application/json)",
+    )
+    metrics_tail.add_argument(
+        "--webhook-header",
+        action="append",
+        default=[],
+        help="Header for webhook requests (repeatable, 'Key: Value' or 'Key=Value')",
+    )
+    metrics_tail.add_argument(
+        "--webhook-timeout",
+        type=float,
+        default=5.0,
+        help="Seconds to wait for webhook response (default: 5.0)",
+    )
+    metrics_tail.add_argument("--repo")
+    metrics_tail.set_defaults(func=cmd_metrics_tail)
+
+    # agent-relay metrics-serve — Prometheus / OTLP exporters
+    metrics_serve = subparsers.add_parser(
+        "metrics-serve",
+        help="Run a metrics exporter (Prometheus scrape, OTLP push)",
+    )
+    metrics_serve.add_argument(
+        "--prometheus",
+        metavar="HOST:PORT",
+        help="Listen address for Prometheus /metrics (e.g. ':9464' or '0.0.0.0:9464')",
+    )
+    metrics_serve.add_argument(
+        "--prometheus-refresh",
+        type=float,
+        default=5.0,
+        help="Seconds to cache scraped metrics (default: 5.0)",
+    )
+    metrics_serve.add_argument(
+        "--otlp",
+        metavar="URL",
+        help="OTLP HTTP/JSON metrics endpoint (e.g. http://localhost:4318/v1/metrics)",
+    )
+    metrics_serve.add_argument(
+        "--otlp-header",
+        action="append",
+        default=[],
+        help="Header for OTLP requests (repeatable, 'Key: Value' or 'Key=Value')",
+    )
+    metrics_serve.add_argument(
+        "--otlp-interval",
+        type=float,
+        default=30.0,
+        help="Seconds between OTLP pushes (default: 30.0)",
+    )
+    metrics_serve.add_argument("--repo")
+    metrics_serve.set_defaults(func=cmd_metrics_serve)
 
     # agent-relay clean — remove sessions
     clean = subparsers.add_parser("clean", help="Remove all relay sessions")

@@ -55,6 +55,9 @@ agent-relay status
 
 # Live view of an in-progress session (auto-picks newest active)
 agent-relay watch
+
+# Token / cost / duration rollup for a session
+agent-relay metrics
 ```
 
 Agent aliases: `c` = Claude, `x` = Codex. Use `agent-relay discover` to see all available agents and aliases.
@@ -164,7 +167,10 @@ If an agent was working outside of Relay and needs to hand off, open a new termi
 |---------|-------------|
 | `agent-relay discover` | Show available agents, aliases, and CLI paths. |
 | `agent-relay status` | List all relay sessions in the current repo. |
-| `agent-relay watch [session-id]` | Live TUI of an in-progress session. Auto-picks newest active when no id is given. `--json` streams JSONL events; `--quiet` streams one terse line per event; `--no-follow` prints a single snapshot and exits. |
+| `agent-relay watch [session-id]` | Live TUI of an in-progress session. Auto-picks newest active when no id is given. `--json` streams JSONL events; `--quiet` streams one terse line per event; `--no-follow` prints a single snapshot and exits. Add `--metrics` for a token / cost / duration panel. |
+| `agent-relay metrics [session-id]` | Token / cost / latency rollup for a session. Use `--all` for cross-session totals, `--since YYYY-MM-DD` to filter, `--agent claude` (repeatable) to scope. |
+| `agent-relay metrics-tail [session-id]` | Stream metric events as JSONL — one line per `turn_completed`, plus a final session rollup. Optional `--webhook URL` POSTs each line. |
+| `agent-relay metrics-serve` | Run a metrics exporter. `--prometheus :9464` exposes `/metrics` in Prometheus text format; `--otlp http://collector:4318/v1/metrics` pushes OTLP/HTTP-JSON every 30s. Both can run together. |
 | `agent-relay clean` | Remove all sessions. Use `--all` to remove entire `.agent-relay/` directory. |
 
 ### Options
@@ -228,6 +234,85 @@ The live TUI surfaces journal events, workspace activity, the current turn's
 elapsed time and progressive agent output, and the latest turn state — all in
 real time. The watcher exits cleanly when the session reaches a terminal
 status (`completed`, `ready_for_handoff`) or on Ctrl-C.
+
+Add `--metrics` for a token / cost / duration panel that refreshes after every
+turn:
+
+```bash
+agent-relay watch --metrics
+```
+
+### Cost & performance metrics
+
+Relay computes metrics on read — no extra files in `.agent-relay/`, no cache
+invalidation. The same data backs four surfaces:
+
+```bash
+# Per-session table (auto-picks the most recent session)
+agent-relay metrics
+
+# Cross-session aggregates: by agent, by day, totals
+agent-relay metrics --all
+agent-relay metrics --all --since 2026-05-01 --agent claude
+
+# Machine-readable
+agent-relay metrics --json
+agent-relay metrics --quiet      # one TSV line per session
+
+# Live JSONL stream — one line per turn_completed plus a final session rollup
+agent-relay metrics-tail
+agent-relay metrics-tail --webhook https://hooks.example.com/relay
+```
+
+For dashboards and long-running collection, `metrics-serve` runs an exporter:
+
+```bash
+# Prometheus pull-based scrape endpoint (stdlib only)
+agent-relay metrics-serve --prometheus :9464
+# → curl http://localhost:9464/metrics
+
+# OTLP push to a collector (HTTP/JSON, every 30s by default)
+agent-relay metrics-serve --otlp http://localhost:4318/v1/metrics
+
+# Both can run together
+agent-relay metrics-serve --prometheus :9464 --otlp http://localhost:4318/v1/metrics
+```
+
+Metrics emitted (Prometheus naming; OTLP uses dotted equivalents):
+
+| Metric | Type | Labels |
+|---|---|---|
+| `agent_relay_tokens_total` | counter | `agent`, `direction` (`input`, `output`, `cache_read`, `cache_creation`) |
+| `agent_relay_cost_usd_total` | counter | `agent` |
+| `agent_relay_turn_duration_ms_sum` / `_count` | summary | `agent` |
+| `agent_relay_turns_total` | counter | `agent`, `result` (`success`, `error`) |
+| `agent_relay_session_active` | gauge | — |
+| `agent_relay_sessions_total` | gauge | `status` |
+
+### Alerts
+
+Threshold-based alerts ride the `metrics-tail` channel. They are opt-in —
+no config file, no alerts. Drop a `.agent-relay/config/alerts.toml`:
+
+```toml
+cost_per_turn_usd = 0.50
+cost_per_session_usd = 5.00
+duration_per_turn_ms = 300000
+tokens_per_turn = 200000
+error_rate_threshold = 0.4    # ratio 0..1; gated by error_rate_min_turns
+error_rate_min_turns = 5
+```
+
+When a turn breaches a threshold, `metrics-tail` writes a colored line to
+stderr and emits an extra JSONL line on stdout:
+
+```json
+{"kind":"metrics.alert","rule":"cost_per_turn","severity":"warning","session_id":"...","turn_number":3,"threshold":0.5,"observed":0.71,"message":"turn 3 cost $0.7100 exceeds threshold $0.5000","timestamp":"..."}
+```
+
+Severity is `critical` at ≥ 2× threshold, `warning` otherwise. Webhook
+delivery (when `--webhook` is set) carries alert lines too, so external
+systems can react without polling.
 
 ### Concurrent work with conflict recovery
 

@@ -78,6 +78,7 @@ def _make_args(
     poll_interval: float = 0.01,
     json_mode: bool = False,
     quiet: bool = False,
+    metrics: bool = False,
 ) -> argparse.Namespace:
     return argparse.Namespace(
         repo=repo,
@@ -86,6 +87,7 @@ def _make_args(
         poll_interval=poll_interval,
         json=json_mode,
         quiet=quiet,
+        metrics=metrics,
         console=create_console(json_mode=json_mode, quiet=quiet),
     )
 
@@ -112,6 +114,13 @@ class WatchParserTests(TestCase):
         self.assertEqual(ns.session_id, "abc-123")
         self.assertTrue(ns.no_follow)
         self.assertAlmostEqual(ns.poll_interval, 0.5)
+
+    def test_subparser_accepts_metrics_flag(self) -> None:
+        parser = build_parser()
+        ns = parser.parse_args(["watch", "--metrics"])
+        self.assertTrue(ns.metrics)
+        ns2 = parser.parse_args(["watch"])
+        self.assertFalse(ns2.metrics)
 
 
 # ---------------------------------------------------------------------------
@@ -329,6 +338,100 @@ class CmdWatchOutputModeTests(TestCase):
             self.assertEqual(rc, 0)
             live_renderer.assert_called_once()
             self.assertIs(live_renderer.call_args.args[1], stub_source)
+            self.assertFalse(live_renderer.call_args.kwargs.get("show_metrics", False))
+
+    def test_live_state_refreshes_metrics_on_turn_completed(self) -> None:
+        from agent_relay.layout import turn_dir
+        from agent_relay.watch import WatchEvent
+        from agent_relay.watch_ui import _LiveState
+
+        with TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            sid = "s1"
+            _scaffold_session(tmpdir, sid)
+            _write_view(tmpdir, sid, phase="active")
+            tdir = turn_dir(tmpdir, sid, 1)
+            tdir.mkdir(parents=True, exist_ok=True)
+            (tdir / "state.json").write_text(
+                json.dumps(
+                    {
+                        "agent_key": "claude",
+                        "turn_number": 1,
+                        "status": "continue",
+                        "metadata": {
+                            "started_at": "2026-05-01T10:00:00.000Z",
+                            "finished_at": "2026-05-01T10:00:42.000Z",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (tdir / "output.jsonl").write_text(
+                json.dumps(
+                    {
+                        "type": "result",
+                        "duration_ms": 42000,
+                        "total_cost_usd": 0.4318,
+                        "usage": {"input_tokens": 6, "output_tokens": 56},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            class _StubSource:
+                def __init__(self) -> None:
+                    from agent_relay.watch import WatchSnapshot
+
+                    self.repo_root = tmpdir
+                    self.session_id = sid
+
+                def snapshot(self) -> "WatchSnapshot":
+                    from agent_relay.watch import WatchSnapshot
+
+                    return WatchSnapshot(
+                        session_id=sid,
+                        current_agent="claude",
+                        current_status="active",
+                        objective="o",
+                        current_turn=None,
+                        turn_started_at=None,
+                        elapsed_seconds=None,
+                        last_turn_state=None,
+                    )
+
+            state = _LiveState(_StubSource(), show_metrics=True)
+            self.assertIsNotNone(state.metrics)
+            event = WatchEvent(
+                timestamp="2026-05-01T10:01:00.000Z",
+                kind="turn_completed",
+                payload={"turn_number": 1, "state": {}},
+                sequence=1,
+            )
+            state.apply(event)
+            self.assertEqual(state.metrics.turn_count, 1)
+            self.assertAlmostEqual(state.metrics.total_cost_usd or 0.0, 0.4318)
+
+    def test_metrics_flag_propagates_to_live_renderer(self) -> None:
+        with TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            sid = "s1"
+            _scaffold_session(tmpdir, sid)
+            _write_view(tmpdir, sid, phase="active")
+            args = _make_args(
+                repo=tmp, session_id=sid, no_follow=True, metrics=True
+            )
+            live_renderer = MagicMock(return_value=0)
+            stub_source = MagicMock()
+            with (
+                patch("agent_relay.cli.is_session", return_value=True),
+                patch("agent_relay.cli.WatchSource", return_value=stub_source),
+                patch("agent_relay.cli.render_watch_live", live_renderer),
+            ):
+                rc = cmd_watch(args)
+        self.assertEqual(rc, 0)
+        live_renderer.assert_called_once()
+        self.assertTrue(live_renderer.call_args.kwargs["show_metrics"])
 
 
 # ---------------------------------------------------------------------------
