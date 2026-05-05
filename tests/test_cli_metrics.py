@@ -299,6 +299,40 @@ class CmdMetricsAllTests(TestCase):
 # ---------------------------------------------------------------------------
 
 
+class WatchMetricsPanelTests(TestCase):
+    def test_render_metrics_panel_includes_totals(self) -> None:
+        from io import StringIO
+
+        from agent_relay.metrics_ui import render_metrics_panel
+
+        sm = SessionMetrics(
+            session_id="s1",
+            current_agent="claude",
+            current_status="active",
+            objective="o",
+            started_at=None,
+            updated_at=None,
+            turn_count=3,
+            successful_turns=2,
+            total_tokens=TokenUsage(input=100, output=50),
+            total_cost_usd=0.42,
+            total_duration_ms=120000,
+            by_agent={"claude": TokenUsage(input=100, output=50)},
+            cost_by_agent={"claude": 0.42},
+            turns=(),
+        )
+        panel = render_metrics_panel(sm)
+        capture = create_console()
+        capture.file = StringIO()
+        capture.record = True
+        capture.print(panel)
+        output = capture.export_text()
+        self.assertIn("Tokens", output)
+        self.assertIn("Cost", output)
+        self.assertIn("Turns", output)
+        self.assertIn("3", output)
+
+
 class RendererSmokeTests(TestCase):
     def test_render_session_metrics_no_turns(self) -> None:
         sm = SessionMetrics(

@@ -119,7 +119,7 @@ def stream_quiet_lines(source: WatchSource) -> int:
 class _LiveState:
     """Mutable state the live renderer reflects on each refresh."""
 
-    def __init__(self, source: WatchSource) -> None:
+    def __init__(self, source: WatchSource, *, show_metrics: bool = False) -> None:
         self.source = source
         snap = source.snapshot()
         self.session_id = snap.session_id
@@ -129,6 +129,10 @@ class _LiveState:
         self.current_turn: int | None = snap.current_turn
         self.last_turn_state: dict[str, Any] | None = snap.last_turn_state
         self.recent: deque[WatchEvent] = deque(maxlen=_RECENT_EVENT_LIMIT)
+        self.show_metrics = show_metrics
+        self.metrics: Any = None
+        if show_metrics:
+            self._refresh_metrics()
 
     def apply(self, event: WatchEvent) -> None:
         self.recent.append(event)
@@ -144,6 +148,20 @@ class _LiveState:
             state = p.get("state")
             if isinstance(state, dict):
                 self.last_turn_state = state
+            if self.show_metrics:
+                self._refresh_metrics()
+
+    def _refresh_metrics(self) -> None:
+        # Local import to keep the module's import graph light when
+        # `--metrics` is not used.
+        from agent_relay.metrics import extract_session_metrics
+
+        try:
+            self.metrics = extract_session_metrics(
+                self.source.repo_root, self.session_id
+            )
+        except Exception:
+            self.metrics = None
 
 
 def _render_header(state: _LiveState) -> Panel:
@@ -234,18 +252,37 @@ def _render_turn_state(state: _LiveState) -> Panel:
 
 def _build_layout(state: _LiveState) -> Layout:
     layout = Layout()
-    layout.split_column(
+    rows: list[Layout] = [
         Layout(_render_header(state), name="header", size=4),
         Layout(_render_recent(state), name="recent", ratio=1),
         Layout(_render_turn_state(state), name="state", size=7),
-    )
+    ]
+    if state.show_metrics:
+        rows.append(Layout(_render_metrics(state), name="metrics", size=5))
+    layout.split_column(*rows)
     return layout
 
 
-def render_watch_live(console: Console, source: WatchSource) -> int:
+def _render_metrics(state: _LiveState):
+    from agent_relay.metrics_ui import render_metrics_panel
+
+    if state.metrics is None:
+        return Panel(
+            Text("(metrics not available yet)", style="dim"),
+            title="metrics so far",
+            title_align="left",
+            border_style="brand.dim",
+            padding=(0, 1),
+        )
+    return render_metrics_panel(state.metrics)
+
+
+def render_watch_live(
+    console: Console, source: WatchSource, *, show_metrics: bool = False
+) -> int:
     """Run the full-screen Rich live view until the session terminates or
     the user interrupts. Returns a CLI exit code."""
-    state = _LiveState(source)
+    state = _LiveState(source, show_metrics=show_metrics)
     try:
         with Live(
             _build_layout(state),

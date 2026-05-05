@@ -533,7 +533,9 @@ def cmd_watch(args: argparse.Namespace) -> int:
         return stream_quiet_lines(source)
     if fallback_notice:
         args.console.print(f"[warning]{fallback_notice}[/]")
-    return render_watch_live(args.console, source)
+    return render_watch_live(
+        args.console, source, show_metrics=getattr(args, "metrics", False)
+    )
 
 
 def cmd_metrics(args: argparse.Namespace) -> int:
@@ -1303,6 +1305,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.25,
         help="Seconds between polls (default: 0.25)",
+    )
+    watch.add_argument(
+        "--metrics",
+        action="store_true",
+        help="Show a token / cost / duration panel that refreshes per turn",
     )
     watch.add_argument("--repo")
     watch.set_defaults(func=cmd_watch)
