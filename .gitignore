@@ -12,3 +12,4 @@ tests/__pycache__/
 docs/features/local-ideas.md
 src/agent-relay.egg-info/
 *.egg-info/
+Agent Relay Design System/
