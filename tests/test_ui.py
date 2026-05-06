@@ -8,6 +8,7 @@ from unittest import TestCase
 
 from rich.console import Console
 
+from agent_relay import __version__
 from agent_relay.concurrent import AgentOutcome, ConcurrentResult
 from agent_relay.ui import (
     RELAY_THEME,
@@ -88,7 +89,7 @@ class BannerTests(TestCase):
         render_banner(console)
         output = buf.getvalue()
         self.assertIn("Agent Relay", output)
-        self.assertIn("v0.3.0", output)
+        self.assertIn(f"v{__version__}", output)
         self.assertIn("agent-relay --help", output)
 
     def test_compact_banner_is_single_line(self) -> None:
