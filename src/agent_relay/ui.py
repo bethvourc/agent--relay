@@ -17,47 +17,77 @@ from rich.theme import Theme
 from rich.tree import Tree
 
 from agent_relay import __version__
+from agent_relay import tokens as T
 
 RELAY_THEME = Theme(
     {
-        "brand": "bold #FFB000",
-        "brand.dim": "#B87A00",
+        # Brand & signal accents
+        "brand": f"bold {T.BRAND}",
+        "brand.dim": T.BRAND_DIM,
+        "signal": f"bold {T.SIGNAL}",
+        "signal.dim": T.SIGNAL_DIM,
+        # Foreground — existing keys preserved for back-compat;
+        # `fg.N` are the new explicit tokens consumers should migrate to.
         "heading": "bold white",
         "label": "dim white",
         "value": "white",
-        "path": "dim cyan",
-        "success": "bold green",
-        "error": "bold red",
-        "warning": "bold yellow",
-        "status.active": "bold green",
-        "status.paused": "bold yellow",
-        "status.blocked": "bold red",
-        "status.completed": "bold #FFB000",
-        "status.handoff_prepared": "bold cyan",
-        "status.ready_for_handoff": "bold cyan",
-        "status.launching": "bold magenta",
-        "status.launch_failed": "bold red",
-        "status.awaiting_resume": "bold #FFB000",
-        "status.degraded": "bold yellow",
-        "status.corrupt": "bold red",
-        "status.ready": "bold dim white",
-        "status.succeeded": "bold green",
-        "status.failed": "bold red",
-        "status.interrupted": "bold yellow",
-        "status.not_run": "dim",
-        "agent.claude": "bold #FFB000",
-        "agent.codex": "bold cyan",
-        "agent.gemini": "bold #4285F4",
         "muted": "dim",
-        "banner.border": "#B87A00",
-        "banner.accent": "bold #FFB000",
-        "banner.title": "bold #FFB000",
-        "banner.subtitle": "bold white",
-        "banner.note": "dim white",
-        "banner.prompt": "bold #FFB000",
-        "banner.icon": "#B87A00",
-        "banner.signal": "bold #7EE34B",
-        "banner.surface": "on #121212",
+        "path": "dim cyan",
+        "fg.1": T.FG_1,
+        "fg.2": T.FG_2,
+        "fg.3": T.FG_3,
+        "fg.4": T.FG_4,
+        # Surfaces (used as `on` backgrounds)
+        "surface.0": f"on {T.SURFACE_0}",
+        "surface.1": f"on {T.SURFACE_1}",
+        "surface.2": f"on {T.SURFACE_2}",
+        "surface.3": f"on {T.SURFACE_3}",
+        "surface.rule": T.SURFACE_RULE,
+        # Semantic roles
+        "success": f"bold {T.SUCCESS}",
+        "error": f"bold {T.ERROR}",
+        "warning": f"bold {T.WARNING}",
+        "info": f"bold {T.INFO}",
+        # Status semantic
+        "status.active": f"bold {T.SUCCESS}",
+        "status.paused": f"bold {T.WARNING}",
+        "status.blocked": f"bold {T.ERROR}",
+        "status.completed": f"bold {T.BRAND}",
+        "status.handoff_prepared": f"bold {T.AGENT_CODEX}",
+        "status.ready_for_handoff": f"bold {T.AGENT_CODEX}",
+        "status.launching": f"bold {T.KIND_WORKSPACE}",
+        "status.launch_failed": f"bold {T.ERROR}",
+        "status.awaiting_resume": f"bold {T.BRAND}",
+        "status.degraded": f"bold {T.WARNING}",
+        "status.corrupt": f"bold {T.ERROR}",
+        "status.ready": f"bold {T.FG_3}",
+        "status.succeeded": f"bold {T.SUCCESS}",
+        "status.failed": f"bold {T.ERROR}",
+        "status.interrupted": f"bold {T.WARNING}",
+        "status.not_run": T.FG_4,
+        # Agent palette
+        "agent.claude": f"bold {T.AGENT_CLAUDE}",
+        "agent.codex": f"bold {T.AGENT_CODEX}",
+        "agent.gemini": f"bold {T.AGENT_GEMINI}",
+        # Event kinds (watch_ui)
+        "kind.journal": T.KIND_JOURNAL,
+        "kind.workspace": T.KIND_WORKSPACE,
+        "kind.turn": f"bold {T.KIND_TURN}",
+        "kind.turn_started": f"bold {T.SUCCESS}",
+        "kind.turn_completed": f"bold {T.KIND_TURN}",
+        "kind.output": T.KIND_OUTPUT,
+        "kind.status": f"bold {T.KIND_STATUS}",
+        "kind.heartbeat": T.KIND_HEARTBEAT,
+        # Banner
+        "banner.border": T.BRAND_DIM,
+        "banner.accent": f"bold {T.BRAND}",
+        "banner.title": f"bold {T.BRAND}",
+        "banner.subtitle": f"bold {T.FG_1}",
+        "banner.note": T.FG_2,
+        "banner.prompt": f"bold {T.BRAND}",
+        "banner.icon": T.BRAND_DIM,
+        "banner.signal": f"bold {T.SIGNAL}",
+        "banner.surface": f"on {T.SURFACE_1}",
     }
 )
 
@@ -144,8 +174,8 @@ def render_banner(console: Console) -> None:
 
 
 def _banner_icon() -> Text:
-    signal = "bold #7EE34B"
-    frame = "#B87A00"
+    signal = "banner.signal"
+    frame = "banner.icon"
 
     icon = Text()
     # Antenna

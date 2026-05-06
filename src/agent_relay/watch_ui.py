@@ -24,13 +24,13 @@ from agent_relay.watch import WatchEvent, WatchSource
 _RECENT_EVENT_LIMIT = 20
 
 _KIND_STYLE = {
-    "journal": "cyan",
-    "workspace": "magenta",
-    "turn_started": "bold green",
-    "turn_completed": "bold #FFB000",
-    "output_chunk": "white",
-    "status_change": "bold yellow",
-    "heartbeat": "dim",
+    "journal": "kind.journal",
+    "workspace": "kind.workspace",
+    "turn_started": "kind.turn_started",
+    "turn_completed": "kind.turn_completed",
+    "output_chunk": "kind.output",
+    "status_change": "kind.status",
+    "heartbeat": "kind.heartbeat",
 }
 
 
@@ -45,7 +45,7 @@ def watch_event_to_compact_line(event: WatchEvent) -> Text:
     text = Text()
     short_ts = (event.timestamp[11:19] if len(event.timestamp) >= 19 else event.timestamp)
     text.append(f"{short_ts}  ", style="dim")
-    text.append(f"{event.kind:<16}", style=_KIND_STYLE.get(event.kind, "white"))
+    text.append(f"{event.kind:<16}", style=_KIND_STYLE.get(event.kind, "kind.output"))
     text.append("  ")
     text.append(_summarize_payload(event), style="value")
     return text
