@@ -16,6 +16,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from agent_relay.formatting import fmt_cost, fmt_duration_ms, fmt_int
 from agent_relay.metrics import (
     CrossSessionMetrics,
     SessionMetrics,
@@ -71,17 +72,17 @@ def render_session_metrics(console: Console, metrics: SessionMetrics) -> None:
             header_style="heading",
             border_style="brand.dim",
             padding=(0, 1),
-            title="[heading]Per-turn[/]",
+            title="[heading]per-turn[/]",
             title_style="heading",
         )
         per_turn.add_column("#", justify="right", no_wrap=True)
-        per_turn.add_column("Agent", no_wrap=True)
-        per_turn.add_column("Tokens in", justify="right")
-        per_turn.add_column("Tokens out", justify="right")
-        per_turn.add_column("Cost", justify="right")
-        per_turn.add_column("Duration", justify="right")
-        per_turn.add_column("Tools", justify="right")
-        per_turn.add_column("Status", no_wrap=True)
+        per_turn.add_column("agent", no_wrap=True)
+        per_turn.add_column("tokens in", justify="right")
+        per_turn.add_column("tokens out", justify="right")
+        per_turn.add_column("cost", justify="right")
+        per_turn.add_column("duration", justify="right")
+        per_turn.add_column("tools", justify="right")
+        per_turn.add_column("status", no_wrap=True)
         for t in metrics.turns:
             per_turn.add_row(
                 str(t.turn_number),
@@ -110,16 +111,16 @@ def render_cross_session_metrics(
         header_style="heading",
         border_style="brand.dim",
         padding=(0, 1),
-        title="[heading]Sessions[/]",
+        title="[heading]sessions[/]",
         title_style="heading",
     )
-    table.add_column("Session", style="brand", no_wrap=True)
-    table.add_column("Agent", no_wrap=True)
-    table.add_column("Status", no_wrap=True)
-    table.add_column("Turns", justify="right")
-    table.add_column("Tokens", justify="right")
-    table.add_column("Cost", justify="right")
-    table.add_column("Duration", justify="right")
+    table.add_column("session", style="brand", no_wrap=True)
+    table.add_column("agent", no_wrap=True)
+    table.add_column("status", no_wrap=True)
+    table.add_column("turns", justify="right")
+    table.add_column("tokens", justify="right")
+    table.add_column("cost", justify="right")
+    table.add_column("duration", justify="right")
     for s in metrics.sessions:
         table.add_row(
             s.session_id,
@@ -269,31 +270,10 @@ def _format_by_agent(
     return "   ".join(parts) if parts else "-"
 
 
-def _fmt_int(value: int | None) -> str:
-    if value is None:
-        return "-"
-    return f"{value:,}"
-
-
-def _fmt_cost(value: float | None) -> str:
-    if value is None:
-        return "-"
-    return f"${value:.4f}"
-
-
-def _fmt_duration_ms(ms: int | None) -> str:
-    if ms is None or ms <= 0:
-        return "0s"
-    seconds, millis = divmod(ms, 1000)
-    minutes, seconds = divmod(seconds, 60)
-    hours, minutes = divmod(minutes, 60)
-    if hours:
-        return f"{hours}h{minutes:02d}m{seconds:02d}s"
-    if minutes:
-        return f"{minutes}m{seconds:02d}s"
-    if seconds:
-        return f"{seconds}.{millis // 100}s"
-    return f"{ms}ms"
+# Backwards-compatible aliases for tests / external callers.
+_fmt_int = fmt_int
+_fmt_cost = fmt_cost
+_fmt_duration_ms = fmt_duration_ms
 
 
 def _status_text(status: str | None, succeeded: bool) -> str:

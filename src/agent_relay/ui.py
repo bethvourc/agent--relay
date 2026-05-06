@@ -690,10 +690,10 @@ def render_inspect(console: Console, session_dict: dict[str, Any]) -> None:
         console.print(Rule(style="brand.dim"))
         console.print("\n  [heading]Handoff history[/]\n")
         table = Table(show_header=True, header_style="label", box=None, padding=(0, 2))
-        table.add_column("From", style="value")
-        table.add_column("To", style="value")
-        table.add_column("Reason", style="muted")
-        table.add_column("Status", style="value")
+        table.add_column("from", style="value")
+        table.add_column("to", style="value")
+        table.add_column("reason", style="muted")
+        table.add_column("status", style="value")
         for h in handoffs:
             table.add_row(
                 str(agent_badge(h["from_agent"])),
