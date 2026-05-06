@@ -639,22 +639,22 @@ def render_inspect(console: Console, session_dict: dict[str, Any]) -> None:
         console.print(Rule(style="brand.dim"))
 
     if decisions:
-        console.print("\n  [heading]Decisions[/]")
+        console.print("\n  [heading]decisions[/]")
         for d in decisions:
             console.print(f"    [brand]▸[/] {d}")
 
     if blockers:
-        console.print("\n  [heading]Blockers[/]")
+        console.print("\n  [heading]blockers[/]")
         for b in blockers:
             console.print(f"    [error]▸[/] {b}")
 
     if research_notes:
-        console.print("\n  [heading]Research Notes[/]")
+        console.print("\n  [heading]research notes[/]")
         for note in research_notes:
             console.print(f"    [brand]▸[/] {note}")
 
     if implementation_notes:
-        console.print("\n  [heading]Implementation Notes[/]")
+        console.print("\n  [heading]implementation notes[/]")
         for note in implementation_notes:
             console.print(f"    [brand]▸[/] {note}")
 
@@ -663,7 +663,7 @@ def render_inspect(console: Console, session_dict: dict[str, Any]) -> None:
     if touched:
         console.print()
         console.print(Rule(style="brand.dim"))
-        console.print("\n  [heading]Touched files[/]")
+        console.print("\n  [heading]touched files[/]")
         tree = Tree("  [muted].[/]")
         for f in touched:
             tree.add(f"[path]{f}[/]")
@@ -675,11 +675,11 @@ def render_inspect(console: Console, session_dict: dict[str, Any]) -> None:
         console.print()
         console.print(Rule(style="brand.dim"))
     if broken_paths:
-        console.print("\n  [heading]Broken paths[/]")
+        console.print("\n  [heading]broken paths[/]")
         for path in broken_paths:
             console.print(f"    [error]▸[/] [path]{path}[/]")
     if suggested_repair:
-        console.print("\n  [heading]Suggested repair[/]")
+        console.print("\n  [heading]suggested repair[/]")
         for command in suggested_repair:
             console.print(f"    [brand]▸[/] [value]{command}[/]")
 
@@ -688,7 +688,7 @@ def render_inspect(console: Console, session_dict: dict[str, Any]) -> None:
     if handoffs:
         console.print()
         console.print(Rule(style="brand.dim"))
-        console.print("\n  [heading]Handoff history[/]\n")
+        console.print("\n  [heading]handoff history[/]\n")
         table = Table(show_header=True, header_style="label", box=None, padding=(0, 2))
         table.add_column("from", style="value")
         table.add_column("to", style="value")
@@ -710,7 +710,7 @@ def render_inspect(console: Console, session_dict: dict[str, Any]) -> None:
     console.print()
     console.print(Rule(style="brand.dim"))
     console.print(
-        f"\n  [heading]Validation[/]  {status_badge(v_status) if v_status in STATUS_SYMBOLS else v_status}"
+        f"\n  [heading]validation[/]  {status_badge(v_status) if v_status in STATUS_SYMBOLS else v_status}"
     )
     if v_summary:
         console.print(f"    {v_summary}")
@@ -782,15 +782,15 @@ def render_dashboard(console: Console, sessions: list[dict[str, Any]]) -> None:
         show_header=True,
         header_style="heading",
         border_style="brand.dim",
-        title="[heading]Sessions[/]",
+        title="[heading]sessions[/]",
         title_style="heading",
         padding=(0, 1),
     )
-    table.add_column("Session ID", style="brand", no_wrap=True)
-    table.add_column("Agent", no_wrap=True)
-    table.add_column("Status", no_wrap=True)
-    table.add_column("Objective", style="value")
-    table.add_column("Updated", style="muted", no_wrap=True)
+    table.add_column("session id", style="brand", no_wrap=True)
+    table.add_column("agent", no_wrap=True)
+    table.add_column("status", no_wrap=True)
+    table.add_column("objective", style="value")
+    table.add_column("updated", style="muted", no_wrap=True)
 
     for s in sessions:
         obj = s.get("objective", "")
@@ -850,6 +850,18 @@ def render_help(console: Console) -> None:
         )
         console.print("  [brand]agent-relay status[/]                  View sessions")
         console.print(
+            "  [brand]agent-relay watch <id>[/]              Live session view"
+        )
+        console.print(
+            "  [brand]agent-relay metrics [id][/]            Tokens, cost, duration"
+        )
+        console.print(
+            "  [brand]agent-relay metrics-tail <id>[/]       Stream metrics as JSONL"
+        )
+        console.print(
+            "  [brand]agent-relay metrics-serve[/]           Local dashboard + exporters"
+        )
+        console.print(
             "  [brand]agent-relay inspect-conflicts <id>[/]  Inspect saved conflict artifacts"
         )
         console.print(
@@ -864,8 +876,8 @@ def render_help(console: Console) -> None:
 
     # Usage examples
     examples = Table(show_header=False, box=None, padding=(0, 2), pad_edge=True)
-    examples.add_column("Command", style="brand", no_wrap=True)
-    examples.add_column("Description", style="muted")
+    examples.add_column("command", style="brand", no_wrap=True)
+    examples.add_column("description", style="muted")
 
     examples.add_row("agent-relay <agent>", "Relay to an agent (codex, claude)")
     examples.add_row('agent-relay run c "fix tests"', "Single-agent managed run")
@@ -898,6 +910,26 @@ def render_help(console: Console) -> None:
     )
     examples.add_row("agent-relay discover", "Show available agents & aliases")
     examples.add_row("agent-relay status", "View all relay sessions")
+    examples.add_row(
+        "agent-relay watch <session>",
+        "Live session view (events, status, last turn state)",
+    )
+    examples.add_row(
+        "agent-relay watch <session> --metrics",
+        "Live view with running tokens/cost/duration panel",
+    )
+    examples.add_row(
+        "agent-relay metrics [session]",
+        "Token usage, cost, and duration totals",
+    )
+    examples.add_row(
+        "agent-relay metrics-tail <session>",
+        "Stream per-turn metrics as JSONL",
+    )
+    examples.add_row(
+        "agent-relay metrics-serve",
+        "Local metrics dashboard + Prometheus / OTLP exporters",
+    )
     examples.add_row("agent-relay clean", "Remove all sessions")
 
     console.print(
@@ -915,8 +947,8 @@ def render_help(console: Console) -> None:
 
     # Options
     opts = Table(show_header=False, box=None, padding=(0, 2), pad_edge=True)
-    opts.add_column("Flag", style="brand", no_wrap=True, min_width=14)
-    opts.add_column("Description", style="value")
+    opts.add_column("flag", style="brand", no_wrap=True, min_width=14)
+    opts.add_column("description", style="value")
 
     opts.add_row("--task   -t", "Task for agents (alternative to positional)")
     opts.add_row("--continue", "Continue from a prior relay session id")
@@ -1158,11 +1190,11 @@ def render_error(console: Console, message: str) -> None:
 def render_discover_results(console: Console, results: list[Any]) -> None:
     render_banner(console)
     table = Table(box=None, padding=(0, 2), show_header=True, header_style="label")
-    table.add_column("Agent")
-    table.add_column("Alias")
-    table.add_column("Status")
-    table.add_column("Path")
-    table.add_column("Version")
+    table.add_column("agent")
+    table.add_column("alias")
+    table.add_column("status")
+    table.add_column("path")
+    table.add_column("version")
 
     for r in results:
         badge = agent_badge(r.key, short=True)
@@ -1434,7 +1466,7 @@ def _concurrent_next_action(result: "ConcurrentResult") -> str | None:  # noqa: 
         return "Adjust the planning claims so each agent has a concrete, non-conflicting slice, then rerun `race`."
     if result.stop_reason in {"max_time", "interrupted", "incomplete", "agent_error"}:
         return (
-            f"If you want to keep going, continue with "
+            f"To continue, run "
             f'`agent-relay race --continue {result.session_id} <agents> "continue the task"`.'
         )
     return None
