@@ -631,7 +631,7 @@ def render_inspect(console: Console, session_dict: dict[str, Any]) -> None:
 
     if decisions or blockers or research_notes or implementation_notes:
         console.print()
-        console.print(Rule(style="brand.dim"))
+        console.print(Rule(style="surface.rule"))
 
     if decisions:
         console.print("\n  [heading]decisions[/]")
@@ -657,7 +657,7 @@ def render_inspect(console: Console, session_dict: dict[str, Any]) -> None:
     touched = session_dict.get("touched_files", [])
     if touched:
         console.print()
-        console.print(Rule(style="brand.dim"))
+        console.print(Rule(style="surface.rule"))
         console.print("\n  [heading]touched files[/]")
         tree = Tree("  [muted].[/]")
         for f in touched:
@@ -668,7 +668,7 @@ def render_inspect(console: Console, session_dict: dict[str, Any]) -> None:
     suggested_repair = session_dict.get("suggested_repair", [])
     if broken_paths or suggested_repair:
         console.print()
-        console.print(Rule(style="brand.dim"))
+        console.print(Rule(style="surface.rule"))
     if broken_paths:
         console.print("\n  [heading]broken paths[/]")
         for path in broken_paths:
@@ -682,7 +682,7 @@ def render_inspect(console: Console, session_dict: dict[str, Any]) -> None:
     handoffs = session_dict.get("handoffs", [])
     if handoffs:
         console.print()
-        console.print(Rule(style="brand.dim"))
+        console.print(Rule(style="surface.rule"))
         console.print("\n  [heading]handoff history[/]\n")
         table = Table(show_header=True, header_style="label", box=None, padding=(0, 2))
         table.add_column("from", style="value")
@@ -703,7 +703,7 @@ def render_inspect(console: Console, session_dict: dict[str, Any]) -> None:
     v_status = validation.get("status", "not_run")
     v_summary = validation.get("summary", "")
     console.print()
-    console.print(Rule(style="brand.dim"))
+    console.print(Rule(style="surface.rule"))
     console.print(
         f"\n  [heading]validation[/]  {status_badge(v_status) if v_status in STATUS_SYMBOLS else v_status}"
     )
@@ -776,7 +776,7 @@ def render_dashboard(console: Console, sessions: list[dict[str, Any]]) -> None:
     table = Table(
         show_header=True,
         header_style="heading",
-        border_style="brand.dim",
+        border_style="surface.rule",
         title="[heading]sessions[/]",
         title_style="heading",
         padding=(0, 1),
@@ -1036,7 +1036,7 @@ def render_conflict_inspect(console: Console, summary: dict[str, Any]) -> None:
         path = str(item.get("path", "")).strip() or "?"
         kind = str(item.get("kind", "unknown")).strip() or "unknown"
         console.print(
-            f"  [brand]•[/] [value]{path}[/]  [muted]({kind})[/]", highlight=False
+            f"  [brand]▸[/] [value]{path}[/]  [muted]({kind})[/]", highlight=False
         )
         manual_reasons = item.get("manual_reasons", [])
         if isinstance(manual_reasons, list) and manual_reasons:
