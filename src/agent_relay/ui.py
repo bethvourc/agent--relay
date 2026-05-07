@@ -200,19 +200,14 @@ def _banner_body(*, include_tips: bool) -> Text:
     body.append("Agent Relay", style="banner.title")
     body.append(f" v{__version__}", style="muted")
     body.append("\n")
-    body.append("Local-first agent handoff CLI", style="banner.subtitle")
-    body.append("\n")
-    body.append(
-        "Capture context, hand off cleanly, and resume with full session state intact.",
-        style="banner.note",
-    )
+    body.append("local-first agent handoff CLI", style="banner.subtitle")
     if include_tips:
         body.append("\n\n")
-        body.append("Help:", style="banner.note")
+        body.append("help:", style="banner.note")
         body.append(" ", style="banner.note")
         body.append("agent-relay --help", style="banner.prompt")
         body.append("  •  ", style="banner.border")
-        body.append("Sessions:", style="banner.note")
+        body.append("sessions:", style="banner.note")
         body.append(" ", style="banner.note")
         body.append("agent-relay status", style="banner.prompt")
     return body
@@ -821,7 +816,12 @@ def render_help(console: Console) -> None:
     compact = is_compact(console)
 
     if compact:
-        console.print("[heading]Usage[/]")
+        console.print("[heading]synopsis[/]")
+        console.print(
+            "  [brand]agent-relay[/] [muted]<command>[/] [muted][options] [args][/]"
+        )
+        console.print()
+        console.print("[heading]commands[/]")
         console.print()
         console.print(
             "  [brand]agent-relay <agent>[/]                  Relay to an agent"
@@ -869,12 +869,22 @@ def render_help(console: Console) -> None:
         )
         console.print()
         console.print(
-            "[heading]Aliases[/]  [muted]c = claude, x = codex (see: agent-relay discover)[/]"
+            "[heading]aliases[/]  [muted]c = claude, x = codex (see: agent-relay discover)[/]"
         )
         console.print()
         return
 
-    # Usage examples
+    # Synopsis — single-line, man-page style
+    synopsis = Text()
+    synopsis.append("  agent-relay", style="brand")
+    synopsis.append(" <command>", style="muted")
+    synopsis.append(" [options]", style="muted")
+    synopsis.append(" [args]", style="muted")
+    console.print("[heading]synopsis[/]")
+    console.print(synopsis)
+    console.print()
+
+    # Commands
     examples = Table(show_header=False, box=None, padding=(0, 2), pad_edge=True)
     examples.add_column("command", style="brand", no_wrap=True)
     examples.add_column("description", style="muted")
@@ -936,7 +946,7 @@ def render_help(console: Console) -> None:
         Panel(
             examples,
             border_style="brand",
-            title="[heading]usage[/]",
+            title="[heading]commands[/]",
             title_align="left",
             padding=(1, 2),
             expand=False,
@@ -975,6 +985,11 @@ def render_help(console: Console) -> None:
         )
     )
 
+    console.print()
+    console.print(
+        "  [heading]aliases[/]  [muted]c = claude, x = codex"
+        "  ·  see [/][brand]agent-relay discover[/]"
+    )
     console.print()
 
 
