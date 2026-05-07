@@ -174,7 +174,7 @@ def render_metrics_panel(metrics: SessionMetrics) -> Panel:
     )
     body.append(f"Avg/turn {_fmt_duration_ms(avg_ms)}   ")
     body.append(f"Total {_fmt_duration_ms(metrics.total_duration_ms)}")
-    return Panel(body, title="[heading]metrics so far[/]", border_style="brand.dim")
+    return Panel(body, title="[heading]metrics so far[/]", border_style="surface.rule")
 
 
 # ---------------------------------------------------------------------------

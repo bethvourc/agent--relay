@@ -43,8 +43,13 @@ def watch_event_to_compact_line(event: WatchEvent) -> Text:
     """One-row Rich rendering of a WatchEvent. Used by both the TUI and
     the quiet-mode renderer (after stripping styles)."""
     text = Text()
+    # Heartbeat events get a green signal dot per DS — they are the
+    # only kind where signal-green is allowed in the row.
+    indicator = "●" if event.kind == "heartbeat" else " "
+    indicator_style = "signal" if event.kind == "heartbeat" else "muted"
+    text.append(f"{indicator} ", style=indicator_style)
     short_ts = (event.timestamp[11:19] if len(event.timestamp) >= 19 else event.timestamp)
-    text.append(f"{short_ts}  ", style="dim")
+    text.append(f"{short_ts}  ", style="muted")
     text.append(f"{event.kind:<16}", style=_KIND_STYLE.get(event.kind, "kind.output"))
     text.append("  ")
     text.append(_summarize_payload(event), style="value")
@@ -166,7 +171,8 @@ class _LiveState:
 
 def _render_header(state: _LiveState) -> Panel:
     title = Text()
-    title.append("session ", style="dim")
+    title.append("● ", style="signal")
+    title.append("session ", style="muted")
     title.append(state.session_id, style="brand")
     if state.current_agent:
         title.append("  ")
@@ -203,7 +209,7 @@ def _render_recent(state: _LiveState) -> Panel:
         table,
         title="recent events",
         title_align="left",
-        border_style="brand.dim",
+        border_style="surface.rule",
         padding=(0, 1),
     )
 
@@ -245,18 +251,19 @@ def _render_turn_state(state: _LiveState) -> Panel:
         Group(*lines),
         title="current turn state",
         title_align="left",
-        border_style="brand.dim",
+        border_style="surface.rule",
         padding=(0, 1),
     )
 
 
-def _build_layout(state: _LiveState) -> Layout:
+def _build_layout(state: _LiveState, *, compact: bool = False) -> Layout:
     layout = Layout()
     rows: list[Layout] = [
         Layout(_render_header(state), name="header", size=4),
         Layout(_render_recent(state), name="recent", ratio=1),
-        Layout(_render_turn_state(state), name="state", size=7),
     ]
+    if not compact:
+        rows.append(Layout(_render_turn_state(state), name="state", size=7))
     if state.show_metrics:
         rows.append(Layout(_render_metrics(state), name="metrics", size=5))
     layout.split_column(*rows)
@@ -271,7 +278,7 @@ def _render_metrics(state: _LiveState):
             Text("(metrics not available yet)", style="dim"),
             title="metrics so far",
             title_align="left",
-            border_style="brand.dim",
+            border_style="surface.rule",
             padding=(0, 1),
         )
     return render_metrics_panel(state.metrics)
@@ -283,9 +290,10 @@ def render_watch_live(
     """Run the full-screen Rich live view until the session terminates or
     the user interrupts. Returns a CLI exit code."""
     state = _LiveState(source, show_metrics=show_metrics)
+    compact = console.width < 80
     try:
         with Live(
-            _build_layout(state),
+            _build_layout(state, compact=compact),
             console=console,
             refresh_per_second=4,
             screen=False,
@@ -293,7 +301,7 @@ def render_watch_live(
         ) as live:
             for event in source.iter_events():
                 state.apply(event)
-                live.update(_build_layout(state))
+                live.update(_build_layout(state, compact=compact))
     except KeyboardInterrupt:
         return 130
     return 0
