@@ -42,7 +42,10 @@ RELAY_THEME = Theme(
         "surface.1": f"on {T.SURFACE_1}",
         "surface.2": f"on {T.SURFACE_2}",
         "surface.3": f"on {T.SURFACE_3}",
-        "surface.rule": T.SURFACE_RULE,
+        # Terminal cells are wider than 1px CSS hairlines; bind to fg-4
+        # (the DS "separators" gray) so borders stay visible against the
+        # default terminal background.
+        "surface.rule": T.FG_4,
         # Semantic roles
         "success": f"bold {T.SUCCESS}",
         "error": f"bold {T.ERROR}",

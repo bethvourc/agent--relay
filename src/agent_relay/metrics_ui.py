@@ -32,18 +32,19 @@ from agent_relay.metrics import (
 
 def render_session_metrics(console: Console, metrics: SessionMetrics) -> None:
     header = Text()
-    header.append(f"Session {metrics.session_id}", style="brand")
+    header.append("session ", style="muted")
+    header.append(metrics.session_id, style="brand")
     header.append("  ")
     header.append(f"{metrics.current_agent} ({metrics.current_status})", style="value")
     console.print(header)
 
     if metrics.objective:
-        console.print(f"  [muted]Objective:[/] {metrics.objective}")
+        console.print(f"  [muted]objective:[/] {metrics.objective}")
 
     overview = Table(
         show_header=False,
         box=None,
-        border_style="brand.dim",
+        border_style="surface.rule",
         padding=(0, 1),
     )
     overview.add_column(style="label", no_wrap=True)
@@ -54,15 +55,15 @@ def render_session_metrics(console: Console, metrics: SessionMetrics) -> None:
         if metrics.successful_turns == metrics.turn_count
         else f"{metrics.successful_turns} ok / {metrics.turn_count - metrics.successful_turns} err"
     )
-    overview.add_row("Turns", f"{metrics.turn_count}  ({succ_part})")
-    overview.add_row("Tokens", _format_tokens(metrics.total_tokens))
-    overview.add_row("Cost", _format_cost(metrics.total_cost_usd, metrics.cost_by_agent))
+    overview.add_row("turns", f"{metrics.turn_count}  ({succ_part})")
+    overview.add_row("tokens", _format_tokens(metrics.total_tokens))
+    overview.add_row("cost", _format_cost(metrics.total_cost_usd, metrics.cost_by_agent))
     overview.add_row(
-        "Time",
+        "time",
         _format_duration_summary(metrics.total_duration_ms, metrics.turn_count),
     )
     if metrics.by_agent:
-        overview.add_row("By agent", _format_by_agent(metrics.by_agent, metrics.cost_by_agent))
+        overview.add_row("by agent", _format_by_agent(metrics.by_agent, metrics.cost_by_agent))
     console.print(overview)
 
     if metrics.turns:
@@ -70,7 +71,7 @@ def render_session_metrics(console: Console, metrics: SessionMetrics) -> None:
         per_turn = Table(
             show_header=True,
             header_style="heading",
-            border_style="brand.dim",
+            border_style="surface.rule",
             padding=(0, 1),
             title="[heading]per-turn[/]",
             title_style="heading",
@@ -102,14 +103,14 @@ def render_cross_session_metrics(
     console: Console, metrics: CrossSessionMetrics
 ) -> None:
     if metrics.session_count == 0:
-        console.print("  [muted]No sessions found.[/]")
+        console.print("  [muted]no sessions found.[/]")
         console.print()
         return
 
     table = Table(
         show_header=True,
         header_style="heading",
-        border_style="brand.dim",
+        border_style="surface.rule",
         padding=(0, 1),
         title="[heading]sessions[/]",
         title_style="heading",
@@ -137,20 +138,20 @@ def render_cross_session_metrics(
     totals = Table(show_header=False, box=None, padding=(0, 1))
     totals.add_column(style="label", no_wrap=True)
     totals.add_column(style="value")
-    totals.add_row("Sessions", str(metrics.session_count))
-    totals.add_row("Tokens", _format_tokens(metrics.total_tokens))
-    totals.add_row("Cost", _format_cost(metrics.total_cost_usd, metrics.cost_by_agent))
-    totals.add_row("Duration", _fmt_duration_ms(metrics.total_duration_ms))
+    totals.add_row("sessions", str(metrics.session_count))
+    totals.add_row("tokens", _format_tokens(metrics.total_tokens))
+    totals.add_row("cost", _format_cost(metrics.total_cost_usd, metrics.cost_by_agent))
+    totals.add_row("duration", _fmt_duration_ms(metrics.total_duration_ms))
     if metrics.by_agent:
         totals.add_row(
-            "By agent", _format_by_agent(metrics.by_agent, metrics.cost_by_agent)
+            "by agent", _format_by_agent(metrics.by_agent, metrics.cost_by_agent)
         )
     if metrics.by_day:
         days = ", ".join(
             f"{day} ({_fmt_int(usage.total)})"
             for day, usage in sorted(metrics.by_day.items())
         )
-        totals.add_row("By day", days)
+        totals.add_row("by day", days)
     console.print(totals)
     console.print()
 
@@ -158,22 +159,25 @@ def render_cross_session_metrics(
 def render_metrics_panel(metrics: SessionMetrics) -> Panel:
     """Compact panel for the watch TUI."""
     body = Text()
-    body.append("Tokens ")
+    body.append("tokens ", style="label")
     body.append(_format_tokens(metrics.total_tokens), style="value")
-    body.append("    Cost ")
+    body.append("    cost ", style="label")
     body.append(_format_cost(metrics.total_cost_usd, metrics.cost_by_agent), style="value")
     body.append("\n")
-    body.append(f"Turns {metrics.turn_count} ", style="value")
+    body.append("turns ", style="label")
+    body.append(f"{metrics.turn_count} ", style="value")
     if metrics.turn_count:
         err = metrics.turn_count - metrics.successful_turns
-        body.append(f"({metrics.successful_turns} ok, {err} err)   ")
+        body.append(f"({metrics.successful_turns} ok, {err} err)   ", style="muted")
     avg_ms = (
         metrics.total_duration_ms // metrics.turn_count
         if metrics.turn_count
         else 0
     )
-    body.append(f"Avg/turn {_fmt_duration_ms(avg_ms)}   ")
-    body.append(f"Total {_fmt_duration_ms(metrics.total_duration_ms)}")
+    body.append("avg/turn ", style="label")
+    body.append(f"{_fmt_duration_ms(avg_ms)}   ", style="value")
+    body.append("total ", style="label")
+    body.append(_fmt_duration_ms(metrics.total_duration_ms), style="value")
     return Panel(body, title="[heading]metrics so far[/]", border_style="surface.rule")
 
 
