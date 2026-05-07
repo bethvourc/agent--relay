@@ -8,7 +8,6 @@ from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
 
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
@@ -25,15 +24,35 @@ from tests.session_fixtures import build_sample_session
 class CheckpointingTests(TestCase):
     def init_git_repo(self, repo_root: Path) -> None:
         subprocess.run(["git", "init"], cwd=repo_root, check=True, capture_output=True, text=True)
-        subprocess.run(["git", "config", "user.email", "relay@example.com"], cwd=repo_root, check=True, capture_output=True, text=True)
-        subprocess.run(["git", "config", "user.name", "Relay Test"], cwd=repo_root, check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "config", "user.email", "relay@example.com"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Relay Test"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
 
     def commit_file(self, repo_root: Path, relative_path: str, content: str, message: str) -> None:
         path = repo_root / relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
-        subprocess.run(["git", "add", relative_path], cwd=repo_root, check=True, capture_output=True, text=True)
-        subprocess.run(["git", "commit", "-m", message], cwd=repo_root, check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "add", relative_path], cwd=repo_root, check=True, capture_output=True, text=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", message],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
 
     def test_git_checkpoint_creates_immutable_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -51,7 +70,13 @@ class CheckpointingTests(TestCase):
             )
 
             checkpoint_dir = (
-                repo_root / ".agent-relay" / "sessions" / fixture["session_id"] / "objects" / "checkpoints" / result.checkpoint_id
+                repo_root
+                / ".agent-relay"
+                / "sessions"
+                / fixture["session_id"]
+                / "objects"
+                / "checkpoints"
+                / result.checkpoint_id
             )
             manifest = CheckpointManifest.from_dict(
                 json.loads((checkpoint_dir / "manifest.json").read_text(encoding="utf-8"))
@@ -90,10 +115,18 @@ class CheckpointingTests(TestCase):
             )
 
             checkpoint_dir = (
-                repo_root / ".agent-relay" / "sessions" / fixture["session_id"] / "objects" / "checkpoints" / result.checkpoint_id
+                repo_root
+                / ".agent-relay"
+                / "sessions"
+                / fixture["session_id"]
+                / "objects"
+                / "checkpoints"
+                / result.checkpoint_id
             )
             patch_text = (checkpoint_dir / "workspace.patch").read_text(encoding="utf-8")
-            untracked_manifest = json.loads((checkpoint_dir / "untracked-manifest.json").read_text(encoding="utf-8"))
+            untracked_manifest = json.loads(
+                (checkpoint_dir / "untracked-manifest.json").read_text(encoding="utf-8")
+            )
             copied_untracked = checkpoint_dir / "untracked" / "notes.txt"
 
             self.assertIn("src/app.py", patch_text)
@@ -134,12 +167,20 @@ class CheckpointingTests(TestCase):
             )
 
             checkpoint_dir = (
-                repo_root / ".agent-relay" / "sessions" / fixture["session_id"] / "objects" / "checkpoints" / result.checkpoint_id
+                repo_root
+                / ".agent-relay"
+                / "sessions"
+                / fixture["session_id"]
+                / "objects"
+                / "checkpoints"
+                / result.checkpoint_id
             )
             manifest = CheckpointManifest.from_dict(
                 json.loads((checkpoint_dir / "manifest.json").read_text(encoding="utf-8"))
             )
-            snapshot_manifest = json.loads((checkpoint_dir / "snapshot-manifest.json").read_text(encoding="utf-8"))
+            snapshot_manifest = json.loads(
+                (checkpoint_dir / "snapshot-manifest.json").read_text(encoding="utf-8")
+            )
 
             self.assertEqual(result.capture_mode, "snapshot")
             self.assertEqual(manifest.capture_mode, "snapshot")
@@ -166,7 +207,13 @@ class CheckpointingTests(TestCase):
             )
 
             checkpoint_dir = (
-                repo_root / ".agent-relay" / "sessions" / fixture["session_id"] / "objects" / "checkpoints" / result.checkpoint_id
+                repo_root
+                / ".agent-relay"
+                / "sessions"
+                / fixture["session_id"]
+                / "objects"
+                / "checkpoints"
+                / result.checkpoint_id
             )
             (checkpoint_dir / "summary.md").write_text("# tampered\n", encoding="utf-8")
 
@@ -190,35 +237,61 @@ class CheckpointingTests(TestCase):
 
             def interrupt_on_journal_write(path: Path, payload) -> None:
                 nonlocal interrupted_path
-                if path.parent.name == "journal" and isinstance(payload, dict) and payload.get("kind") == "journal_event":
+                if (
+                    path.parent.name == "journal"
+                    and isinstance(payload, dict)
+                    and payload.get("kind") == "journal_event"
+                ):
                     interrupted_path = path
-                    raise KeyboardInterrupt("simulated interruption before checkpoint journal commit")
+                    raise KeyboardInterrupt(
+                        "simulated interruption before checkpoint journal commit"
+                    )
                 original_write_json_atomic(path, payload)
 
             with patch("agent_relay.checkpoints.checkpoint_id_now", return_value=checkpoint_id):
-                with patch("agent_relay.tx.write_json_atomic", side_effect=interrupt_on_journal_write):
+                with patch(
+                    "agent_relay.tx.write_json_atomic", side_effect=interrupt_on_journal_write
+                ):
                     with self.assertRaises(KeyboardInterrupt):
                         create_checkpoint_for_command(
                             repo_root,
                             fixture["session_id"],
                             command_name="checkpoint",
-                            options=CaptureOptions(next_action="Interrupt after promoting the checkpoint"),
+                            options=CaptureOptions(
+                                next_action="Interrupt after promoting the checkpoint"
+                            ),
                             owner="test:interrupt-checkpoint",
                         )
 
             view = load_session_view(repo_root, fixture["session_id"])
             checkpoint_dir = (
-                repo_root / ".agent-relay" / "sessions" / fixture["session_id"] / "objects" / "checkpoints" / checkpoint_id
+                repo_root
+                / ".agent-relay"
+                / "sessions"
+                / fixture["session_id"]
+                / "objects"
+                / "checkpoints"
+                / checkpoint_id
             )
             quarantine_dir = (
-                repo_root / ".agent-relay" / "sessions" / fixture["session_id"] / "recovery" / "quarantine"
+                repo_root
+                / ".agent-relay"
+                / "sessions"
+                / fixture["session_id"]
+                / "recovery"
+                / "quarantine"
             )
 
             self.assertIsNotNone(interrupted_path)
             self.assertEqual(view.latest_checkpoint_id, fixture["checkpoint_two_id"])
             self.assertFalse(interrupted_path.exists())
             self.assertTrue(checkpoint_dir.exists())
-            self.assertTrue(any(path.is_dir() for path in pending_tx_dir(repo_root, fixture["session_id"]).iterdir()))
+            self.assertTrue(
+                any(
+                    path.is_dir()
+                    for path in pending_tx_dir(repo_root, fixture["session_id"]).iterdir()
+                )
+            )
 
             report = recover_session_transactions(repo_root, fixture["session_id"])
             view = load_session_view(repo_root, fixture["session_id"])
@@ -226,4 +299,6 @@ class CheckpointingTests(TestCase):
             self.assertEqual(report.quarantined_transactions, 1)
             self.assertEqual(view.latest_checkpoint_id, fixture["checkpoint_two_id"])
             self.assertFalse(checkpoint_dir.exists())
-            self.assertTrue(any(path.name.endswith("-abandoned") for path in quarantine_dir.iterdir()))
+            self.assertTrue(
+                any(path.name.endswith("-abandoned") for path in quarantine_dir.iterdir())
+            )

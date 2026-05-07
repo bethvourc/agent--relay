@@ -25,7 +25,6 @@ from agent_relay.metrics import (
 )
 from agent_relay.ui import create_console
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -74,17 +73,13 @@ def _build_metrics() -> CrossSessionMetrics:
         total_tokens=TokenUsage(input=14, output=26, cache_read=5, cache_creation=3),
         total_cost_usd=0.4318,
         total_duration_ms=52000,
-        by_agent={
-            "claude": TokenUsage(input=14, output=26, cache_read=5, cache_creation=3)
-        },
+        by_agent={"claude": TokenUsage(input=14, output=26, cache_read=5, cache_creation=3)},
         cost_by_agent={"claude": 0.4318},
         turns=(turn1, turn2),
     )
     return CrossSessionMetrics(
         sessions=(sm,),
-        by_agent={
-            "claude": TokenUsage(input=14, output=26, cache_read=5, cache_creation=3)
-        },
+        by_agent={"claude": TokenUsage(input=14, output=26, cache_read=5, cache_creation=3)},
         cost_by_agent={"claude": 0.4318},
         by_day={},
         total_tokens=TokenUsage(input=14, output=26, cache_read=5, cache_creation=3),
@@ -184,12 +179,9 @@ class RenderOtlpPayloadTests(TestCase):
             resource_attrs={"deployment.environment": "dev"},
         )
         attrs = {
-            a["key"]: a["value"]
-            for a in payload["resourceMetrics"][0]["resource"]["attributes"]
+            a["key"]: a["value"] for a in payload["resourceMetrics"][0]["resource"]["attributes"]
         }
-        self.assertEqual(
-            attrs["deployment.environment"], {"stringValue": "dev"}
-        )
+        self.assertEqual(attrs["deployment.environment"], {"stringValue": "dev"})
 
     def test_empty_metrics_still_emit_session_active_gauge(self) -> None:
         payload = render_otlp_payload(CrossSessionMetrics(sessions=()))
@@ -210,8 +202,12 @@ class ExportOtlpTests(TestCase):
 
         class _Resp:
             status = 200
-            def __enter__(self): return self
-            def __exit__(self, *a): return False
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
 
         def fake_urlopen(req, timeout=10.0):
             captured["url"] = req.full_url
@@ -232,7 +228,7 @@ class ExportOtlpTests(TestCase):
         self.assertEqual(captured["url"], "http://collector.example/v1/metrics")
         body = json.loads(captured["body"].decode("utf-8"))  # type: ignore[arg-type]
         self.assertIn("resourceMetrics", body)
-        keys_lower = {k.lower() for k in captured["headers"].keys()}  # type: ignore[union-attr]
+        keys_lower = {k.lower() for k in captured["headers"]}  # type: ignore[union-attr]
         self.assertIn("x-token", keys_lower)
         self.assertIn("content-type", keys_lower)
 
@@ -254,8 +250,12 @@ class ExportOtlpTests(TestCase):
     def test_non_2xx_status_logged(self) -> None:
         class _Resp:
             status = 404
-            def __enter__(self): return self
-            def __exit__(self, *a): return False
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
 
         stderr_buf = io.StringIO()
         with (
@@ -281,8 +281,12 @@ class ServeOtlpLoopTests(TestCase):
 
         class _Resp:
             status = 200
-            def __enter__(self): return self
-            def __exit__(self, *a): return False
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
 
         stop = threading.Event()
 
@@ -354,9 +358,7 @@ def _make_serve_args(**kwargs) -> argparse.Namespace:
 
 class CmdMetricsServeOtlpTests(TestCase):
     def test_invalid_otlp_header_returns_error(self) -> None:
-        rc = cmd_metrics_serve(
-            _make_serve_args(otlp="http://x/y", otlp_header=["nocolon"])
-        )
+        rc = cmd_metrics_serve(_make_serve_args(otlp="http://x/y", otlp_header=["nocolon"]))
         self.assertEqual(rc, 2)
 
     def test_otlp_only_dispatches_to_serve_otlp(self) -> None:
@@ -372,9 +374,7 @@ class CmdMetricsServeOtlpTests(TestCase):
 
     def test_both_exporters_run_concurrently(self) -> None:
         with TemporaryDirectory() as tmp:
-            args = _make_serve_args(
-                prometheus="127.0.0.1:9464", otlp="http://x/y", repo=tmp
-            )
+            args = _make_serve_args(prometheus="127.0.0.1:9464", otlp="http://x/y", repo=tmp)
             otlp_call = MagicMock(return_value=0)
             prom_call = MagicMock(return_value=0)
             with (

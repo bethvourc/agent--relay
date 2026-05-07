@@ -15,28 +15,24 @@ Two delivery modes share the same trigger logic:
 
 from __future__ import annotations
 
-import json
 import sys
-from pathlib import Path
-from typing import Iterable, Mapping, TextIO
+from collections.abc import Iterable, Mapping
+from typing import TextIO
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 from agent_relay.alerts import (
     AlertConfig,
-    emit_alerts,
     evaluate_session,
     evaluate_turn,
     load_alert_config,
 )
 from agent_relay.metrics import (
-    SessionMetrics,
-    TurnMetrics,
     extract_session_metrics,
     extract_turn_metrics,
 )
 from agent_relay.metrics_ui import metrics_to_jsonl_line
-from agent_relay.watch import WatchEvent, WatchSource, is_terminal_status
+from agent_relay.watch import WatchSource, is_terminal_status
 
 
 def tail_jsonl(
@@ -106,9 +102,7 @@ def tail_jsonl(
                                 )
 
             elif event.kind == "status_change":
-                new_status = event.payload.get("to_status") or event.payload.get(
-                    "current_status"
-                )
+                new_status = event.payload.get("to_status") or event.payload.get("current_status")
                 if is_terminal_status(new_status) and not seen_session_rollup:
                     _emit_session_rollup()
 
@@ -160,9 +154,7 @@ def _emit_alert_line(
 def _format_alert_stderr(alert) -> str:
     color = "\033[31m" if alert.severity == "critical" else "\033[33m"
     reset = "\033[0m"
-    turn_part = (
-        f" turn {alert.turn_number}" if alert.turn_number is not None else ""
-    )
+    turn_part = f" turn {alert.turn_number}" if alert.turn_number is not None else ""
     return (
         f"{color}[{alert.severity}] {alert.rule}{reset} "
         f"session {alert.session_id}{turn_part}: {alert.message}\n"
@@ -196,9 +188,7 @@ def _post_line(
     try:
         with urllib_request.urlopen(req, timeout=timeout) as resp:
             if not (200 <= resp.status < 300):
-                sys.stderr.write(
-                    f"webhook delivery failed: HTTP {resp.status} from {url}\n"
-                )
+                sys.stderr.write(f"webhook delivery failed: HTTP {resp.status} from {url}\n")
     except urllib_error.HTTPError as exc:
         sys.stderr.write(f"webhook delivery failed: HTTP {exc.code} from {url}\n")
     except (urllib_error.URLError, TimeoutError, OSError) as exc:
@@ -216,9 +206,7 @@ def parse_header_pairs(pairs: Iterable[str] | None) -> dict[str, str]:
         elif "=" in raw:
             key, _, value = raw.partition("=")
         else:
-            raise ValueError(
-                f"Invalid header (expected 'Key: Value' or 'Key=Value'): {raw!r}"
-            )
+            raise ValueError(f"Invalid header (expected 'Key: Value' or 'Key=Value'): {raw!r}")
         key = key.strip()
         value = value.strip()
         if not key:

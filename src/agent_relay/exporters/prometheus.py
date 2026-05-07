@@ -16,18 +16,16 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Callable
 
 from agent_relay.metrics import (
     CrossSessionMetrics,
-    SessionMetrics,
     TokenUsage,
     extract_cross_session_metrics,
 )
-
 
 _CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
 
@@ -42,9 +40,7 @@ def render_prometheus_text(metrics: CrossSessionMetrics) -> str:
     lines: list[str] = []
 
     # ---- Tokens ----
-    lines.append(
-        "# HELP agent_relay_tokens_total Cumulative tokens by agent and direction"
-    )
+    lines.append("# HELP agent_relay_tokens_total Cumulative tokens by agent and direction")
     lines.append("# TYPE agent_relay_tokens_total counter")
     for agent in sorted(metrics.by_agent):
         usage = metrics.by_agent[agent]
@@ -60,15 +56,11 @@ def render_prometheus_text(metrics: CrossSessionMetrics) -> str:
     lines.append("# TYPE agent_relay_cost_usd_total counter")
     for agent in sorted(metrics.cost_by_agent):
         cost = metrics.cost_by_agent[agent]
-        lines.append(
-            f'agent_relay_cost_usd_total{{agent="{_esc(agent)}"}} {_fmt_float(cost)}'
-        )
+        lines.append(f'agent_relay_cost_usd_total{{agent="{_esc(agent)}"}} {_fmt_float(cost)}')
 
     # ---- Turn duration ----
     duration_sum, duration_count = _per_agent_durations(metrics)
-    lines.append(
-        "# HELP agent_relay_turn_duration_ms Total and count of turn durations by agent"
-    )
+    lines.append("# HELP agent_relay_turn_duration_ms Total and count of turn durations by agent")
     lines.append("# TYPE agent_relay_turn_duration_ms summary")
     for agent in sorted(set(duration_sum) | set(duration_count)):
         lines.append(
@@ -82,9 +74,7 @@ def render_prometheus_text(metrics: CrossSessionMetrics) -> str:
 
     # ---- Turn outcomes ----
     outcomes = _per_agent_outcomes(metrics)
-    lines.append(
-        "# HELP agent_relay_turns_total Cumulative turn count by agent and outcome"
-    )
+    lines.append("# HELP agent_relay_turns_total Cumulative turn count by agent and outcome")
     lines.append("# TYPE agent_relay_turns_total counter")
     for agent in sorted(outcomes):
         for result, count in sorted(outcomes[agent].items()):
@@ -104,9 +94,7 @@ def render_prometheus_text(metrics: CrossSessionMetrics) -> str:
     lines.append("# HELP agent_relay_sessions_total Sessions by current status")
     lines.append("# TYPE agent_relay_sessions_total gauge")
     for status, count in sorted(statuses.items()):
-        lines.append(
-            f'agent_relay_sessions_total{{status="{_esc(status)}"}} {count}'
-        )
+        lines.append(f'agent_relay_sessions_total{{status="{_esc(status)}"}} {count}')
 
     return "\n".join(lines) + "\n"
 
@@ -191,11 +179,7 @@ def _make_handler(cache: _MetricsCache) -> type[BaseHTTPRequestHandler]:
 
 def _esc(value: str) -> str:
     """Escape a label value per the Prometheus text format spec."""
-    return (
-        value.replace("\\", "\\\\")
-        .replace('"', '\\"')
-        .replace("\n", "\\n")
-    )
+    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
 
 def _fmt_float(value: float) -> str:

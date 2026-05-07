@@ -4,7 +4,6 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-
 RESUMABLE_STATE_SCHEMA_VERSION = 1
 RESUMABLE_STATE_KIND = "relay_resumable_state"
 _LIST_FIELDS = (

@@ -4,6 +4,7 @@ Pure presentation. All session knowledge lives in :mod:`agent_relay.watch`;
 this module just consumes ``WatchEvent`` items and decides how to display
 them.
 """
+
 from __future__ import annotations
 
 import json
@@ -18,7 +19,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from agent_relay.ui import AGENT_SYMBOLS, agent_badge, status_badge
+from agent_relay.ui import agent_badge, status_badge
 from agent_relay.watch import WatchEvent, WatchSource
 
 _RECENT_EVENT_LIMIT = 20
@@ -48,7 +49,7 @@ def watch_event_to_compact_line(event: WatchEvent) -> Text:
     indicator = "●" if event.kind == "heartbeat" else " "
     indicator_style = "signal" if event.kind == "heartbeat" else "muted"
     text.append(f"{indicator} ", style=indicator_style)
-    short_ts = (event.timestamp[11:19] if len(event.timestamp) >= 19 else event.timestamp)
+    short_ts = event.timestamp[11:19] if len(event.timestamp) >= 19 else event.timestamp
     text.append(f"{short_ts}  ", style="muted")
     text.append(f"{event.kind:<16}", style=_KIND_STYLE.get(event.kind, "kind.output"))
     text.append("  ")
@@ -162,9 +163,7 @@ class _LiveState:
         from agent_relay.metrics import extract_session_metrics
 
         try:
-            self.metrics = extract_session_metrics(
-                self.source.repo_root, self.session_id
-            )
+            self.metrics = extract_session_metrics(self.source.repo_root, self.session_id)
         except Exception:
             self.metrics = None
 
@@ -239,7 +238,7 @@ def _render_turn_state(state: _LiveState) -> Panel:
         rl = Text()
         rl.append("Remaining: ", style="label")
         rl.append(
-            "  ".join(f"[{i+1}] {item}" for i, item in enumerate(remaining[:6])),
+            "  ".join(f"[{i + 1}] {item}" for i, item in enumerate(remaining[:6])),
             style="value",
         )
         lines.append(rl)
@@ -284,9 +283,7 @@ def _render_metrics(state: _LiveState):
     return render_metrics_panel(state.metrics)
 
 
-def render_watch_live(
-    console: Console, source: WatchSource, *, show_metrics: bool = False
-) -> int:
+def render_watch_live(console: Console, source: WatchSource, *, show_metrics: bool = False) -> int:
     """Run the full-screen Rich live view until the session terminates or
     the user interrupts. Returns a CLI exit code."""
     state = _LiveState(source, show_metrics=show_metrics)

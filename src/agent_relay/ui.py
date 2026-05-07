@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -256,9 +257,7 @@ def agent_badge(agent_key: str, short: bool = False) -> Text:
     return Text(f"{symbol} {name}", style=style_key)
 
 
-def _join_badges(
-    badges: list[Text], separator: str = " → ", sep_style: str = "brand"
-) -> Text:
+def _join_badges(badges: list[Text], separator: str = " → ", sep_style: str = "brand") -> Text:
     """Join Text badges with a styled separator."""
     result = Text()
     for i, badge in enumerate(badges):
@@ -292,9 +291,7 @@ def render_start_success(
     render_banner(console)
 
     if is_compact(console):
-        console.print(
-            f"[success]Session created[/]  [brand]{session_id}[/]", highlight=False
-        )
+        console.print(f"[success]Session created[/]  [brand]{session_id}[/]", highlight=False)
         console.print(f"  [label]Agent:[/]     {agent_badge(agent)}", highlight=False)
         console.print(f"  [label]Objective:[/] [value]{objective}[/]", highlight=False)
         console.print(f"  [label]Path:[/]      [path]{state_path}[/]", highlight=False)
@@ -332,9 +329,7 @@ def render_checkpoint_success(
     checkpoint_id: str,
 ) -> None:
     if is_compact(console):
-        console.print(
-            f"[success]Checkpoint saved[/]  [brand]{checkpoint_id}[/]", highlight=False
-        )
+        console.print(f"[success]Checkpoint saved[/]  [brand]{checkpoint_id}[/]", highlight=False)
         console.print(f"  [label]Session:[/] [muted]{session_id}[/]", highlight=False)
         return
 
@@ -365,12 +360,8 @@ def render_pause_success(
     next_action: str,
 ) -> None:
     if is_compact(console):
-        console.print(
-            f"[warning]Session paused[/]  [brand]{checkpoint_id}[/]", highlight=False
-        )
-        console.print(
-            f"  [label]Session:[/]     [muted]{session_id}[/]", highlight=False
-        )
+        console.print(f"[warning]Session paused[/]  [brand]{checkpoint_id}[/]", highlight=False)
+        console.print(f"  [label]Session:[/]     [muted]{session_id}[/]", highlight=False)
         console.print(
             f"  [label]Next action:[/] [value]{next_action or 'None recorded'}[/]",
             highlight=False,
@@ -411,12 +402,8 @@ def render_prepare_success(
             f"[brand]Prepared for handoff[/]  [brand]{checkpoint_id}[/]",
             highlight=False,
         )
-        console.print(
-            f"  [label]Session:[/]     [muted]{session_id}[/]", highlight=False
-        )
-        console.print(
-            f"  [label]Next action:[/] [value]{next_action}[/]", highlight=False
-        )
+        console.print(f"  [label]Session:[/]     [muted]{session_id}[/]", highlight=False)
+        console.print(f"  [label]Next action:[/] [value]{next_action}[/]", highlight=False)
         return
 
     content = Text()
@@ -458,9 +445,7 @@ def render_failover_success(
         )
         console.print(f"  [label]Reason:[/]  [value]{reason}[/]", highlight=False)
         console.print(f"  [label]Resume:[/]  [path]{resume_path}[/]", highlight=False)
-        console.print(
-            f"  [label]Launch:[/]  [muted]{launch_command}[/]", highlight=False
-        )
+        console.print(f"  [label]Launch:[/]  [muted]{launch_command}[/]", highlight=False)
         return
 
     arrow = Text()
@@ -510,20 +495,14 @@ def render_launch_preview(
             f"[brand]Launch preview[/]  [label]target:[/] {agent_badge(to_agent)}",
             highlight=False,
         )
-        console.print(
-            f"  [label]Resume:[/]       [path]{resume_path}[/]", highlight=False
-        )
-        console.print(
-            f"  [label]Command:[/]      [muted]{launch_command}[/]", highlight=False
-        )
+        console.print(f"  [label]Resume:[/]       [path]{resume_path}[/]", highlight=False)
+        console.print(f"  [label]Command:[/]      [muted]{launch_command}[/]", highlight=False)
         console.print(
             f"  [label]Instructions:[/] [value]{launch_instructions}[/]",
             highlight=False,
         )
         if warning:
-            console.print(
-                f"  [warning]Warning:[/]     [value]{warning}[/]", highlight=False
-            )
+            console.print(f"  [warning]Warning:[/]     [value]{warning}[/]", highlight=False)
         return
 
     content = Text()
@@ -603,26 +582,14 @@ def render_inspect(console: Console, session_dict: dict[str, Any]) -> None:
 
     # Objective
     console.print(f"\n  [label]Objective[/]    [value]{objective}[/]")
-    console.print(
-        f"  [label]Workstream[/]   [value]{session_dict.get('workstream_kind', '?')}[/]"
-    )
-    console.print(
-        f"  [label]Health[/]       {status_badge(session_dict.get('health', 'healthy'))}"
-    )
-    console.print(
-        f"  [label]Next action[/]  [value]{session_dict.get('next_action') or 'None'}[/]"
-    )
-    console.print(
-        f"  [label]Created[/]      [muted]{session_dict.get('created_at', '?')}[/]"
-    )
-    console.print(
-        f"  [label]Updated[/]      [muted]{session_dict.get('updated_at', '?')}[/]"
-    )
+    console.print(f"  [label]Workstream[/]   [value]{session_dict.get('workstream_kind', '?')}[/]")
+    console.print(f"  [label]Health[/]       {status_badge(session_dict.get('health', 'healthy'))}")
+    console.print(f"  [label]Next action[/]  [value]{session_dict.get('next_action') or 'None'}[/]")
+    console.print(f"  [label]Created[/]      [muted]{session_dict.get('created_at', '?')}[/]")
+    console.print(f"  [label]Updated[/]      [muted]{session_dict.get('updated_at', '?')}[/]")
     if session_dict.get("last_valid_event"):
         last_valid = session_dict["last_valid_event"]
-        console.print(
-            f"  [label]Last valid[/]   [muted]{last_valid.get('event_id', '?')}[/]"
-        )
+        console.print(f"  [label]Last valid[/]   [muted]{last_valid.get('event_id', '?')}[/]")
     if session_dict.get("error"):
         console.print(f"  [label]Integrity[/]    [error]{session_dict['error']}[/]")
 
@@ -796,9 +763,7 @@ def render_dashboard(console: Console, sessions: list[dict[str, Any]]) -> None:
         if len(obj) > max_obj:
             obj = obj[: max_obj - 3] + "..."
         updated = s.get("updated_at", "?")
-        updated_short = (
-            updated[5:16].replace("T", " ") if len(updated) >= 16 else updated
-        )
+        updated_short = updated[5:16].replace("T", " ") if len(updated) >= 16 else updated
         health = s.get("health", "healthy")
         status = health if health != "healthy" else s.get("current_status", "?")
         table.add_row(
@@ -820,56 +785,32 @@ def render_help(console: Console) -> None:
 
     if compact:
         console.print("[heading]synopsis[/]")
-        console.print(
-            "  [brand]agent-relay[/] [muted]<command>[/] [muted][options] [args][/]"
-        )
+        console.print("  [brand]agent-relay[/] [muted]<command>[/] [muted][options] [args][/]")
         console.print()
         console.print("[heading]commands[/]")
         console.print()
-        console.print(
-            "  [brand]agent-relay <agent>[/]                  Relay to an agent"
-        )
-        console.print(
-            '  [brand]agent-relay run c "fix tests"[/]       Single-agent managed run'
-        )
+        console.print("  [brand]agent-relay <agent>[/]                  Relay to an agent")
+        console.print('  [brand]agent-relay run c "fix tests"[/]       Single-agent managed run')
         console.print("  [brand]agent-relay codex[/]                   Relay to Codex")
-        console.print(
-            '  [brand]agent-relay claude --task "..."[/]     With instructions'
-        )
-        console.print(
-            '  [brand]agent-relay chat c x "fix tests"[/]    Turn-based conversation'
-        )
+        console.print('  [brand]agent-relay claude --task "..."[/]     With instructions')
+        console.print('  [brand]agent-relay chat c x "fix tests"[/]    Turn-based conversation')
         console.print(
             '  [brand]agent-relay race c x "build auth"[/]   Parallel workflow with planning'
         )
-        console.print(
-            '  [brand]agent-relay race --continue <id> ...[/] Continue a race session'
-        )
+        console.print("  [brand]agent-relay race --continue <id> ...[/] Continue a race session")
         console.print(
             "  [brand]agent-relay resolve [id][/]            Resume unresolved race conflicts"
         )
-        console.print(
-            "  [brand]agent-relay discover[/]                Show available agents"
-        )
+        console.print("  [brand]agent-relay discover[/]                Show available agents")
         console.print("  [brand]agent-relay status[/]                  View sessions")
-        console.print(
-            "  [brand]agent-relay watch <id>[/]              Live session view"
-        )
-        console.print(
-            "  [brand]agent-relay metrics [id][/]            Tokens, cost, duration"
-        )
-        console.print(
-            "  [brand]agent-relay metrics-tail <id>[/]       Stream metrics as JSONL"
-        )
-        console.print(
-            "  [brand]agent-relay metrics-serve[/]           Local dashboard + exporters"
-        )
+        console.print("  [brand]agent-relay watch <id>[/]              Live session view")
+        console.print("  [brand]agent-relay metrics [id][/]            Tokens, cost, duration")
+        console.print("  [brand]agent-relay metrics-tail <id>[/]       Stream metrics as JSONL")
+        console.print("  [brand]agent-relay metrics-serve[/]           Local dashboard + exporters")
         console.print(
             "  [brand]agent-relay inspect-conflicts <id>[/]  Inspect saved conflict artifacts"
         )
-        console.print(
-            "  [brand]agent-relay clean[/]                   Remove all sessions"
-        )
+        console.print("  [brand]agent-relay clean[/]                   Remove all sessions")
         console.print()
         console.print(
             "[heading]aliases[/]  [muted]c = claude, x = codex (see: agent-relay discover)[/]"
@@ -894,15 +835,9 @@ def render_help(console: Console) -> None:
 
     examples.add_row("agent-relay <agent>", "Relay to an agent (codex, claude)")
     examples.add_row('agent-relay run c "fix tests"', "Single-agent managed run")
-    examples.add_row(
-        'agent-relay claude --task "..."', "With instructions for the next agent"
-    )
-    examples.add_row(
-        "agent-relay codex --no-launch", "Create the packet without launching"
-    )
-    examples.add_row(
-        'agent-relay chat c x "fix tests"', "Turn-based agent conversation"
-    )
+    examples.add_row('agent-relay claude --task "..."', "With instructions for the next agent")
+    examples.add_row("agent-relay codex --no-launch", "Create the packet without launching")
+    examples.add_row('agent-relay chat c x "fix tests"', "Turn-based agent conversation")
     examples.add_row('agent-relay chat c x c "review" -n 6', "3-agent, 6 turns max")
     examples.add_row(
         'agent-relay race c x "build auth"',
@@ -912,12 +847,8 @@ def render_help(console: Console) -> None:
         'agent-relay race --continue <session> c x "continue"',
         "Continue an interrupted, timed-out, or incomplete race",
     )
-    examples.add_row(
-        "agent-relay resolve <session>", "Resume an unresolved race conflict"
-    )
-    examples.add_row(
-        "agent-relay resolve --latest", "Resume the latest unresolved race conflict"
-    )
+    examples.add_row("agent-relay resolve <session>", "Resume an unresolved race conflict")
+    examples.add_row("agent-relay resolve --latest", "Resume the latest unresolved race conflict")
     examples.add_row(
         "agent-relay inspect-conflicts <session>", "Inspect saved conflict artifacts and versions"
     )
@@ -1038,9 +969,7 @@ def render_conflict_inspect(console: Console, summary: dict[str, Any]) -> None:
             continue
         path = str(item.get("path", "")).strip() or "?"
         kind = str(item.get("kind", "unknown")).strip() or "unknown"
-        console.print(
-            f"  [brand]▸[/] [value]{path}[/]  [muted]({kind})[/]", highlight=False
-        )
+        console.print(f"  [brand]▸[/] [value]{path}[/]  [muted]({kind})[/]", highlight=False)
         manual_reasons = item.get("manual_reasons", [])
         if isinstance(manual_reasons, list) and manual_reasons:
             console.print(
@@ -1122,9 +1051,7 @@ def render_relay_success(
                 highlight=False,
             )
         else:
-            console.print(
-                f"\n  [label]Launch:[/]  [muted]{launch_command}[/]", highlight=False
-            )
+            console.print(f"\n  [label]Launch:[/]  [muted]{launch_command}[/]", highlight=False)
         return
 
     arrow = Text()
@@ -1238,7 +1165,7 @@ def render_discover_results(console: Console, results: list[Any]) -> None:
 
 def render_converse_start(
     console: Console,
-    agents: "Sequence[str]",
+    agents: Sequence[str],
     task: str,
     max_turns: int,
 ) -> None:
@@ -1311,7 +1238,7 @@ _STOP_REASON_LABELS = {
 def render_converse_result(
     console: Console,
     session_id: str,
-    agents: "Sequence[str]",
+    agents: Sequence[str],
     turns_completed: int,
     stop_reason: str,
 ) -> None:
@@ -1346,7 +1273,7 @@ def render_converse_result(
 
 def render_concurrent_start(
     console: Console,
-    agents: "Sequence[str]",
+    agents: Sequence[str],
     task: str,
     max_time: int,
     continue_session: str | None = None,
@@ -1368,7 +1295,7 @@ def render_concurrent_start(
     console.print()
 
 
-def render_concurrent_result(console: Console, result: "ConcurrentResult") -> None:  # noqa: F821
+def render_concurrent_result(console: Console, result: ConcurrentResult) -> None:  # noqa: F821
     console.print()
     reason_label = _STOP_REASON_LABELS.get(result.stop_reason, result.stop_reason)
 
@@ -1398,9 +1325,7 @@ def render_concurrent_result(console: Console, result: "ConcurrentResult") -> No
     line.append("  ·  ", style="muted")
     line.append(f"{result.elapsed_seconds}s", style="muted")
     console.print(line, highlight=False)
-    console.print(
-        f"  [label]Session:[/]  [muted]{result.session_id}[/]", highlight=False
-    )
+    console.print(f"  [label]Session:[/]  [muted]{result.session_id}[/]", highlight=False)
     if result.conflict_artifact_path:
         console.print(
             f"  [label]Conflicts:[/]  [muted]{result.conflict_artifact_path}[/]",
@@ -1449,7 +1374,7 @@ def _load_conflict_artifact_paths(
     return tuple(dict.fromkeys(paths))
 
 
-def _concurrent_conflict_paths(result: "ConcurrentResult") -> tuple[str, ...]:  # noqa: F821
+def _concurrent_conflict_paths(result: ConcurrentResult) -> tuple[str, ...]:  # noqa: F821
     artifact_paths = _load_conflict_artifact_paths(result.conflict_artifact_path)
     if artifact_paths:
         return artifact_paths
@@ -1457,7 +1382,7 @@ def _concurrent_conflict_paths(result: "ConcurrentResult") -> tuple[str, ...]:  
     return tuple(dict.fromkeys(paths))
 
 
-def _concurrent_scope_violation_paths(result: "ConcurrentResult") -> tuple[str, ...]:  # noqa: F821
+def _concurrent_scope_violation_paths(result: ConcurrentResult) -> tuple[str, ...]:  # noqa: F821
     paths = [path for outcome in result.outcomes for path in outcome.scope_violations]
     return tuple(dict.fromkeys(paths))
 
@@ -1470,7 +1395,7 @@ def _summarize_paths(paths: tuple[str, ...], *, limit: int = 4) -> str:
     return ", ".join(shown) + suffix
 
 
-def _concurrent_next_action(result: "ConcurrentResult") -> str | None:  # noqa: F821
+def _concurrent_next_action(result: ConcurrentResult) -> str | None:  # noqa: F821
     if result.stop_reason == "manual_resolution_required":
         return (
             f"Inspect the conflict artifact, then continue with "

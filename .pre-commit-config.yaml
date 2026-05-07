@@ -1,0 +1,21 @@
+default_install_hook_types: [pre-commit, pre-push]
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.12.7
+    hooks:
+      - id: ruff-format
+        stages: [pre-commit]
+      - id: ruff
+        args: [--fix]
+        stages: [pre-commit]
+
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest (full suite)
+        entry: python -m pytest
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+        # Tests take ~18s. Run on push, not on every commit.

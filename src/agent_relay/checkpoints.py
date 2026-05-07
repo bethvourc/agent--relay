@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 import secrets
 import subprocess
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from agent_relay.agents import get_agent_display_name
 from agent_relay.capture_support import (
@@ -22,7 +23,7 @@ from agent_relay.capture_support import (
     load_capture_text,
     resolve_capture_text,
 )
-from agent_relay.hashing import sha256_bytes, sha256_text
+from agent_relay.hashing import sha256_bytes
 from agent_relay.integrity import require_session_mutable
 from agent_relay.lifecycle import (
     LifecycleState,
@@ -241,12 +242,16 @@ def _build_checkpoint_draft(
     if supplemental.planning_snapshot:
         _append_unique(
             research_notes,
-            _summarize_explicit_capture("Planning snapshot captured", supplemental.planning_snapshot),
+            _summarize_explicit_capture(
+                "Planning snapshot captured", supplemental.planning_snapshot
+            ),
         )
     if supplemental.proposed_edits:
         _append_unique(
             implementation_notes,
-            _summarize_explicit_capture("Captured UI-only proposed edits", supplemental.proposed_edits),
+            _summarize_explicit_capture(
+                "Captured UI-only proposed edits", supplemental.proposed_edits
+            ),
         )
     provider_label = _provider_label(supplemental.provider_source_agent)
     if supplemental.provider_resumable_state:
@@ -296,6 +301,8 @@ def _build_checkpoint_draft(
         touched_files=tuple(touched_files),
         validation=ValidationState(status=validation_status, summary=validation_summary),
     )
+
+
 def _capture_workspace(
     repo_root: Path,
     *,
@@ -320,7 +327,9 @@ def _capture_workspace(
         raise SystemExit("checkpoints require a Git-backed repo or --snapshot-mode full")
     head = _git(repo_root, "rev-parse", "--verify", "HEAD", check=False)
     if head.returncode != 0:
-        raise SystemExit("Git-backed checkpoints require at least one commit or --snapshot-mode full")
+        raise SystemExit(
+            "Git-backed checkpoints require at least one commit or --snapshot-mode full"
+        )
     return _capture_git_workspace(
         repo_root,
         view=view,
@@ -377,7 +386,9 @@ def _capture_git_workspace(
     for path in untracked_paths:
         source = repo_root / path
         if source.is_symlink() or not source.is_file():
-            raise SystemExit(f"Cannot safely capture untracked non-regular file in Git mode: {path}")
+            raise SystemExit(
+                f"Cannot safely capture untracked non-regular file in Git mode: {path}"
+            )
         stored_as = f"untracked/{path.as_posix()}"
         content = source.read_bytes()
         file_contents[stored_as] = content
@@ -432,7 +443,9 @@ def _capture_snapshot_workspace(
     snapshot_entries: list[dict[str, Any]] = []
     for path in sorted(_iter_snapshot_paths(repo_root)):
         if path.is_symlink() or not path.is_file():
-            raise SystemExit(f"Snapshot mode only supports regular files: {path.relative_to(repo_root)}")
+            raise SystemExit(
+                f"Snapshot mode only supports regular files: {path.relative_to(repo_root)}"
+            )
         relative = path.relative_to(repo_root).as_posix()
         stored_as = f"snapshot/{relative}"
         content = path.read_bytes()
@@ -532,7 +545,9 @@ def _render_checkpoint_summary(
     return "\n".join(lines) + "\n"
 
 
-def _manifest_files_from_contents(file_contents: dict[str, str | bytes]) -> tuple[ManifestFile, ...]:
+def _manifest_files_from_contents(
+    file_contents: dict[str, str | bytes],
+) -> tuple[ManifestFile, ...]:
     entries: list[ManifestFile] = []
     for relative_path in sorted(file_contents):
         content = file_contents[relative_path]
@@ -620,7 +635,9 @@ def _extend_unique(items: list[str], values: Iterable[str]) -> None:
         _append_unique(items, value)
 
 
-def _load_supplemental_capture_inputs(repo_root: Path, options: CaptureOptions) -> SupplementalCaptureInputs:
+def _load_supplemental_capture_inputs(
+    repo_root: Path, options: CaptureOptions
+) -> SupplementalCaptureInputs:
     planning_snapshot, planning_snapshot_source = resolve_capture_text(
         repo_root,
         explicit_text=options.planning_snapshot,
@@ -641,15 +658,13 @@ def _load_supplemental_capture_inputs(repo_root: Path, options: CaptureOptions) 
         provider_source_agent=options.provider_source_agent,
         provider_hook_name=options.provider_hook_name,
         provider_resumable_state=(
-            options.provider_resumable_state.strip()
-            if options.provider_resumable_state
-            else None
+            options.provider_resumable_state.strip() if options.provider_resumable_state else None
         ),
-        provider_transcript=(options.provider_transcript.strip() if options.provider_transcript else None),
+        provider_transcript=(
+            options.provider_transcript.strip() if options.provider_transcript else None
+        ),
         provider_session_metadata=(
-            options.provider_session_metadata.strip()
-            if options.provider_session_metadata
-            else None
+            options.provider_session_metadata.strip() if options.provider_session_metadata else None
         ),
         provider_warnings=tuple(
             warning.strip()
@@ -688,7 +703,9 @@ def _append_supplemental_capture_files(
     }
 
     if supplemental.planning_snapshot:
-        file_contents["captures/planning-snapshot.md"] = _ensure_trailing_newline(supplemental.planning_snapshot)
+        file_contents["captures/planning-snapshot.md"] = _ensure_trailing_newline(
+            supplemental.planning_snapshot
+        )
         manifest["planning_snapshot_file"] = "captures/planning-snapshot.md"
         if supplemental.planning_snapshot_source is not None:
             manifest["planning_snapshot_source"] = str(supplemental.planning_snapshot_source)
@@ -703,16 +720,22 @@ def _append_supplemental_capture_files(
     provider_prefix = _provider_capture_prefix(supplemental.provider_source_agent)
     if supplemental.provider_resumable_state:
         resumable_state_path = f"{provider_prefix}-resumable-state.json"
-        file_contents[resumable_state_path] = _ensure_trailing_newline(supplemental.provider_resumable_state)
+        file_contents[resumable_state_path] = _ensure_trailing_newline(
+            supplemental.provider_resumable_state
+        )
         manifest["provider_resumable_state_file"] = resumable_state_path
     if supplemental.provider_transcript:
         transcript_path = f"{provider_prefix}-transcript.md"
         file_contents[transcript_path] = _ensure_trailing_newline(supplemental.provider_transcript)
         manifest["provider_transcript_file"] = transcript_path
     if supplemental.provider_session_metadata:
-        metadata_ext = ".json" if _looks_like_json(supplemental.provider_session_metadata) else ".md"
+        metadata_ext = (
+            ".json" if _looks_like_json(supplemental.provider_session_metadata) else ".md"
+        )
         metadata_path = f"{provider_prefix}-session-metadata{metadata_ext}"
-        file_contents[metadata_path] = _ensure_trailing_newline(supplemental.provider_session_metadata)
+        file_contents[metadata_path] = _ensure_trailing_newline(
+            supplemental.provider_session_metadata
+        )
         manifest["provider_session_metadata_file"] = metadata_path
     if supplemental.provider_warnings:
         warnings_path = f"{provider_prefix}-warnings.md"
@@ -721,19 +744,23 @@ def _append_supplemental_capture_files(
         )
         manifest["provider_warnings_file"] = warnings_path
 
-    if manifest["planning_snapshot_file"] or manifest["proposed_edits_file"]:
-        file_contents["captures/manifest.json"] = _json_text(manifest)
-    elif (
-        manifest["provider_resumable_state_file"]
-        or manifest["provider_transcript_file"]
-        or manifest["provider_session_metadata_file"]
-        or manifest["provider_warnings_file"]
+    if (
+        manifest["planning_snapshot_file"]
+        or manifest["proposed_edits_file"]
+        or (
+            manifest["provider_resumable_state_file"]
+            or manifest["provider_transcript_file"]
+            or manifest["provider_session_metadata_file"]
+            or manifest["provider_warnings_file"]
+        )
     ):
         file_contents["captures/manifest.json"] = _json_text(manifest)
 
 
 def _proposed_edits_capture_path(text: str) -> str:
-    return "captures/proposed-edits.diff" if _looks_like_patch(text) else "captures/proposed-edits.md"
+    return (
+        "captures/proposed-edits.diff" if _looks_like_patch(text) else "captures/proposed-edits.md"
+    )
 
 
 def _looks_like_patch(text: str) -> bool:
@@ -764,5 +791,7 @@ def _provider_label(source_agent: str | None) -> str:
 
 def _ensure_trailing_newline(text: str) -> str:
     return text if text.endswith("\n") else text + "\n"
+
+
 def utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")

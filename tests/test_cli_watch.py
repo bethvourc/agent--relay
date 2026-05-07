@@ -15,12 +15,10 @@ from agent_relay.cli import build_parser, cmd_watch
 from agent_relay.layout import (
     derived_view_path,
     journal_dir,
-    session_root,
     turn_dir,
     turns_dir,
 )
 from agent_relay.ui import create_console
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -52,9 +50,7 @@ def _write_view(
     )
 
 
-def _write_journal_event(
-    tmpdir: Path, sid: str, sequence: int, event_type: str
-) -> None:
+def _write_journal_event(tmpdir: Path, sid: str, sequence: int, event_type: str) -> None:
     path = journal_dir(tmpdir, sid) / f"{sequence:06d}-{event_type}.json"
     path.write_text(
         json.dumps(
@@ -108,9 +104,7 @@ class WatchParserTests(TestCase):
 
     def test_subparser_accepts_explicit_session_and_flags(self) -> None:
         parser = build_parser()
-        ns = parser.parse_args(
-            ["watch", "abc-123", "--no-follow", "--poll-interval", "0.5"]
-        )
+        ns = parser.parse_args(["watch", "abc-123", "--no-follow", "--poll-interval", "0.5"])
         self.assertEqual(ns.session_id, "abc-123")
         self.assertTrue(ns.no_follow)
         self.assertAlmostEqual(ns.poll_interval, 0.5)
@@ -176,9 +170,7 @@ class CmdWatchSessionResolutionTests(TestCase):
 
     def test_errors_with_unknown_explicit_session(self) -> None:
         with TemporaryDirectory() as tmp:
-            args = _make_args(
-                repo=tmp, session_id="does-not-exist", json_mode=True
-            )
+            args = _make_args(repo=tmp, session_id="does-not-exist", json_mode=True)
             rc = cmd_watch(args)
             self.assertEqual(rc, 2)
 
@@ -198,9 +190,7 @@ class CmdWatchSessionResolutionTests(TestCase):
                 def iter_events(self):
                     return iter(())
 
-            args = _make_args(
-                repo=tmp, session_id=None, no_follow=True, json_mode=True
-            )
+            args = _make_args(repo=tmp, session_id=None, no_follow=True, json_mode=True)
             with (
                 patch(
                     "agent_relay.cli.pick_latest_active_session",
@@ -254,15 +244,11 @@ class CmdWatchOutputModeTests(TestCase):
                         heartbeat_interval=10.0,
                     )
                     _write_journal_event(tmpdir, sid, 1, "checkpoint.recorded")
-                    with patch(
-                        "agent_relay.cli.WatchSource", return_value=real_source
-                    ):
+                    with patch("agent_relay.cli.WatchSource", return_value=real_source):
                         rc = cmd_watch(args)
 
             self.assertEqual(rc, 0)
-            lines = [
-                line for line in buf.getvalue().splitlines() if line.strip()
-            ]
+            lines = [line for line in buf.getvalue().splitlines() if line.strip()]
             self.assertGreater(len(lines), 0)
             # Every line must parse as one compact JSON object.
             for line in lines:
@@ -302,15 +288,11 @@ class CmdWatchOutputModeTests(TestCase):
                         heartbeat_interval=10.0,
                     )
                     _write_journal_event(tmpdir, sid, 1, "session.started")
-                    with patch(
-                        "agent_relay.cli.WatchSource", return_value=real_source
-                    ):
+                    with patch("agent_relay.cli.WatchSource", return_value=real_source):
                         rc = cmd_watch(args)
 
             self.assertEqual(rc, 0)
-            lines = [
-                line for line in buf.getvalue().splitlines() if line.strip()
-            ]
+            lines = [line for line in buf.getvalue().splitlines() if line.strip()]
             self.assertGreater(len(lines), 0)
             # Every line should mention a kind keyword.
             joined = "\n".join(lines)
@@ -341,7 +323,6 @@ class CmdWatchOutputModeTests(TestCase):
             self.assertFalse(live_renderer.call_args.kwargs.get("show_metrics", False))
 
     def test_live_state_refreshes_metrics_on_turn_completed(self) -> None:
-        from agent_relay.layout import turn_dir
         from agent_relay.watch import WatchEvent
         from agent_relay.watch_ui import _LiveState
 
@@ -381,12 +362,10 @@ class CmdWatchOutputModeTests(TestCase):
 
             class _StubSource:
                 def __init__(self) -> None:
-                    from agent_relay.watch import WatchSnapshot
-
                     self.repo_root = tmpdir
                     self.session_id = sid
 
-                def snapshot(self) -> "WatchSnapshot":
+                def snapshot(self):
                     from agent_relay.watch import WatchSnapshot
 
                     return WatchSnapshot(
@@ -418,9 +397,7 @@ class CmdWatchOutputModeTests(TestCase):
             sid = "s1"
             _scaffold_session(tmpdir, sid)
             _write_view(tmpdir, sid, phase="active")
-            args = _make_args(
-                repo=tmp, session_id=sid, no_follow=True, metrics=True
-            )
+            args = _make_args(repo=tmp, session_id=sid, no_follow=True, metrics=True)
             live_renderer = MagicMock(return_value=0)
             stub_source = MagicMock()
             with (

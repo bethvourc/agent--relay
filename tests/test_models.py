@@ -4,17 +4,16 @@ import sys
 from pathlib import Path
 from unittest import TestCase
 
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from agent_relay.errors import ValidationError
 from agent_relay.models import (
+    SCHEMA_VERSION,
     CheckpointManifest,
     JournalEvent,
     ManifestFile,
     ObjectRef,
-    SCHEMA_VERSION,
     ValidationState,
     object_manifest_from_dict,
 )
@@ -38,7 +37,9 @@ class ModelTests(TestCase):
             prev_event_hash=None,
             event_hash="sha256:" + ("0" * 64),
         )
-        hashed = JournalEvent.from_dict({**event.to_dict(), "event_hash": event.expected_event_hash()})
+        hashed = JournalEvent.from_dict(
+            {**event.to_dict(), "event_hash": event.expected_event_hash()}
+        )
 
         self.assertEqual(hashed.expected_event_hash(), hashed.event_hash)
         self.assertEqual(JournalEvent.from_dict(hashed.to_dict()), hashed)

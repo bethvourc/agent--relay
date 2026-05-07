@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-from typing import Any, Mapping
+from typing import Any
 
-from agent_relay.agents import AGENT_NAMES, LAUNCH_EXECUTE_POLICIES, launch_template_uses_resume_packet
+from agent_relay.agents import (
+    AGENT_NAMES,
+    LAUNCH_EXECUTE_POLICIES,
+    launch_template_uses_resume_packet,
+)
 from agent_relay.errors import ValidationError
 from agent_relay.hashing import canonical_json, sha256_text
 
@@ -191,6 +196,7 @@ class ObjectRef:
             "manifest_sha256": self.manifest_sha256,
         }
 
+
 @dataclass(frozen=True, slots=True)
 class SessionManifest:
     schema_version: int
@@ -221,7 +227,9 @@ class SessionManifest:
     def from_dict(cls, data: Mapping[str, Any]) -> SessionManifest:
         mapping = _expect_mapping(data, "session_manifest")
         return cls(
-            schema_version=_require_int(mapping["schema_version"], "session_manifest.schema_version"),
+            schema_version=_require_int(
+                mapping["schema_version"], "session_manifest.schema_version"
+            ),
             kind=mapping["kind"],
             session_id=mapping["session_id"],
             repo_root=mapping["repo_root"],
@@ -354,7 +362,9 @@ def _load_manifest_files(data: Any, field_name: str) -> tuple[ManifestFile, ...]
     return files
 
 
-def _require_file_reference(relative_path: str | None, files: tuple[ManifestFile, ...], field_name: str) -> str | None:
+def _require_file_reference(
+    relative_path: str | None, files: tuple[ManifestFile, ...], field_name: str
+) -> str | None:
     if relative_path is None:
         return None
     path = _require_relative_path(relative_path, field_name)
@@ -402,12 +412,18 @@ class CheckpointManifest:
         _require_choice(self.current_agent, "checkpoint_manifest.current_agent", set(AGENT_NAMES))
         _require_choice(self.phase_hint, "checkpoint_manifest.phase_hint", SESSION_PHASES)
         _require_choice(self.task_status, "checkpoint_manifest.task_status", TASK_STATUSES)
-        _require_choice(self.capture_mode, "checkpoint_manifest.capture_mode", WORKSPACE_CAPTURE_MODES)
+        _require_choice(
+            self.capture_mode, "checkpoint_manifest.capture_mode", WORKSPACE_CAPTURE_MODES
+        )
         if not isinstance(self.next_action, str):
             raise ValidationError("checkpoint_manifest.next_action must be a string")
         _validate_manifest_files(self.files, "checkpoint_manifest.files")
-        _require_file_reference(self.repo_state_file, self.files, "checkpoint_manifest.repo_state_file")
-        _require_file_reference(self.validation_file, self.files, "checkpoint_manifest.validation_file")
+        _require_file_reference(
+            self.repo_state_file, self.files, "checkpoint_manifest.repo_state_file"
+        )
+        _require_file_reference(
+            self.validation_file, self.files, "checkpoint_manifest.validation_file"
+        )
         _require_file_reference(self.summary_file, self.files, "checkpoint_manifest.summary_file")
         _require_file_reference(self.git_head_file, self.files, "checkpoint_manifest.git_head_file")
         _require_file_reference(
@@ -426,15 +442,23 @@ class CheckpointManifest:
             "checkpoint_manifest.snapshot_manifest_file",
         )
         if self.capture_mode == "git":
-            if self.git_head_file is None or self.workspace_patch_file is None or self.untracked_manifest_file is None:
+            if (
+                self.git_head_file is None
+                or self.workspace_patch_file is None
+                or self.untracked_manifest_file is None
+            ):
                 raise ValidationError(
                     "checkpoint_manifest git capture requires git_head_file, workspace_patch_file, and untracked_manifest_file",
                 )
             if self.snapshot_manifest_file is not None:
-                raise ValidationError("checkpoint_manifest git capture must not set snapshot_manifest_file")
+                raise ValidationError(
+                    "checkpoint_manifest git capture must not set snapshot_manifest_file"
+                )
         if self.capture_mode == "snapshot":
             if self.snapshot_manifest_file is None:
-                raise ValidationError("checkpoint_manifest snapshot capture requires snapshot_manifest_file")
+                raise ValidationError(
+                    "checkpoint_manifest snapshot capture requires snapshot_manifest_file"
+                )
             if self.git_head_file is not None or self.workspace_patch_file is not None:
                 raise ValidationError(
                     "checkpoint_manifest snapshot capture must not set git_head_file or workspace_patch_file",
@@ -444,7 +468,9 @@ class CheckpointManifest:
     def from_dict(cls, data: Mapping[str, Any]) -> CheckpointManifest:
         mapping = _expect_mapping(data, "checkpoint_manifest")
         return cls(
-            schema_version=_require_int(mapping["schema_version"], "checkpoint_manifest.schema_version"),
+            schema_version=_require_int(
+                mapping["schema_version"], "checkpoint_manifest.schema_version"
+            ),
             kind=mapping["kind"],
             object_id=mapping["object_id"],
             session_id=mapping["session_id"],
@@ -464,7 +490,9 @@ class CheckpointManifest:
                 mapping["implementation_notes"],
                 "checkpoint_manifest.implementation_notes",
             ),
-            touched_files=_require_string_tuple(mapping["touched_files"], "checkpoint_manifest.touched_files"),
+            touched_files=_require_string_tuple(
+                mapping["touched_files"], "checkpoint_manifest.touched_files"
+            ),
             validation=ValidationState.from_dict(mapping["validation"]),
             repo_state_file=mapping["repo_state_file"],
             validation_file=mapping["validation_file"],
@@ -563,14 +591,20 @@ class HandoffManifest:
             )
         _validate_manifest_files(self.files, "handoff_manifest.files")
         _require_file_reference(self.packet_file, self.files, "handoff_manifest.packet_file")
-        _require_file_reference(self.packet_sha256_file, self.files, "handoff_manifest.packet_sha256_file")
-        _require_file_reference(self.launch_spec_file, self.files, "handoff_manifest.launch_spec_file")
+        _require_file_reference(
+            self.packet_sha256_file, self.files, "handoff_manifest.packet_sha256_file"
+        )
+        _require_file_reference(
+            self.launch_spec_file, self.files, "handoff_manifest.launch_spec_file"
+        )
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> HandoffManifest:
         mapping = _expect_mapping(data, "handoff_manifest")
         return cls(
-            schema_version=_require_int(mapping["schema_version"], "handoff_manifest.schema_version"),
+            schema_version=_require_int(
+                mapping["schema_version"], "handoff_manifest.schema_version"
+            ),
             kind=mapping["kind"],
             object_id=mapping["object_id"],
             session_id=mapping["session_id"],
@@ -592,7 +626,9 @@ class HandoffManifest:
             ),
             launch_execute_policy=mapping.get(
                 "launch_execute_policy",
-                "allow" if launch_template_uses_resume_packet(mapping["launch_template"]) else "refuse",
+                "allow"
+                if launch_template_uses_resume_packet(mapping["launch_template"])
+                else "refuse",
             ),
             launch_warning=mapping.get("launch_warning"),
             packet_file=mapping["packet_file"],
@@ -671,7 +707,9 @@ class LaunchManifest:
     def from_dict(cls, data: Mapping[str, Any]) -> LaunchManifest:
         mapping = _expect_mapping(data, "launch_manifest")
         return cls(
-            schema_version=_require_int(mapping["schema_version"], "launch_manifest.schema_version"),
+            schema_version=_require_int(
+                mapping["schema_version"], "launch_manifest.schema_version"
+            ),
             kind=mapping["kind"],
             object_id=mapping["object_id"],
             session_id=mapping["session_id"],
@@ -826,12 +864,16 @@ class DerivedSessionView:
             next_action=mapping["next_action"],
             decisions=_require_string_tuple(mapping["decisions"], "derived_view.decisions"),
             blockers=_require_string_tuple(mapping["blockers"], "derived_view.blockers"),
-            research_notes=_require_string_tuple(mapping["research_notes"], "derived_view.research_notes"),
+            research_notes=_require_string_tuple(
+                mapping["research_notes"], "derived_view.research_notes"
+            ),
             implementation_notes=_require_string_tuple(
                 mapping["implementation_notes"],
                 "derived_view.implementation_notes",
             ),
-            touched_files=_require_string_tuple(mapping["touched_files"], "derived_view.touched_files"),
+            touched_files=_require_string_tuple(
+                mapping["touched_files"], "derived_view.touched_files"
+            ),
             validation=ValidationState.from_dict(mapping["validation"]),
             latest_checkpoint_id=mapping.get("latest_checkpoint_id"),
             prepared_handoff_id=mapping.get("prepared_handoff_id"),
@@ -840,11 +882,15 @@ class DerivedSessionView:
             event_count=_require_int(mapping["event_count"], "derived_view.event_count"),
             last_event_id=mapping["last_event_id"],
             last_event_hash=mapping["last_event_hash"],
-            built_from_sequence=_require_int(mapping["built_from_sequence"], "derived_view.built_from_sequence"),
+            built_from_sequence=_require_int(
+                mapping["built_from_sequence"], "derived_view.built_from_sequence"
+            ),
             built_from_event_hash=mapping["built_from_event_hash"],
             health=mapping["health"],
             handoffs=tuple(DerivedHandoffView(**item) for item in mapping.get("handoffs", [])),
-            checkpoint_ids=_require_string_tuple(mapping["checkpoint_ids"], "derived_view.checkpoint_ids"),
+            checkpoint_ids=_require_string_tuple(
+                mapping["checkpoint_ids"], "derived_view.checkpoint_ids"
+            ),
             launch_ids=_require_string_tuple(mapping["launch_ids"], "derived_view.launch_ids"),
             alerts=_require_string_tuple(mapping.get("alerts", []), "derived_view.alerts"),
         )

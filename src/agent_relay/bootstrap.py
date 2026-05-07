@@ -3,17 +3,17 @@ from __future__ import annotations
 import json
 import shutil
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
 
 from agent_relay.capture_support import CaptureOptions
-from agent_relay.fs import write_json_atomic, write_text_atomic
 from agent_relay.checkpoints import (
     SupplementalCaptureInputs,
     _build_checkpoint_draft,
     _capture_workspace,
 )
+from agent_relay.fs import write_json_atomic, write_text_atomic
 from agent_relay.hashing import sha256_path, sha256_text
 from agent_relay.layout import (
     LAYOUT_VERSION,
@@ -25,13 +25,12 @@ from agent_relay.layout import (
 from agent_relay.lifecycle import LifecycleState, plan_checkpoint_command, plan_session_started
 from agent_relay.locks import acquire_repo_lock
 from agent_relay.models import (
+    SCHEMA_VERSION,
     CheckpointManifest,
     DerivedSessionView,
     JournalEvent,
-    ManifestFile,
     ObjectManifest,
     ObjectRef,
-    SCHEMA_VERSION,
     SessionManifest,
     ValidationState,
 )
@@ -118,9 +117,13 @@ def write_object_manifest_tree(
     for file_entry in manifest.files:
         candidate = target_dir / file_entry.relative_path
         if sha256_path(candidate) != file_entry.sha256:
-            raise SystemExit(f"bootstrapped object file hash mismatch for {file_entry.relative_path}")
+            raise SystemExit(
+                f"bootstrapped object file hash mismatch for {file_entry.relative_path}"
+            )
         if candidate.stat().st_size != file_entry.size_bytes:
-            raise SystemExit(f"bootstrapped object file size mismatch for {file_entry.relative_path}")
+            raise SystemExit(
+                f"bootstrapped object file size mismatch for {file_entry.relative_path}"
+            )
 
     manifest_path = target_dir / "manifest.json"
     write_json_atomic(manifest_path, manifest.to_dict())
@@ -153,7 +156,9 @@ def initialize_session_from_manifest(
             )
         )
         try:
-            _write_session_tree(temp_path, manifest=manifest, events=events, object_payloads=object_payloads)
+            _write_session_tree(
+                temp_path, manifest=manifest, events=events, object_payloads=object_payloads
+            )
             temp_path.rename(final_path)
             _rebuild_and_validate(repo_root, manifest.session_id)
         except BaseException:
@@ -353,8 +358,7 @@ def _write_session_tree(
     previous_hash: str | None = None
     for event in events:
         resolved_refs = tuple(
-            staged_refs.get((ref.object_kind, ref.object_id), ref)
-            for ref in event.object_refs
+            staged_refs.get((ref.object_kind, ref.object_id), ref) for ref in event.object_refs
         )
         event = build_journal_event(
             session_id=event.session_id,
@@ -370,7 +374,9 @@ def _write_session_tree(
             prev_event_hash=previous_hash,
         )
         previous_hash = event.event_hash
-        write_json_atomic(session_path / "journal" / f"{event.sequence:06d}-{event.type}.json", event.to_dict())
+        write_json_atomic(
+            session_path / "journal" / f"{event.sequence:06d}-{event.type}.json", event.to_dict()
+        )
 
 
 def _rebuild_and_validate(repo_root: Path, session_id: str) -> None:
@@ -444,5 +450,7 @@ def _preview_object_ref(manifest: ObjectManifest) -> ObjectRef:
         object_kind=object_kind,
         object_id=manifest.object_id,
         manifest_path=relative.as_posix(),
-        manifest_sha256=sha256_text(json.dumps(manifest.to_dict(), indent=2, sort_keys=True) + "\n"),
+        manifest_sha256=sha256_text(
+            json.dumps(manifest.to_dict(), indent=2, sort_keys=True) + "\n"
+        ),
     )

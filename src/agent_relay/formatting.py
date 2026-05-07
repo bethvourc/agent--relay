@@ -4,6 +4,7 @@ Centralized so panels, tables, dashboards, and exporters render the
 same atom of data identically — per the design-system rule that
 numbers are always padded for alignment.
 """
+
 from __future__ import annotations
 
 

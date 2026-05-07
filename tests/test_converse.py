@@ -12,18 +12,18 @@ from unittest.mock import patch
 from agent_relay.converse import (
     CompletionState,
     TurnResult,
+    _make_summary,
+    _normalize_output,
+    _strip_done_marker,
+    _strip_turn_control,
     build_turn_prompt,
     converse,
     detect_done_signal,
     normalize_claude_output,
     normalize_codex_output,
     normalize_gemini_output,
-    parse_turn_state,
     parse_turn_control,
-    _make_summary,
-    _normalize_output,
-    _strip_done_marker,
-    _strip_turn_control,
+    parse_turn_state,
 )
 
 
@@ -126,9 +126,7 @@ class NormalizeClaudeOutputTests(TestCase):
 
     def test_handles_flat_assistant_message(self) -> None:
         """Claude sometimes emits events where 'role' and 'content' are at the top level."""
-        raw = json.dumps(
-            {"role": "assistant", "content": [{"type": "text", "text": "flat reply"}]}
-        )
+        raw = json.dumps({"role": "assistant", "content": [{"type": "text", "text": "flat reply"}]})
         result = normalize_claude_output(raw)
         self.assertIn("flat reply", result)
 
@@ -249,18 +247,14 @@ class NormalizeGeminiOutputTests(TestCase):
         self.assertEqual(result, "")
 
     def test_handles_flat_model_message(self) -> None:
-        raw = json.dumps(
-            {"role": "model", "content": [{"type": "text", "text": "flat reply"}]}
-        )
+        raw = json.dumps({"role": "model", "content": [{"type": "text", "text": "flat reply"}]})
         result = normalize_gemini_output(raw)
         self.assertIn("flat reply", result)
 
 
 class NormalizeOutputDispatchTests(TestCase):
     def test_dispatches_to_claude(self) -> None:
-        raw = json.dumps(
-            {"role": "assistant", "content": [{"type": "text", "text": "claude"}]}
-        )
+        raw = json.dumps({"role": "assistant", "content": [{"type": "text", "text": "claude"}]})
         result = _normalize_output("claude", raw)
         self.assertIn("claude", result)
 
@@ -276,9 +270,7 @@ class NormalizeOutputDispatchTests(TestCase):
         self.assertIn("codex", result)
 
     def test_dispatches_to_gemini(self) -> None:
-        raw = json.dumps(
-            {"role": "model", "content": [{"type": "text", "text": "gemini"}]}
-        )
+        raw = json.dumps({"role": "model", "content": [{"type": "text", "text": "gemini"}]})
         result = _normalize_output("gemini", raw)
         self.assertIn("gemini", result)
 
@@ -309,9 +301,7 @@ class ParseTurnControlTests(TestCase):
         self.assertEqual(control.status, "propose_done")
         self.assertEqual(control.reason, "Tests pass")
         self.assertEqual(control.remaining_work, ())
-        self.assertEqual(
-            control.verification, ("uv run pytest tests/test_converse.py -v",)
-        )
+        self.assertEqual(control.verification, ("uv run pytest tests/test_converse.py -v",))
 
     def test_missing_status_defaults_to_continue(self) -> None:
         control = parse_turn_control("Still working")
@@ -411,9 +401,7 @@ class BuildTurnPromptTests(TestCase):
         self.assertIn("Relay-managed single-agent session", prompt)
         self.assertIn("Use status propose_done when the task is complete.", prompt)
         self.assertIn("Use status blocked when you cannot continue", prompt)
-        self.assertNotIn(
-            "NEVER use propose_done or agree_done on your first turn", prompt
-        )
+        self.assertNotIn("NEVER use propose_done or agree_done on your first turn", prompt)
 
     def test_includes_active_completion_state(self) -> None:
         prompt = build_turn_prompt(
@@ -498,7 +486,6 @@ class BuildTurnPromptTests(TestCase):
         self.assertIn("1 other AI agent", prompt)
         # Should not have trailing 's'
         self.assertNotIn("1 other AI agents", prompt)
-
 
     def test_turn2_uses_abbreviated_completion_protocol(self) -> None:
         from pathlib import Path
@@ -858,13 +845,9 @@ class RunAgentTurnProgressiveOutputTests(TestCase):
             # We simulate this by checking the final contents and the line ordering.
             with patch(
                 "agent_relay.converse._build_agent_command",
-                return_value=(
-                    "printf 'line-one\\n'; printf 'line-two\\n'; printf 'line-three\\n'"
-                ),
+                return_value=("printf 'line-one\\n'; printf 'line-two\\n'; printf 'line-three\\n'"),
             ):
-                result = run_agent_turn(
-                    "claude", prompt, Path(tmpdir), output_path=output_path
-                )
+                result = run_agent_turn("claude", prompt, Path(tmpdir), output_path=output_path)
 
             self.assertEqual(result.returncode, 0)
             self.assertTrue(output_path.exists())
@@ -898,18 +881,13 @@ class RunAgentTurnProgressiveOutputTests(TestCase):
             with patch(
                 "agent_relay.converse._build_agent_command",
                 return_value=(
-                    "for i in 1 2 3 4 5; do printf 'out-%d\\n' $i; "
-                    "printf 'err-%d\\n' $i 1>&2; done"
+                    "for i in 1 2 3 4 5; do printf 'out-%d\\n' $i; printf 'err-%d\\n' $i 1>&2; done"
                 ),
             ):
-                result = run_agent_turn(
-                    "claude", prompt, Path(tmpdir), output_path=output_path
-                )
+                result = run_agent_turn("claude", prompt, Path(tmpdir), output_path=output_path)
 
             self.assertEqual(result.returncode, 0)
-            self.assertEqual(
-                result.stdout, "out-1\nout-2\nout-3\nout-4\nout-5\n"
-            )
+            self.assertEqual(result.stdout, "out-1\nout-2\nout-3\nout-4\nout-5\n")
             # Order between out/err lines on stderr is not guaranteed; just
             # check all stderr lines were captured.
             for i in range(1, 6):
@@ -926,9 +904,7 @@ class RunAgentTurnProgressiveOutputTests(TestCase):
                 "agent_relay.converse._build_agent_command",
                 return_value="printf 'partial\\n'; exit 42",
             ):
-                result = run_agent_turn(
-                    "claude", prompt, Path(tmpdir), output_path=output_path
-                )
+                result = run_agent_turn("claude", prompt, Path(tmpdir), output_path=output_path)
 
             self.assertEqual(result.returncode, 42)
             self.assertEqual(result.stdout, "partial\n")
@@ -960,12 +936,8 @@ class StoreTurnArtifactsTests(TestCase):
                 raw_stderr="",
             )
 
-            self.assertEqual(
-                (tdir / "output.jsonl").read_text(encoding="utf-8"), existing
-            )
-            self.assertEqual(
-                (tdir / "prompt.md").read_text(encoding="utf-8"), "prompt"
-            )
+            self.assertEqual((tdir / "output.jsonl").read_text(encoding="utf-8"), existing)
+            self.assertEqual((tdir / "prompt.md").read_text(encoding="utf-8"), "prompt")
 
     def test_writes_output_jsonl_when_missing(self) -> None:
         from agent_relay.converse import _store_turn_artifacts

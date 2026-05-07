@@ -9,8 +9,8 @@ from agent_relay.integrity import IntegrityScan, SessionIntegrityReport, inspect
 from agent_relay.layout import (
     derived_view_path,
     head_ref_path,
-    repair_reports_dir,
     quarantine_dir,
+    repair_reports_dir,
     session_root,
 )
 from agent_relay.locks import acquire_session_lock, utc_now
@@ -71,7 +71,10 @@ def repair_session(
 
         if action == "rebuild_view":
             if before_scan.report.health != "healthy":
-                suggestions = ", ".join(before_scan.report.suggested_repair) or "repair the canonical state first"
+                suggestions = (
+                    ", ".join(before_scan.report.suggested_repair)
+                    or "repair the canonical state first"
+                )
                 raise SystemExit(
                     f"repair --rebuild-view requires a healthy canonical session; run: {suggestions}"
                 )
@@ -222,7 +225,9 @@ def _write_repair_receipt(
 
 def _promote_last_good(repo_root: Path, session_id: str, scan: IntegrityScan) -> list[str]:
     if scan.report.health != "degraded":
-        raise SystemExit("repair --promote-last-good requires a degraded session with a recoverable last valid event")
+        raise SystemExit(
+            "repair --promote-last-good requires a degraded session with a recoverable last valid event"
+        )
     if scan.failure_index is None or scan.report.last_valid_event is None:
         raise SystemExit("repair --promote-last-good could not identify a recoverable journal tail")
 

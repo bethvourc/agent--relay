@@ -4,35 +4,39 @@ import json
 import sys
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from agent_relay.hashing import sha256_path, sha256_text
 from agent_relay.models import (
+    SCHEMA_VERSION,
     CheckpointManifest,
     HandoffManifest,
     JournalEvent,
     LaunchManifest,
     ManifestFile,
     ObjectRef,
-    SCHEMA_VERSION,
     SessionManifest,
     ValidationState,
     build_session_manifest_hash,
 )
 
-
 ZERO_DIGEST = "sha256:" + ("0" * 64)
 
 
-def build_sample_session(repo_root: Path, *, session_id: str = "20260325-180000-abcd12") -> dict[str, str]:
+def build_sample_session(
+    repo_root: Path, *, session_id: str = "20260325-180000-abcd12"
+) -> dict[str, str]:
     relay_root = repo_root / ".agent-relay"
     (relay_root / "sessions" / session_id / "journal").mkdir(parents=True, exist_ok=True)
     (relay_root / "sessions" / session_id / "refs").mkdir(parents=True, exist_ok=True)
     (relay_root / "sessions" / session_id / "derived").mkdir(parents=True, exist_ok=True)
-    (relay_root / "sessions" / session_id / "recovery" / "pending-tx").mkdir(parents=True, exist_ok=True)
-    (relay_root / "sessions" / session_id / "recovery" / "quarantine").mkdir(parents=True, exist_ok=True)
+    (relay_root / "sessions" / session_id / "recovery" / "pending-tx").mkdir(
+        parents=True, exist_ok=True
+    )
+    (relay_root / "sessions" / session_id / "recovery" / "quarantine").mkdir(
+        parents=True, exist_ok=True
+    )
     (relay_root / "VERSION").write_text("2\n", encoding="utf-8")
 
     manifest = SessionManifest(
@@ -50,7 +54,9 @@ def build_sample_session(repo_root: Path, *, session_id: str = "20260325-180000-
     manifest_hash = build_session_manifest_hash(manifest)
 
     checkpoint_one_id = "cp-20260325T180500Z-111111"
-    checkpoint_one_dir = relay_root / "sessions" / session_id / "objects" / "checkpoints" / checkpoint_one_id
+    checkpoint_one_dir = (
+        relay_root / "sessions" / session_id / "objects" / "checkpoints" / checkpoint_one_id
+    )
     checkpoint_one_summary = checkpoint_one_dir / "summary.md"
     checkpoint_one_repo_state = checkpoint_one_dir / "repo-state.json"
     checkpoint_one_validation = checkpoint_one_dir / "validation.json"
@@ -61,12 +67,12 @@ def build_sample_session(repo_root: Path, *, session_id: str = "20260325-180000-
     checkpoint_one_summary.parent.mkdir(parents=True, exist_ok=True)
     checkpoint_one_artifact.parent.mkdir(parents=True, exist_ok=True)
     checkpoint_one_summary.write_text("# Checkpoint One\n", encoding="utf-8")
-    checkpoint_one_repo_state.write_text("{\"capture_mode\":\"git\"}\n", encoding="utf-8")
-    checkpoint_one_validation.write_text("{\"status\":\"partial\"}\n", encoding="utf-8")
+    checkpoint_one_repo_state.write_text('{"capture_mode":"git"}\n', encoding="utf-8")
+    checkpoint_one_validation.write_text('{"status":"partial"}\n', encoding="utf-8")
     checkpoint_one_git_head.write_text("abc123\nbranch=main\n", encoding="utf-8")
     checkpoint_one_patch.write_text("", encoding="utf-8")
-    checkpoint_one_untracked.write_text("{\"files\":[]}\n", encoding="utf-8")
-    checkpoint_one_artifact.write_text("{\"branch\":\"main\"}\n", encoding="utf-8")
+    checkpoint_one_untracked.write_text('{"files":[]}\n', encoding="utf-8")
+    checkpoint_one_artifact.write_text('{"branch":"main"}\n', encoding="utf-8")
     checkpoint_one = CheckpointManifest(
         schema_version=SCHEMA_VERSION,
         kind="checkpoint_manifest",
@@ -83,7 +89,9 @@ def build_sample_session(repo_root: Path, *, session_id: str = "20260325-180000-
         research_notes=("Mapped the object model",),
         implementation_notes=("Started the replay engine",),
         touched_files=("src/agent_relay/models.py",),
-        validation=ValidationState(status="partial", summary="Replay path still needs verification"),
+        validation=ValidationState(
+            status="partial", summary="Replay path still needs verification"
+        ),
         repo_state_file="repo-state.json",
         validation_file="validation.json",
         summary_file="summary.md",
@@ -229,7 +237,9 @@ def build_sample_session(repo_root: Path, *, session_id: str = "20260325-180000-
     _write_json(launch_manifest_path, launch.to_dict())
 
     checkpoint_two_id = "cp-20260325T180900Z-444444"
-    checkpoint_two_dir = relay_root / "sessions" / session_id / "objects" / "checkpoints" / checkpoint_two_id
+    checkpoint_two_dir = (
+        relay_root / "sessions" / session_id / "objects" / "checkpoints" / checkpoint_two_id
+    )
     checkpoint_two_summary = checkpoint_two_dir / "summary.md"
     checkpoint_two_repo_state = checkpoint_two_dir / "repo-state.json"
     checkpoint_two_validation = checkpoint_two_dir / "validation.json"
@@ -238,11 +248,11 @@ def build_sample_session(repo_root: Path, *, session_id: str = "20260325-180000-
     checkpoint_two_untracked = checkpoint_two_dir / "untracked-manifest.json"
     checkpoint_two_summary.parent.mkdir(parents=True, exist_ok=True)
     checkpoint_two_summary.write_text("# Checkpoint Two\n", encoding="utf-8")
-    checkpoint_two_repo_state.write_text("{\"capture_mode\":\"git\"}\n", encoding="utf-8")
-    checkpoint_two_validation.write_text("{\"status\":\"passed\"}\n", encoding="utf-8")
+    checkpoint_two_repo_state.write_text('{"capture_mode":"git"}\n', encoding="utf-8")
+    checkpoint_two_validation.write_text('{"status":"passed"}\n', encoding="utf-8")
     checkpoint_two_git_head.write_text("def456\nbranch=main\n", encoding="utf-8")
     checkpoint_two_patch.write_text("", encoding="utf-8")
-    checkpoint_two_untracked.write_text("{\"files\":[]}\n", encoding="utf-8")
+    checkpoint_two_untracked.write_text('{"files":[]}\n', encoding="utf-8")
     checkpoint_two = CheckpointManifest(
         schema_version=SCHEMA_VERSION,
         kind="checkpoint_manifest",
@@ -432,19 +442,43 @@ def build_checkpoint_object(
             ManifestFile(
                 relative_path="repo-state.json",
                 sha256=sha256_text(
-                    json.dumps({"checkpoint_id": object_id, "capture_mode": "git"}, indent=2, sort_keys=True) + "\n"
+                    json.dumps(
+                        {"checkpoint_id": object_id, "capture_mode": "git"},
+                        indent=2,
+                        sort_keys=True,
+                    )
+                    + "\n"
                 ),
                 size_bytes=len(
-                    (json.dumps({"checkpoint_id": object_id, "capture_mode": "git"}, indent=2, sort_keys=True) + "\n").encode("utf-8")
+                    (
+                        json.dumps(
+                            {"checkpoint_id": object_id, "capture_mode": "git"},
+                            indent=2,
+                            sort_keys=True,
+                        )
+                        + "\n"
+                    ).encode("utf-8")
                 ),
             ),
             ManifestFile(
                 relative_path="validation.json",
                 sha256=sha256_text(
-                    json.dumps({"status": validation_status, "summary": validation_summary}, indent=2, sort_keys=True) + "\n"
+                    json.dumps(
+                        {"status": validation_status, "summary": validation_summary},
+                        indent=2,
+                        sort_keys=True,
+                    )
+                    + "\n"
                 ),
                 size_bytes=len(
-                    (json.dumps({"status": validation_status, "summary": validation_summary}, indent=2, sort_keys=True) + "\n").encode("utf-8")
+                    (
+                        json.dumps(
+                            {"status": validation_status, "summary": validation_summary},
+                            indent=2,
+                            sort_keys=True,
+                        )
+                        + "\n"
+                    ).encode("utf-8")
                 ),
             ),
             ManifestFile(
@@ -455,7 +489,7 @@ def build_checkpoint_object(
             ManifestFile(
                 relative_path="git-head.txt",
                 sha256=sha256_text("abc123\nbranch=main\n"),
-                size_bytes=len("abc123\nbranch=main\n".encode("utf-8")),
+                size_bytes=len(b"abc123\nbranch=main\n"),
             ),
             ManifestFile(
                 relative_path="workspace.patch",
@@ -464,18 +498,24 @@ def build_checkpoint_object(
             ),
             ManifestFile(
                 relative_path="untracked-manifest.json",
-                sha256=sha256_text("{\n  \"files\": []\n}\n"),
-                size_bytes=len("{\n  \"files\": []\n}\n".encode("utf-8")),
+                sha256=sha256_text('{\n  "files": []\n}\n'),
+                size_bytes=len(b'{\n  "files": []\n}\n'),
             ),
         ),
     )
     return manifest, {
-        "repo-state.json": json.dumps({"checkpoint_id": object_id, "capture_mode": "git"}, indent=2, sort_keys=True) + "\n",
-        "validation.json": json.dumps({"status": validation_status, "summary": validation_summary}, indent=2, sort_keys=True) + "\n",
+        "repo-state.json": json.dumps(
+            {"checkpoint_id": object_id, "capture_mode": "git"}, indent=2, sort_keys=True
+        )
+        + "\n",
+        "validation.json": json.dumps(
+            {"status": validation_status, "summary": validation_summary}, indent=2, sort_keys=True
+        )
+        + "\n",
         "summary.md": summary_text,
         "git-head.txt": "abc123\nbranch=main\n",
         "workspace.patch": "",
-        "untracked-manifest.json": "{\n  \"files\": []\n}\n",
+        "untracked-manifest.json": '{\n  "files": []\n}\n',
     }
 
 
@@ -529,7 +569,11 @@ def _build_event(
 
 def _file_entry(path: Path) -> ManifestFile:
     return ManifestFile(
-        relative_path=str(path.relative_to(path.parent.parent if path.parent.name == "artifacts" else path.parent).as_posix()),
+        relative_path=str(
+            path.relative_to(
+                path.parent.parent if path.parent.name == "artifacts" else path.parent
+            ).as_posix()
+        ),
         sha256=sha256_path(path),
         size_bytes=path.stat().st_size,
     )

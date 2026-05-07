@@ -24,7 +24,6 @@ from agent_relay.metrics import (
     TurnMetrics,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -147,16 +146,12 @@ class EvaluateTurnTests(TestCase):
         self.assertEqual(alerts, [])
 
     def test_cost_per_turn_fires_above_threshold(self) -> None:
-        alerts = evaluate_turn(
-            _turn(cost_usd=0.6), _session(), AlertConfig(cost_per_turn_usd=0.5)
-        )
+        alerts = evaluate_turn(_turn(cost_usd=0.6), _session(), AlertConfig(cost_per_turn_usd=0.5))
         rules = [a.rule for a in alerts]
         self.assertIn("cost_per_turn", rules)
 
     def test_cost_per_turn_does_not_fire_at_or_below_threshold(self) -> None:
-        alerts = evaluate_turn(
-            _turn(cost_usd=0.5), _session(), AlertConfig(cost_per_turn_usd=0.5)
-        )
+        alerts = evaluate_turn(_turn(cost_usd=0.5), _session(), AlertConfig(cost_per_turn_usd=0.5))
         self.assertEqual([a.rule for a in alerts if a.rule == "cost_per_turn"], [])
 
     def test_duration_per_turn_fires(self) -> None:
@@ -220,9 +215,7 @@ class EvaluateSessionTests(TestCase):
         self.assertIn("cost_per_session", [a.rule for a in alerts])
 
     def test_error_rate_fires_when_above_threshold(self) -> None:
-        turns = tuple(
-            _turn(turn_number=i, succeeded=(i % 2 == 0)) for i in range(1, 7)
-        )
+        turns = tuple(_turn(turn_number=i, succeeded=(i % 2 == 0)) for i in range(1, 7))
         # 3 successful out of 6 → 50% error rate.
         sm = _session(turn_count=6, successful_turns=3, turns=turns)
         alerts = evaluate_session(

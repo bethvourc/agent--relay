@@ -4,6 +4,7 @@ Runs multiple agents simultaneously in separate tmux sessions, giving them live
 visibility into each other's work through relay-managed snapshot files and a
 shared workspace log.
 """
+
 from __future__ import annotations
 
 import json
@@ -36,10 +37,10 @@ from agent_relay.layout import (
 from agent_relay.storage import is_session
 from agent_relay.workspace_log import LogEntry, WorkspaceLog, utc_timestamp
 
-
 # ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True, slots=True)
 class ClaimSpec:
@@ -53,7 +54,7 @@ class AgentOutcome:
     agent_key: str
     tmux_session: str
     phase: str
-    exit_code: int | None   # None if still running / killed
+    exit_code: int | None  # None if still running / killed
     raw_stdout: str
     raw_stderr: str
     text: str
@@ -81,7 +82,7 @@ class ConcurrentResult:
     tmux_sessions: tuple[str, ...]
     continued_from_session_id: str | None
     claim_ledger_path: str | None
-    stop_reason: str   # "all_done" | "incomplete" | "max_time" | "agent_error" | "interrupted" | "scope_violation" | "merge_conflict" | "manual_resolution_required"
+    stop_reason: str  # "all_done" | "incomplete" | "max_time" | "agent_error" | "interrupted" | "scope_violation" | "merge_conflict" | "manual_resolution_required"
     elapsed_seconds: float
     outcomes: tuple[AgentOutcome, ...]
     conflict_artifact_path: str | None = None
@@ -120,31 +121,37 @@ class ResolutionWorkflowResult:
 
 _DONE_MARKER = "CONVERSATION_COMPLETE"
 _STATUS_PREFIX = "RELAY_STATUS:"
-_VALID_CONTROL_STATUSES = frozenset({
-    "continue",
-    "blocked",
-    "done",
-    "error",
-    "planning",
-})
+_VALID_CONTROL_STATUSES = frozenset(
+    {
+        "continue",
+        "blocked",
+        "done",
+        "error",
+        "planning",
+    }
+)
 _VALID_CLAIM_ROLES = frozenset({"owner", "reviewer", "shared"})
-_UNRESOLVED_CONFLICT_STATUSES = frozenset({
-    "merge_conflict",
-    "manual_resolution_required",
-    "resolution_retry_pending",
-})
-_LOCKFILE_NAMES = frozenset({
-    "bun.lockb",
-    "Cargo.lock",
-    "composer.lock",
-    "Gemfile.lock",
-    "package-lock.json",
-    "Pipfile.lock",
-    "pnpm-lock.yaml",
-    "poetry.lock",
-    "uv.lock",
-    "yarn.lock",
-})
+_UNRESOLVED_CONFLICT_STATUSES = frozenset(
+    {
+        "merge_conflict",
+        "manual_resolution_required",
+        "resolution_retry_pending",
+    }
+)
+_LOCKFILE_NAMES = frozenset(
+    {
+        "bun.lockb",
+        "Cargo.lock",
+        "composer.lock",
+        "Gemfile.lock",
+        "package-lock.json",
+        "Pipfile.lock",
+        "pnpm-lock.yaml",
+        "poetry.lock",
+        "uv.lock",
+        "yarn.lock",
+    }
+)
 _GENERATED_DIR_MARKERS = (
     "__generated__",
     "generated",
@@ -168,6 +175,7 @@ _GENERATED_SUFFIXES = (
     ".g.dart",
 )
 
+
 def _require_tmux() -> str:
     """Return tmux path or raise SystemExit."""
     path = shutil.which("tmux")
@@ -182,7 +190,9 @@ def _require_tmux() -> str:
 def _tmux(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["tmux", *args],
-        capture_output=True, text=True, check=check,
+        capture_output=True,
+        text=True,
+        check=check,
     )
 
 
@@ -194,8 +204,11 @@ def _tmux_session_exists(session_name: str) -> bool:
 def _tmux_capture_pane(session_name: str, pane_index: int) -> str:
     """Capture the visible content of a tmux pane."""
     result = _tmux(
-        "capture-pane", "-t", f"{session_name}:{0}.{pane_index}",
-        "-S", "-",  # include pane scrollback so fast command output is preserved
+        "capture-pane",
+        "-t",
+        f"{session_name}:{0}.{pane_index}",
+        "-S",
+        "-",  # include pane scrollback so fast command output is preserved
         "-p",  # print to stdout
         check=False,
     )
@@ -205,8 +218,11 @@ def _tmux_capture_pane(session_name: str, pane_index: int) -> str:
 def _tmux_pane_pid(session_name: str, pane_index: int) -> int | None:
     """Get the PID of the process running in a pane."""
     result = _tmux(
-        "display-message", "-t", f"{session_name}:{0}.{pane_index}",
-        "-p", "#{pane_pid}",
+        "display-message",
+        "-t",
+        f"{session_name}:{0}.{pane_index}",
+        "-p",
+        "#{pane_pid}",
         check=False,
     )
     if result.returncode == 0 and result.stdout.strip().isdigit():
@@ -217,8 +233,11 @@ def _tmux_pane_pid(session_name: str, pane_index: int) -> int | None:
 def _tmux_pane_dead(session_name: str, pane_index: int) -> bool:
     """Check if the pane's process has exited."""
     result = _tmux(
-        "display-message", "-t", f"{session_name}:{0}.{pane_index}",
-        "-p", "#{pane_dead}",
+        "display-message",
+        "-t",
+        f"{session_name}:{0}.{pane_index}",
+        "-p",
+        "#{pane_dead}",
         check=False,
     )
     return result.stdout.strip() == "1"
@@ -464,8 +483,7 @@ def _strip_concurrent_control(text: str) -> str:
     kept_lines = [
         line
         for line in text.splitlines()
-        if not line.strip().startswith(_STATUS_PREFIX)
-        and line.strip().upper() != _DONE_MARKER
+        if not line.strip().startswith(_STATUS_PREFIX) and line.strip().upper() != _DONE_MARKER
     ]
     return "\n".join(kept_lines).strip()
 
@@ -481,7 +499,7 @@ def parse_concurrent_control(text: str) -> ConcurrentControl:
         if not line.startswith(_STATUS_PREFIX):
             continue
 
-        payload = line[len(_STATUS_PREFIX):].strip()
+        payload = line[len(_STATUS_PREFIX) :].strip()
         try:
             data = json.loads(payload)
         except json.JSONDecodeError:
@@ -579,15 +597,9 @@ def _classify_stop_reason(
         return current_stop_reason
     if any(outcome.exit_code is None for outcome in outcomes):
         return "agent_error"
-    if any(
-        outcome.exit_code != 0 or outcome.control_status == "error"
-        for outcome in outcomes
-    ):
+    if any(outcome.exit_code != 0 or outcome.control_status == "error" for outcome in outcomes):
         return "agent_error"
-    if all(
-        outcome.exit_code == 0 and outcome.control_status == "done"
-        for outcome in outcomes
-    ):
+    if all(outcome.exit_code == 0 and outcome.control_status == "done" for outcome in outcomes):
         return "all_done"
     return "incomplete"
 
@@ -619,21 +631,23 @@ def _claim_specs_can_coexist(left: ClaimSpec, right: ClaimSpec) -> bool:
 def _find_claim_conflicts(outcomes: Sequence[AgentOutcome]) -> list[dict[str, object]]:
     conflicts: list[dict[str, object]] = []
     for index, left_outcome in enumerate(outcomes):
-        for right_outcome in outcomes[index + 1:]:
+        for right_outcome in outcomes[index + 1 :]:
             for left_claim in left_outcome.claim_specs:
                 for right_claim in right_outcome.claim_specs:
                     if _claim_specs_can_coexist(left_claim, right_claim):
                         continue
-                    conflicts.append({
-                        "left_slot": left_outcome.slot,
-                        "left_agent": left_outcome.agent_key,
-                        "left_claim": left_claim.path,
-                        "left_role": left_claim.role,
-                        "right_slot": right_outcome.slot,
-                        "right_agent": right_outcome.agent_key,
-                        "right_claim": right_claim.path,
-                        "right_role": right_claim.role,
-                    })
+                    conflicts.append(
+                        {
+                            "left_slot": left_outcome.slot,
+                            "left_agent": left_outcome.agent_key,
+                            "left_claim": left_claim.path,
+                            "left_role": left_claim.role,
+                            "right_slot": right_outcome.slot,
+                            "right_agent": right_outcome.agent_key,
+                            "right_claim": right_claim.path,
+                            "right_role": right_claim.role,
+                        }
+                    )
     return conflicts
 
 
@@ -657,8 +671,7 @@ def _write_claim_ledger(
                 "agent": outcome.agent_key,
                 "claims": list(outcome.claims),
                 "claim_specs": [
-                    {"path": spec.path, "role": spec.role}
-                    for spec in outcome.claim_specs
+                    {"path": spec.path, "role": spec.role} for spec in outcome.claim_specs
                 ],
                 "reason": outcome.control_reason,
                 "status": outcome.control_status,
@@ -678,14 +691,17 @@ def _write_conflict_resolution_ledger(
     conflict_artifact_path: Path,
     conflict_paths: Sequence[str],
 ) -> None:
-    write_json_atomic(path, {
-        "session_id": session_id,
-        "continued_from_session_id": continued_from_session_id,
-        "status": "resolution_continuation",
-        "generated_at": utc_timestamp(),
-        "conflict_artifact_path": str(conflict_artifact_path),
-        "paths": list(conflict_paths),
-    })
+    write_json_atomic(
+        path,
+        {
+            "session_id": session_id,
+            "continued_from_session_id": continued_from_session_id,
+            "status": "resolution_continuation",
+            "generated_at": utc_timestamp(),
+            "conflict_artifact_path": str(conflict_artifact_path),
+            "paths": list(conflict_paths),
+        },
+    )
 
 
 def _classify_planning_result(
@@ -716,10 +732,7 @@ def _classify_planning_result(
             status="planning_incomplete",
         )
         return "planning_incomplete", accepted_claims
-    if any(
-        outcome.control_status != "planning" or not outcome.claim_specs
-        for outcome in outcomes
-    ):
+    if any(outcome.control_status != "planning" or not outcome.claim_specs for outcome in outcomes):
         _write_claim_ledger(
             claim_ledger_path,
             session_id=session_id,
@@ -900,7 +913,6 @@ def _is_generated_path(relative_path: str) -> bool:
     normalized = relative_path.strip("/")
     if not normalized:
         return False
-    lower_path = normalized.lower()
     name = Path(normalized).name.lower()
     if any(name.endswith(suffix) for suffix in _GENERATED_SUFFIXES):
         return True
@@ -954,7 +966,9 @@ def _sync_worktree_coordination_files(
         snapshot_path.read_text(encoding="utf-8") if snapshot_path.exists() else ""
         for snapshot_path in pane_snapshot_paths
     ]
-    workspace_log_text = workspace_log_path.read_text(encoding="utf-8") if workspace_log_path.exists() else ""
+    workspace_log_text = (
+        workspace_log_path.read_text(encoding="utf-8") if workspace_log_path.exists() else ""
+    )
     claim_ledger_text = (
         claim_ledger_path.read_text(encoding="utf-8")
         if claim_ledger_path is not None and claim_ledger_path.exists()
@@ -974,7 +988,9 @@ def _sync_worktree_coordination_files(
         if claim_ledger_text is not None:
             write_text_atomic(_worktree_claim_ledger_path(worktree_path), claim_ledger_text)
         if continued_workspace_log_text is not None:
-            write_text_atomic(_worktree_continued_workspace_log_path(worktree_path), continued_workspace_log_text)
+            write_text_atomic(
+                _worktree_continued_workspace_log_path(worktree_path), continued_workspace_log_text
+            )
 
 
 def _path_matches_claim(relative_path: str, claim: str, repo_root: Path) -> bool:
@@ -983,10 +999,16 @@ def _path_matches_claim(relative_path: str, claim: str, repo_root: Path) -> bool
     if not normalized_path or not normalized_claim:
         return False
     if claim.endswith("/"):
-        return normalized_path.startswith(normalized_claim + "/") or normalized_path == normalized_claim
+        return (
+            normalized_path.startswith(normalized_claim + "/")
+            or normalized_path == normalized_claim
+        )
     claim_path = repo_root / normalized_claim
     if claim_path.is_dir():
-        return normalized_path.startswith(normalized_claim + "/") or normalized_path == normalized_claim
+        return (
+            normalized_path.startswith(normalized_claim + "/")
+            or normalized_path == normalized_claim
+        )
     return normalized_path == normalized_claim
 
 
@@ -1019,11 +1041,13 @@ def _changed_paths_from_manifest(
     baseline_manifest: dict[str, str],
 ) -> tuple[dict[str, str], tuple[str, ...]]:
     current_manifest = _scan_runtime_manifest(worktree_path)
-    changed_paths = tuple(sorted(
-        path
-        for path in set(baseline_manifest) | set(current_manifest)
-        if baseline_manifest.get(path) != current_manifest.get(path)
-    ))
+    changed_paths = tuple(
+        sorted(
+            path
+            for path in set(baseline_manifest) | set(current_manifest)
+            if baseline_manifest.get(path) != current_manifest.get(path)
+        )
+    )
     return current_manifest, changed_paths
 
 
@@ -1083,10 +1107,9 @@ def _merge_worktree_changes(
         baseline_hash = baseline_manifest.get(relative_path)
         current_hash = _path_hash_or_none(destination)
         if current_hash != baseline_hash:
-            if (
-                _shared_collaboration_enabled(relative_path, accepted_claims_by_slot, repo_root)
-                and _supports_auto_text_merge(relative_path, baseline_path, source)
-            ):
+            if _shared_collaboration_enabled(
+                relative_path, accepted_claims_by_slot, repo_root
+            ) and _supports_auto_text_merge(relative_path, baseline_path, source):
                 merged = _merge_shared_text_change(destination, baseline_path, source)
                 if merged:
                     merged_paths.append(relative_path)
@@ -1120,18 +1143,22 @@ def _postprocess_implementation_outcomes(
             continue
         effective_claims = accepted_claims_by_slot.get(outcome.slot, outcome.claim_specs)
         editable_claims = _editable_claim_specs(effective_claims)
-        current_manifest, changed_paths = _changed_paths_from_manifest(worktree_path, baseline_manifest)
+        current_manifest, changed_paths = _changed_paths_from_manifest(
+            worktree_path, baseline_manifest
+        )
         renamed_paths = _detect_renamed_paths(baseline_manifest, current_manifest)
-        scope_violations = tuple(sorted(
-            path
-            for path in changed_paths
-            if not _path_or_rename_matches_claims(
-                path,
-                editable_claims=editable_claims,
-                renamed_paths=renamed_paths,
-                repo_root=repo_root,
+        scope_violations = tuple(
+            sorted(
+                path
+                for path in changed_paths
+                if not _path_or_rename_matches_claims(
+                    path,
+                    editable_claims=editable_claims,
+                    renamed_paths=renamed_paths,
+                    repo_root=repo_root,
+                )
             )
-        ))
+        )
         merged_paths: tuple[str, ...] = ()
         merge_conflicts: tuple[str, ...] = ()
         should_merge = False
@@ -1148,16 +1175,18 @@ def _postprocess_implementation_outcomes(
                 changed_paths=changed_paths,
                 accepted_claims_by_slot=accepted_claims_by_slot,
             )
-        processed.append(replace(
-            outcome,
-            worktree_path=str(worktree_path),
-            claims=_claim_paths(effective_claims),
-            claim_specs=effective_claims,
-            changed_paths=changed_paths,
-            merged_paths=merged_paths,
-            merge_conflicts=merge_conflicts,
-            scope_violations=scope_violations,
-        ))
+        processed.append(
+            replace(
+                outcome,
+                worktree_path=str(worktree_path),
+                claims=_claim_paths(effective_claims),
+                claim_specs=effective_claims,
+                changed_paths=changed_paths,
+                merged_paths=merged_paths,
+                merge_conflicts=merge_conflicts,
+                scope_violations=scope_violations,
+            )
+        )
 
     if any(outcome.scope_violations for outcome in processed):
         return tuple(processed), "scope_violation"
@@ -1189,11 +1218,9 @@ def _build_conflict_artifact(
     worktree_paths: Sequence[Path],
     baseline_root: Path,
 ) -> Path | None:
-    conflict_paths = tuple(sorted({
-        path
-        for outcome in outcomes
-        for path in outcome.merge_conflicts
-    }))
+    conflict_paths = tuple(
+        sorted({path for outcome in outcomes for path in outcome.merge_conflicts})
+    )
     if not conflict_paths:
         return None
 
@@ -1220,20 +1247,26 @@ def _build_conflict_artifact(
                 artifact_dir=artifact_dir,
                 bucket=f"slot-{outcome.slot:02d}",
             )
-            contributors.append({
-                "slot": outcome.slot,
-                "agent": outcome.agent_key,
-                "claim_specs": [
-                    {"path": spec.path, "role": spec.role}
-                    for spec in outcome.claim_specs
-                    if _path_matches_claim_spec(relative_path, spec, repo_root)
-                ],
-                "exists": version_rel is not None,
-                "version_path": version_rel,
-            })
+            contributors.append(
+                {
+                    "slot": outcome.slot,
+                    "agent": outcome.agent_key,
+                    "claim_specs": [
+                        {"path": spec.path, "role": spec.role}
+                        for spec in outcome.claim_specs
+                        if _path_matches_claim_spec(relative_path, spec, repo_root)
+                    ],
+                    "exists": version_rel is not None,
+                    "version_path": version_rel,
+                }
+            )
 
-        base_exists = (baseline_root / relative_path).exists() or (baseline_root / relative_path).is_symlink()
-        repo_exists = (repo_root / relative_path).exists() or (repo_root / relative_path).is_symlink()
+        base_exists = (baseline_root / relative_path).exists() or (
+            baseline_root / relative_path
+        ).is_symlink()
+        repo_exists = (repo_root / relative_path).exists() or (
+            repo_root / relative_path
+        ).is_symlink()
         manual_reasons: list[str] = []
         if _is_lockfile_path(relative_path):
             manual_reasons.append("lockfile")
@@ -1252,37 +1285,42 @@ def _build_conflict_artifact(
         if manual_reasons:
             manual_paths.add(relative_path)
 
-        payload_paths.append({
-            "path": relative_path,
-            "base_version": {
-                "exists": base_exists,
-                "path": _copy_conflict_version(
-                    root=baseline_root,
-                    relative_path=relative_path,
-                    artifact_dir=artifact_dir,
-                    bucket="base",
-                ),
-            },
-            "repo_version": {
-                "exists": repo_exists,
-                "path": _copy_conflict_version(
-                    root=repo_root,
-                    relative_path=relative_path,
-                    artifact_dir=artifact_dir,
-                    bucket="repo",
-                ),
-            },
-            "contributors": contributors,
-            "manual_reasons": sorted(dict.fromkeys(manual_reasons)),
-        })
+        payload_paths.append(
+            {
+                "path": relative_path,
+                "base_version": {
+                    "exists": base_exists,
+                    "path": _copy_conflict_version(
+                        root=baseline_root,
+                        relative_path=relative_path,
+                        artifact_dir=artifact_dir,
+                        bucket="base",
+                    ),
+                },
+                "repo_version": {
+                    "exists": repo_exists,
+                    "path": _copy_conflict_version(
+                        root=repo_root,
+                        relative_path=relative_path,
+                        artifact_dir=artifact_dir,
+                        bucket="repo",
+                    ),
+                },
+                "contributors": contributors,
+                "manual_reasons": sorted(dict.fromkeys(manual_reasons)),
+            }
+        )
 
-    write_json_atomic(artifact_path, {
-        "session_id": session_id,
-        "generated_at": utc_timestamp(),
-        "status": "merge_conflict",
-        "manual_paths": sorted(manual_paths),
-        "paths": payload_paths,
-    })
+    write_json_atomic(
+        artifact_path,
+        {
+            "session_id": session_id,
+            "generated_at": utc_timestamp(),
+            "status": "merge_conflict",
+            "manual_paths": sorted(manual_paths),
+            "paths": payload_paths,
+        },
+    )
     return artifact_path
 
 
@@ -1315,9 +1353,7 @@ def _infer_agents_from_claim_ledger_payload(payload: dict[str, object] | None) -
     if not isinstance(claims, list):
         return ()
     return _dedupe_agents(
-        str(item.get("agent", "")).strip()
-        for item in claims
-        if isinstance(item, dict)
+        str(item.get("agent", "")).strip() for item in claims if isinstance(item, dict)
     )
 
 
@@ -1421,7 +1457,9 @@ def _looks_like_text_file(path: Path) -> bool:
     return True
 
 
-def _artifact_entry_version_paths(artifact_path: Path, entry: dict[str, object]) -> tuple[Path, ...]:
+def _artifact_entry_version_paths(
+    artifact_path: Path, entry: dict[str, object]
+) -> tuple[Path, ...]:
     version_paths: list[Path] = []
     for field_name in ("base_version", "repo_version"):
         value = entry.get(field_name)
@@ -1570,22 +1608,26 @@ def load_conflict_artifact_summary(repo_root: Path, session_id: str) -> dict[str
                     claim_specs = contributor.get("claim_specs", [])
                     roles: list[str] = []
                     if isinstance(claim_specs, list):
-                        roles = sorted({
-                            str(spec.get("role", "")).strip()
-                            for spec in claim_specs
-                            if isinstance(spec, dict) and str(spec.get("role", "")).strip()
-                        })
+                        roles = sorted(
+                            {
+                                str(spec.get("role", "")).strip()
+                                for spec in claim_specs
+                                if isinstance(spec, dict) and str(spec.get("role", "")).strip()
+                            }
+                        )
                     version_path = contributor.get("version_path")
                     version_full_path = None
                     if isinstance(version_path, str) and version_path.strip():
                         version_full_path = str((artifact_path.parent / version_path).resolve())
-                    contributors.append({
-                        "slot": contributor.get("slot"),
-                        "agent": contributor.get("agent"),
-                        "roles": roles,
-                        "version_path": version_path,
-                        "full_version_path": version_full_path,
-                    })
+                    contributors.append(
+                        {
+                            "slot": contributor.get("slot"),
+                            "agent": contributor.get("agent"),
+                            "roles": roles,
+                            "version_path": version_path,
+                            "full_version_path": version_full_path,
+                        }
+                    )
 
             kind = "binary" if relative_path in manual_paths else "text"
             if kind == "text":
@@ -1593,7 +1635,7 @@ def load_conflict_artifact_summary(repo_root: Path, session_id: str) -> dict[str
                 if any(not _looks_like_text_file(version_path) for version_path in version_paths):
                     kind = "binary"
 
-            def _summarize_version(key: str) -> dict[str, object]:
+            def _summarize_version(key: str, item=item) -> dict[str, object]:
                 raw = item.get(key, {})
                 if not isinstance(raw, dict):
                     return {"exists": False, "path": None, "full_path": None}
@@ -1607,18 +1649,20 @@ def load_conflict_artifact_summary(repo_root: Path, session_id: str) -> dict[str
                     "full_path": full_path,
                 }
 
-            summaries.append({
-                "path": relative_path,
-                "kind": kind,
-                "manual_reasons": [
-                    str(reason).strip()
-                    for reason in item.get("manual_reasons", [])
-                    if isinstance(reason, str) and str(reason).strip()
-                ],
-                "contributors": contributors,
-                "base_version": _summarize_version("base_version"),
-                "repo_version": _summarize_version("repo_version"),
-            })
+            summaries.append(
+                {
+                    "path": relative_path,
+                    "kind": kind,
+                    "manual_reasons": [
+                        str(reason).strip()
+                        for reason in item.get("manual_reasons", [])
+                        if isinstance(reason, str) and str(reason).strip()
+                    ],
+                    "contributors": contributors,
+                    "base_version": _summarize_version("base_version"),
+                    "repo_version": _summarize_version("repo_version"),
+                }
+            )
 
     attempted_slots_raw = payload.get("attempted_slots", [])
     attempted_slots = [
@@ -1684,7 +1728,9 @@ def infer_conflict_resolution_context(repo_root: Path, session_id: str) -> dict[
         claim_payload = _claim_ledger_payload(_claims_ledger_path(repo_root, next_session_id))
         collected_agents.extend(_infer_agents_from_claim_ledger_payload(claim_payload))
 
-        next_artifact_payload = _load_conflict_artifact(_conflict_artifact_path(repo_root, next_session_id))
+        next_artifact_payload = _load_conflict_artifact(
+            _conflict_artifact_path(repo_root, next_session_id)
+        )
         collected_agents.extend(_infer_agents_from_conflict_payload(next_artifact_payload))
 
         continued_from_claims = _continued_session_id_from_claim_ledger(claim_payload)
@@ -1734,13 +1780,19 @@ def _mark_resolved_conflicts(
     resolved = set(resolved_paths)
     processed: list[AgentOutcome] = []
     for outcome in outcomes:
-        merged_paths = tuple(sorted(set(outcome.merged_paths) | (set(outcome.merge_conflicts) & resolved)))
-        merge_conflicts = tuple(sorted(path for path in outcome.merge_conflicts if path not in resolved))
-        processed.append(replace(
-            outcome,
-            merged_paths=merged_paths,
-            merge_conflicts=merge_conflicts,
-        ))
+        merged_paths = tuple(
+            sorted(set(outcome.merged_paths) | (set(outcome.merge_conflicts) & resolved))
+        )
+        merge_conflicts = tuple(
+            sorted(path for path in outcome.merge_conflicts if path not in resolved)
+        )
+        processed.append(
+            replace(
+                outcome,
+                merged_paths=merged_paths,
+                merge_conflicts=merge_conflicts,
+            )
+        )
     return tuple(processed)
 
 
@@ -1834,14 +1886,18 @@ def _build_concurrent_prompt(
     for i, a in others:
         name = get_agent_display_name(a)
         pane_lines.append(f"  Slot {i} ({name}): {pane_snapshot_paths[i]}")
-    pane_snapshot_instructions = "\n".join(pane_lines) if pane_lines else "  No other agent snapshots."
+    pane_snapshot_instructions = (
+        "\n".join(pane_lines) if pane_lines else "  No other agent snapshots."
+    )
 
     continuation_lines = []
     if continued_from_session_id:
-        continuation_lines.extend([
-            "## Continuation Context",
-            f"- This run continues prior relay session: {continued_from_session_id}",
-        ])
+        continuation_lines.extend(
+            [
+                "## Continuation Context",
+                f"- This run continues prior relay session: {continued_from_session_id}",
+            ]
+        )
         if continued_workspace_log is not None:
             continuation_lines.append(f"- Prior workspace log: {continued_workspace_log}")
         if continued_session_root is not None:
@@ -1854,7 +1910,7 @@ def _build_concurrent_prompt(
             "## Planning Phase",
             "- This is the planning phase. Do not make implementation changes in this phase unless you are only prototyping inside your isolated worktree.",
             "- Inspect the repo, snapshot files, and shared log, then decide who owns what before implementation begins.",
-            '- End with a machine-readable status line:',
+            "- End with a machine-readable status line:",
             '  RELAY_STATUS: {"status":"planning","reason":"...","claims":[{"path":"README.md","role":"owner"},{"path":"src/agent_relay/","role":"reviewer"}],"remaining_work":["implement your claimed slice"],"verification":[]}',
             "- Allowed statuses: planning, blocked, error",
             "- Use planning only if claims is non-empty and concrete.",
@@ -1872,16 +1928,18 @@ def _build_concurrent_prompt(
             phase_lines.append(f"- Conflict artifact: {resolution_conflict_artifact_path}")
         if resolution_paths:
             phase_lines.append("- Conflicted paths: " + ", ".join(resolution_paths))
-        phase_lines.extend([
-            "- The conflict artifact contains the baseline version, current repo version, and each contributing slot's version for every conflicted path.",
-            "- Choose the best final content for each conflicted path, then update those files in your isolated resolution worktree.",
-            "- If the correct resolution is to keep the current repo version for a path, leave it unchanged and explain that in your reason.",
-            '- End with a machine-readable status line:',
-            '  RELAY_STATUS: {"status":"done","reason":"Resolved conflicted paths","claims":[],"remaining_work":[],"verification":["manual review"]}',
-            "- Allowed statuses: continue, blocked, done, error",
-            "- Use done only when every conflicted path has been reviewed.",
-            "- If you post multiple RELAY_STATUS lines during the session, the last one wins.",
-        ])
+        phase_lines.extend(
+            [
+                "- The conflict artifact contains the baseline version, current repo version, and each contributing slot's version for every conflicted path.",
+                "- Choose the best final content for each conflicted path, then update those files in your isolated resolution worktree.",
+                "- If the correct resolution is to keep the current repo version for a path, leave it unchanged and explain that in your reason.",
+                "- End with a machine-readable status line:",
+                '  RELAY_STATUS: {"status":"done","reason":"Resolved conflicted paths","claims":[],"remaining_work":[],"verification":["manual review"]}',
+                "- Allowed statuses: continue, blocked, done, error",
+                "- Use done only when every conflicted path has been reviewed.",
+                "- If you post multiple RELAY_STATUS lines during the session, the last one wins.",
+            ]
+        )
     elif phase == "review":
         phase_lines = [
             "## Review Phase",
@@ -1892,13 +1950,15 @@ def _build_concurrent_prompt(
             phase_lines.append(f"- Conflict artifact: {resolution_conflict_artifact_path}")
         if resolution_paths:
             phase_lines.append("- Resolved paths to review: " + ", ".join(resolution_paths))
-        phase_lines.extend([
-            '- End with a machine-readable status line:',
-            '  RELAY_STATUS: {"status":"done","reason":"Resolution looks correct","claims":[],"remaining_work":[],"verification":["manual review"]}',
-            "- Allowed statuses: done, blocked, error",
-            "- Use blocked if the resolution still needs human judgment.",
-            "- If you post multiple RELAY_STATUS lines during the session, the last one wins.",
-        ])
+        phase_lines.extend(
+            [
+                "- End with a machine-readable status line:",
+                '  RELAY_STATUS: {"status":"done","reason":"Resolution looks correct","claims":[],"remaining_work":[],"verification":["manual review"]}',
+                "- Allowed statuses: done, blocked, error",
+                "- Use blocked if the resolution still needs human judgment.",
+                "- If you post multiple RELAY_STATUS lines during the session, the last one wins.",
+            ]
+        )
     else:
         phase_lines = [
             "## Implementation Phase",
@@ -1919,18 +1979,24 @@ def _build_concurrent_prompt(
             phase_lines.append("- Accepted claims for all slots:")
             for other_slot, claims in sorted(accepted_claims_by_slot.items()):
                 agent_label = get_agent_display_name(all_agents[other_slot])
-                claim_text = ", ".join(f"{claim.role}:{claim.path}" for claim in claims) if claims else "None recorded"
+                claim_text = (
+                    ", ".join(f"{claim.role}:{claim.path}" for claim in claims)
+                    if claims
+                    else "None recorded"
+                )
                 phase_lines.append(f"  Slot {other_slot} ({agent_label}): {claim_text}")
-        phase_lines.extend([
-            "- Only owner and shared claims may be edited. Reviewer claims are review-only.",
-            "- Stay within your accepted claims. If you discover a scope problem, report it with blocked instead of freelancing into another slot's work.",
-            '- End with a machine-readable status line:',
-            '  RELAY_STATUS: {"status":"continue","reason":"...","claims":[],"remaining_work":["..."],"verification":[]}',
-            "- Allowed statuses: continue, blocked, done, error",
-            "- Use done only when your part is truly complete and remaining_work is [].",
-            "- Use error if you hit a terminal failure you could not resolve.",
-            "- If you post multiple RELAY_STATUS lines during the session, the last one wins.",
-        ])
+        phase_lines.extend(
+            [
+                "- Only owner and shared claims may be edited. Reviewer claims are review-only.",
+                "- Stay within your accepted claims. If you discover a scope problem, report it with blocked instead of freelancing into another slot's work.",
+                "- End with a machine-readable status line:",
+                '  RELAY_STATUS: {"status":"continue","reason":"...","claims":[],"remaining_work":["..."],"verification":[]}',
+                "- Allowed statuses: continue, blocked, done, error",
+                "- Use done only when your part is truly complete and remaining_work is [].",
+                "- Use error if you hit a terminal failure you could not resolve.",
+                "- If you post multiple RELAY_STATUS lines during the session, the last one wins.",
+            ]
+        )
     phase_rules = "\n".join(phase_lines)
 
     return _CONCURRENT_PREAMBLE.format(
@@ -1976,11 +2042,7 @@ def _build_shell_command(
     exit_path = shlex.quote(str(exit_code_path))
     inner = _build_agent_command(agent_key, prompt_path, repo_root)
     script = (
-        f"rm -f {exit_path}; "
-        f"{inner}; "
-        'code=$?; '
-        f'printf "%s\\n" "$code" > {exit_path}; '
-        'exit "$code"'
+        f'rm -f {exit_path}; {inner}; code=$?; printf "%s\\n" "$code" > {exit_path}; exit "$code"'
     )
     return f"/bin/sh -lc {shlex.quote(script)}"
 
@@ -2018,28 +2080,34 @@ def _run_concurrent_phase(
     on_agent_done: Callable[[AgentOutcome], None] | None = None,
 ) -> PhaseRunResult:
     tmux_sessions = tuple(
-        _tmux_session_name(session_id, slot, phase=phase)
-        for slot in range(len(agents))
+        _tmux_session_name(session_id, slot, phase=phase) for slot in range(len(agents))
     )
     started_at = [utc_timestamp() for _ in agents]
     session_names_by_slot = dict(enumerate(tmux_sessions))
 
     for slot, tmux_session in enumerate(tmux_sessions):
         _tmux(
-            "new-session", "-d",
-            "-s", tmux_session,
-            "-x", "200", "-y", "50",
+            "new-session",
+            "-d",
+            "-s",
+            tmux_session,
+            "-x",
+            "200",
+            "-y",
+            "50",
         )
         _tmux(
             "set-window-option",
-            "-t", f"{tmux_session}:0",
+            "-t",
+            f"{tmux_session}:0",
             "remain-on-exit",
             "on",
             check=False,
         )
         _tmux(
             "set-option",
-            "-t", tmux_session,
+            "-t",
+            tmux_session,
             "mouse",
             "on",
             check=False,
@@ -2047,17 +2115,20 @@ def _run_concurrent_phase(
         _tmux(
             "respawn-pane",
             "-k",
-            "-t", f"{tmux_session}:0.0",
+            "-t",
+            f"{tmux_session}:0.0",
             commands[slot],
         )
 
-        wlog.append(LogEntry(
-            timestamp=started_at[slot],
-            agent_key=agents[slot],
-            agent_slot=slot,
-            entry_type="agent_started",
-            summary=f"Started {phase} in tmux session {tmux_session}.",
-        ))
+        wlog.append(
+            LogEntry(
+                timestamp=started_at[slot],
+                agent_key=agents[slot],
+                agent_slot=slot,
+                entry_type="agent_started",
+                summary=f"Started {phase} in tmux session {tmux_session}.",
+            )
+        )
         if on_agent_start:
             on_agent_start(slot, agents[slot], tmux_session)
 
@@ -2131,13 +2202,15 @@ def _run_concurrent_phase(
                     )
                     finished_slots[slot] = outcome
 
-                    wlog.append(LogEntry(
-                        timestamp=finished_at,
-                        agent_key=agents[slot],
-                        agent_slot=slot,
-                        entry_type="signal" if outcome.done_signal else "turn_complete",
-                        summary=outcome.summary,
-                    ))
+                    wlog.append(
+                        LogEntry(
+                            timestamp=finished_at,
+                            agent_key=agents[slot],
+                            agent_slot=slot,
+                            entry_type="signal" if outcome.done_signal else "turn_complete",
+                            summary=outcome.summary,
+                        )
+                    )
                     maybe_report_outcome(outcome)
 
             if stop_reason != "completed":
@@ -2243,7 +2316,11 @@ def _run_review_phase(
         session_id=session_id,
         phase="review",
         agents=[agents[reviewer_slot]],
-        commands=[_build_shell_command(agents[reviewer_slot], prompt_path, review_worktree, exit_code_path)],
+        commands=[
+            _build_shell_command(
+                agents[reviewer_slot], prompt_path, review_worktree, exit_code_path
+            )
+        ],
         worktree_paths=(review_worktree,),
         exit_code_paths=(exit_code_path,),
         pane_snapshot_paths=(),
@@ -2256,7 +2333,9 @@ def _run_review_phase(
     review_outcome = phase_result.outcomes[0]
     if phase_result.stop_reason != "completed":
         return phase_result.stop_reason, review_outcome, (review_worktree,)
-    _current_manifest, changed_paths = _changed_paths_from_manifest(review_worktree, review_baseline_manifest)
+    _current_manifest, changed_paths = _changed_paths_from_manifest(
+        review_worktree, review_baseline_manifest
+    )
     processed_outcome = replace(
         review_outcome,
         worktree_path=str(review_worktree),
@@ -2278,11 +2357,11 @@ def _manual_conflict_paths(artifact_path: Path) -> tuple[str, ...]:
     raw_paths = payload.get("manual_paths")
     if not isinstance(raw_paths, list):
         return ()
-    return tuple(sorted({
-        str(path).strip()
-        for path in raw_paths
-        if isinstance(path, str) and str(path).strip()
-    }))
+    return tuple(
+        sorted(
+            {str(path).strip() for path in raw_paths if isinstance(path, str) and str(path).strip()}
+        )
+    )
 
 
 def _attempt_resolution_phase(
@@ -2372,7 +2451,9 @@ def _attempt_resolution_phase(
         attempted_slots.append(resolver_slot)
         _refresh_conflict_artifact_repo_versions(repo_root, conflict_artifact_path)
         resolution_baseline_paths = _current_repo_file_paths(repo_root)
-        resolution_baseline_manifest = _build_baseline_manifest(repo_root, resolution_baseline_paths)
+        resolution_baseline_manifest = _build_baseline_manifest(
+            repo_root, resolution_baseline_paths
+        )
         resolution_baseline_root = _create_resolution_baseline_snapshot(
             repo_root,
             session_id=session_id,
@@ -2412,7 +2493,9 @@ def _attempt_resolution_phase(
                 else None
             ),
             continued_session_root=None,
-            accepted_claims_by_slot={0: tuple(ClaimSpec(path=path, role="owner") for path in conflict_paths)},
+            accepted_claims_by_slot={
+                0: tuple(ClaimSpec(path=path, role="owner") for path in conflict_paths)
+            },
             resolution_conflict_artifact_path=local_conflict_artifact_path,
             resolution_paths=conflict_paths,
         )
@@ -2423,7 +2506,11 @@ def _attempt_resolution_phase(
             session_id=session_id,
             phase="resolution",
             agents=[agents[resolver_slot]],
-            commands=[_build_shell_command(agents[resolver_slot], prompt_path, resolution_worktree, exit_code_path)],
+            commands=[
+                _build_shell_command(
+                    agents[resolver_slot], prompt_path, resolution_worktree, exit_code_path
+                )
+            ],
             worktree_paths=(resolution_worktree,),
             exit_code_paths=(exit_code_path,),
             pane_snapshot_paths=(),
@@ -2447,7 +2534,9 @@ def _attempt_resolution_phase(
             worktree_paths=(resolution_worktree,),
             baseline_root=resolution_baseline_root,
             baseline_manifest=resolution_baseline_manifest,
-            accepted_claims_by_slot={0: tuple(ClaimSpec(path=path, role="owner") for path in conflict_paths)},
+            accepted_claims_by_slot={
+                0: tuple(ClaimSpec(path=path, role="owner") for path in conflict_paths)
+            },
             merge_mode="completed",
         )
         resolution_outcome = resolution_outcomes[0]
@@ -2591,7 +2680,9 @@ def run_concurrent(
     wlog = WorkspaceLog(wlog_path)
     claim_ledger_path = _claims_ledger_path(repo_root, session_id)
     conflict_artifact_path: Path | None = None
-    continued_conflict_artifact = _continued_conflict_artifact_source(repo_root, continue_from_session_id)
+    continued_conflict_artifact = _continued_conflict_artifact_source(
+        repo_root, continue_from_session_id
+    )
 
     # Prepare per-agent files up front so prompts can reference other sessions.
     pane_snapshot_paths: list[Path] = []
@@ -2640,15 +2731,16 @@ def run_concurrent(
         conflict_artifact_path = resolution_result.conflict_artifact_path
         additional_worktree_paths = resolution_result.additional_worktree_paths
         outcomes = resolution_result.phase_outcomes
-        tmux_sessions = tuple(dict.fromkeys(
-            outcome.tmux_session
-            for outcome in outcomes
-            if outcome.tmux_session
-        ))
-        stop_reason = "all_done" if resolution_result.stop_reason == "resolved" else resolution_result.stop_reason
+        tmux_sessions = tuple(
+            dict.fromkeys(outcome.tmux_session for outcome in outcomes if outcome.tmux_session)
+        )
+        stop_reason = (
+            "all_done"
+            if resolution_result.stop_reason == "resolved"
+            else resolution_result.stop_reason
+        )
         should_preserve_worktrees = any(
-            set(outcome.changed_paths) != set(outcome.merged_paths)
-            for outcome in outcomes
+            set(outcome.changed_paths) != set(outcome.merged_paths) for outcome in outcomes
         )
         if not should_preserve_worktrees:
             _cleanup_worktrees(repo_root, additional_worktree_paths)
@@ -2662,7 +2754,9 @@ def run_concurrent(
             stop_reason=stop_reason,
             elapsed_seconds=round(elapsed, 1),
             outcomes=tuple(outcomes),
-            conflict_artifact_path=str(conflict_artifact_path) if conflict_artifact_path is not None else None,
+            conflict_artifact_path=str(conflict_artifact_path)
+            if conflict_artifact_path is not None
+            else None,
         )
 
     baseline_paths = _current_repo_file_paths(repo_root)
@@ -2791,7 +2885,9 @@ def run_concurrent(
                 prompt_path = agent_dir / "implementation-prompt.md"
                 prompt_path.write_text(prompt_text, encoding="utf-8")
                 implementation_commands.append(
-                    _build_shell_command(agent_key, prompt_path, worktree_path, implementation_exit_code_path)
+                    _build_shell_command(
+                        agent_key, prompt_path, worktree_path, implementation_exit_code_path
+                    )
                 )
 
             implementation_phase = _run_concurrent_phase(
@@ -2863,8 +2959,7 @@ def run_concurrent(
                 stop_reason = implementation_phase.stop_reason
 
     should_preserve_worktrees = any(
-        set(outcome.changed_paths) != set(outcome.merged_paths)
-        for outcome in outcomes
+        set(outcome.changed_paths) != set(outcome.merged_paths) for outcome in outcomes
     )
     if not should_preserve_worktrees:
         _cleanup_worktrees(repo_root, (*worktree_paths, *additional_worktree_paths))
@@ -2880,5 +2975,7 @@ def run_concurrent(
         stop_reason=stop_reason,
         elapsed_seconds=round(elapsed, 1),
         outcomes=tuple(outcomes),
-        conflict_artifact_path=str(conflict_artifact_path) if conflict_artifact_path is not None else None,
+        conflict_artifact_path=str(conflict_artifact_path)
+        if conflict_artifact_path is not None
+        else None,
     )

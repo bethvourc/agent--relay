@@ -10,15 +10,16 @@ The module is purely an event iterator — it has no rendering responsibility.
 The CLI handler chooses how to render the stream: a Rich live TUI, a JSONL
 stream on stdout, or terse one-line-per-event quiet output.
 """
+
 from __future__ import annotations
 
 import json
 import re
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from collections.abc import Iterator
 from typing import Any
 
 from agent_relay.layout import (
@@ -65,7 +66,7 @@ class WatchEvent:
 
     timestamp: str  # ISO-8601 UTC
     kind: str  # journal | workspace | turn_started | turn_completed
-               # | output_chunk | status_change | heartbeat
+    # | output_chunk | status_change | heartbeat
     payload: dict[str, Any]
     sequence: int  # monotonic per-WatchSource
 
@@ -136,9 +137,9 @@ def pick_latest_active_session(repo_root: Path) -> str | None:
     """
     entries = list_sessions_for_dashboard(repo_root)
     candidates = [
-        e for e in entries
-        if is_live_status(e.get("current_status"))
-        and e.get("health") != "corrupt"
+        e
+        for e in entries
+        if is_live_status(e.get("current_status")) and e.get("health") != "corrupt"
     ]
     if not candidates:
         return None
@@ -200,16 +201,18 @@ class _JournalTail:
                 # Partial / racy read: skip this poll, retry next time.
                 continue
             self._last_seen_seq = seq
-            out.append((
-                "journal",
-                {
-                    "sequence": seq,
-                    "event_type": data.get("type", path.stem),
-                    "timestamp": data.get("timestamp"),
-                    "phase_after": data.get("phase_after"),
-                    "event_id": data.get("event_id"),
-                },
-            ))
+            out.append(
+                (
+                    "journal",
+                    {
+                        "sequence": seq,
+                        "event_type": data.get("type", path.stem),
+                        "timestamp": data.get("timestamp"),
+                        "phase_after": data.get("phase_after"),
+                        "event_id": data.get("event_id"),
+                    },
+                )
+            )
         return out
 
 
@@ -246,16 +249,18 @@ class _WorkspaceLogTail:
             start = m.end()
             end = matches[i + 1].start() if i + 1 < len(matches) else len(delta)
             summary = delta[start:end].strip()
-            out.append((
-                "workspace",
-                {
-                    "timestamp": timestamp,
-                    "agent": agent_name,
-                    "slot": slot,
-                    "entry_type": entry_type,
-                    "summary": summary,
-                },
-            ))
+            out.append(
+                (
+                    "workspace",
+                    {
+                        "timestamp": timestamp,
+                        "agent": agent_name,
+                        "slot": slot,
+                        "entry_type": entry_type,
+                        "summary": summary,
+                    },
+                )
+            )
         return out
 
 
@@ -289,9 +294,7 @@ class _TurnTail:
             stat = turn_dir(self._repo_root, self._session_id, turn_number).stat()
         except OSError:
             return None
-        return datetime.fromtimestamp(stat.st_mtime, UTC).strftime(
-            "%Y-%m-%dT%H:%M:%S.%fZ"
-        )
+        return datetime.fromtimestamp(stat.st_mtime, UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
     def _scan_turn_numbers(self) -> list[int]:
         if not self._turns_root.exists():
@@ -307,9 +310,7 @@ class _TurnTail:
         return nums
 
     def _has_state_json(self, turn_number: int) -> bool:
-        return (
-            turn_dir(self._repo_root, self._session_id, turn_number) / "state.json"
-        ).exists()
+        return (turn_dir(self._repo_root, self._session_id, turn_number) / "state.json").exists()
 
     def poll(self) -> list[tuple[str, dict[str, Any]]]:
         out: list[tuple[str, dict[str, Any]]] = []
@@ -317,28 +318,25 @@ class _TurnTail:
             state = self._known.get(n)
             if state is None:
                 started_at = self.started_at(n) or _utc_now_iso()
-                out.append((
-                    "turn_started",
-                    {"turn_number": n, "started_at": started_at},
-                ))
-                self._known[n] = _TurnState(
-                    started_emitted=True, completed=False
+                out.append(
+                    (
+                        "turn_started",
+                        {"turn_number": n, "started_at": started_at},
+                    )
                 )
+                self._known[n] = _TurnState(started_emitted=True, completed=False)
                 state = self._known[n]
             if not state.completed and self._has_state_json(n):
                 payload: dict[str, Any] = {"turn_number": n}
                 try:
-                    raw = (
-                        turn_dir(self._repo_root, self._session_id, n)
-                        / "state.json"
-                    ).read_text(encoding="utf-8")
+                    raw = (turn_dir(self._repo_root, self._session_id, n) / "state.json").read_text(
+                        encoding="utf-8"
+                    )
                     payload["state"] = json.loads(raw)
                 except (OSError, json.JSONDecodeError):
                     pass
                 out.append(("turn_completed", payload))
-                self._known[n] = _TurnState(
-                    started_emitted=True, completed=True
-                )
+                self._known[n] = _TurnState(started_emitted=True, completed=True)
         return out
 
 
@@ -371,10 +369,7 @@ class _OutputTail:
     def poll(self) -> list[tuple[str, dict[str, Any]]]:
         if self._current_turn is None:
             return []
-        path = (
-            turn_dir(self._repo_root, self._session_id, self._current_turn)
-            / "output.jsonl"
-        )
+        path = turn_dir(self._repo_root, self._session_id, self._current_turn) / "output.jsonl"
         if not path.exists():
             return []
         try:
@@ -410,9 +405,7 @@ class _OutputTail:
                 # Best-effort tag for the UI.
                 if isinstance(parsed, dict):
                     payload["event_subtype"] = (
-                        parsed.get("type")
-                        or (parsed.get("message") or {}).get("type")
-                        or ""
+                        parsed.get("type") or (parsed.get("message") or {}).get("type") or ""
                     )
             except json.JSONDecodeError:
                 payload["event_subtype"] = "raw"
@@ -466,15 +459,17 @@ class _StatusPoller:
         new_agent = snap.get("current_agent")
         new_objective = snap.get("objective", "")
         if new_status != self._last_status or new_agent != self._last_agent:
-            out.append((
-                "status_change",
-                {
-                    "from_status": self._last_status,
-                    "to_status": new_status,
-                    "from_agent": self._last_agent,
-                    "to_agent": new_agent,
-                },
-            ))
+            out.append(
+                (
+                    "status_change",
+                    {
+                        "from_status": self._last_status,
+                        "to_status": new_status,
+                        "from_agent": self._last_agent,
+                        "to_agent": new_agent,
+                    },
+                )
+            )
         self._last_status = new_status
         self._last_agent = new_agent
         if new_objective:
@@ -554,14 +549,10 @@ class WatchSource:
         last_state: dict[str, Any] | None = None
         if cur_turn:
             for n in range(cur_turn, 0, -1):
-                state_path = (
-                    turn_dir(self.repo_root, self.session_id, n) / "state.json"
-                )
+                state_path = turn_dir(self.repo_root, self.session_id, n) / "state.json"
                 if state_path.exists():
                     try:
-                        last_state = json.loads(
-                            state_path.read_text(encoding="utf-8")
-                        )
+                        last_state = json.loads(state_path.read_text(encoding="utf-8"))
                     except (OSError, json.JSONDecodeError):
                         last_state = None
                     break

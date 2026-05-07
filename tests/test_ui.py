@@ -12,15 +12,14 @@ from agent_relay import __version__
 from agent_relay.concurrent import AgentOutcome, ConcurrentResult
 from agent_relay.ui import (
     RELAY_THEME,
+    agent_badge,
     create_console,
-    emit_json,
-    emit_quiet,
     is_compact,
     render_banner,
     render_checkpoint_success,
+    render_concurrent_result,
     render_conflict_inspect,
     render_dashboard,
-    render_concurrent_result,
     render_error,
     render_failover_success,
     render_help,
@@ -31,7 +30,6 @@ from agent_relay.ui import (
     render_prepare_success,
     render_start_success,
     status_badge,
-    agent_badge,
 )
 
 
@@ -95,7 +93,7 @@ class BannerTests(TestCase):
     def test_compact_banner_is_single_line(self) -> None:
         console, buf = make_console(width=60)
         render_banner(console)
-        lines = [l for l in buf.getvalue().splitlines() if l.strip()]
+        lines = [line for line in buf.getvalue().splitlines() if line.strip()]
         self.assertLessEqual(len(lines), 1)
 
 
@@ -169,9 +167,7 @@ class FailoverRenderTests(TestCase):
 class LaunchRenderTests(TestCase):
     def test_launch_preview_shows_target(self) -> None:
         console, buf = make_console()
-        render_launch_preview(
-            console, "codex", "/tmp/codex.md", "cd /tmp && codex", "Start Codex"
-        )
+        render_launch_preview(console, "codex", "/tmp/codex.md", "cd /tmp && codex", "Start Codex")
         output = buf.getvalue()
         self.assertIn("Launch preview", output)
         self.assertIn("Codex", output)

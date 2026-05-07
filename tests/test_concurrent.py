@@ -1,4 +1,5 @@
 """Tests for concurrent agent execution."""
+
 from __future__ import annotations
 
 import json
@@ -15,11 +16,11 @@ from agent_relay.concurrent import (
     ConcurrentResult,
     _build_concurrent_prompt,
     _build_shell_command,
+    _require_tmux,
     infer_conflict_resolution_context,
     latest_unresolved_conflict_session_id,
     parse_concurrent_control,
     run_concurrent,
-    _require_tmux,
 )
 from agent_relay.hashing import sha256_path
 
@@ -114,7 +115,9 @@ class BuildConcurrentPromptTests(TestCase):
             workspace_log=Path("/tmp/log.md"),
             pane_snapshot_paths=[],
             phase="resolution",
-            resolution_conflict_artifact_path=Path("/tmp/repo/.agent-relay/concurrent/conflicts.json"),
+            resolution_conflict_artifact_path=Path(
+                "/tmp/repo/.agent-relay/concurrent/conflicts.json"
+            ),
             resolution_paths=("README.md",),
         )
         self.assertIn("## Resolution Phase", prompt)
@@ -132,7 +135,9 @@ class BuildConcurrentPromptTests(TestCase):
             workspace_log=Path("/tmp/log.md"),
             pane_snapshot_paths=[Path("/tmp/pane-0.txt"), Path("/tmp/pane-1.txt")],
             continued_from_session_id="20260330-abc123",
-            continued_workspace_log=Path("/tmp/repo/.agent-relay/sessions/20260330-abc123/workspace-log.md"),
+            continued_workspace_log=Path(
+                "/tmp/repo/.agent-relay/sessions/20260330-abc123/workspace-log.md"
+            ),
             continued_session_root=Path("/tmp/repo/.agent-relay/sessions/20260330-abc123"),
         )
         self.assertIn("## Continuation Context", prompt)
@@ -142,7 +147,9 @@ class BuildConcurrentPromptTests(TestCase):
 
 class BuildShellCommandTests(TestCase):
     def test_claude_command_interactive(self) -> None:
-        cmd = _build_shell_command("claude", Path("/tmp/prompt.md"), Path("/tmp/repo"), Path("/tmp/exit-code.txt"))
+        cmd = _build_shell_command(
+            "claude", Path("/tmp/prompt.md"), Path("/tmp/repo"), Path("/tmp/exit-code.txt")
+        )
         self.assertIn("claude", cmd)
         self.assertIn("-p", cmd)
         self.assertIn("--permission-mode dontAsk", cmd)
@@ -151,7 +158,9 @@ class BuildShellCommandTests(TestCase):
         self.assertNotIn("stream-json", cmd)
 
     def test_codex_command_interactive(self) -> None:
-        cmd = _build_shell_command("codex", Path("/tmp/prompt.md"), Path("/tmp/repo"), Path("/tmp/exit-code.txt"))
+        cmd = _build_shell_command(
+            "codex", Path("/tmp/prompt.md"), Path("/tmp/repo"), Path("/tmp/exit-code.txt")
+        )
         self.assertIn("codex", cmd)
         self.assertIn("-a never", cmd)
         self.assertIn("-s workspace-write", cmd)
@@ -200,39 +209,73 @@ class ConflictResolutionContextTests(TestCase):
     def test_infers_agents_from_prior_claims_when_continuing_resolution(self) -> None:
         with TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
-            prior_concurrent = repo_root / ".agent-relay" / "sessions" / "prior-session" / "concurrent"
+            prior_concurrent = (
+                repo_root / ".agent-relay" / "sessions" / "prior-session" / "concurrent"
+            )
             prior_concurrent.mkdir(parents=True, exist_ok=True)
-            (prior_concurrent / "claims.json").write_text(json.dumps({
-                "session_id": "prior-session",
-                "status": "accepted",
-                "claims": [
-                    {"slot": 0, "agent": "claude", "claim_specs": [{"path": "README.md", "role": "shared"}]},
-                    {"slot": 1, "agent": "codex", "claim_specs": [{"path": "README.md", "role": "shared"}]},
-                ],
-            }), encoding="utf-8")
-            (prior_concurrent / "conflicts.json").write_text(json.dumps({
-                "session_id": "prior-session",
-                "status": "manual_resolution_required",
-                "paths": [
-                    {"path": "README.md", "contributors": []},
-                ],
-            }), encoding="utf-8")
+            (prior_concurrent / "claims.json").write_text(
+                json.dumps(
+                    {
+                        "session_id": "prior-session",
+                        "status": "accepted",
+                        "claims": [
+                            {
+                                "slot": 0,
+                                "agent": "claude",
+                                "claim_specs": [{"path": "README.md", "role": "shared"}],
+                            },
+                            {
+                                "slot": 1,
+                                "agent": "codex",
+                                "claim_specs": [{"path": "README.md", "role": "shared"}],
+                            },
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (prior_concurrent / "conflicts.json").write_text(
+                json.dumps(
+                    {
+                        "session_id": "prior-session",
+                        "status": "manual_resolution_required",
+                        "paths": [
+                            {"path": "README.md", "contributors": []},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
 
-            continued_concurrent = repo_root / ".agent-relay" / "sessions" / "continued-session" / "concurrent"
+            continued_concurrent = (
+                repo_root / ".agent-relay" / "sessions" / "continued-session" / "concurrent"
+            )
             continued_concurrent.mkdir(parents=True, exist_ok=True)
-            (continued_concurrent / "claims.json").write_text(json.dumps({
-                "session_id": "continued-session",
-                "status": "resolution_continuation",
-                "continued_from_session_id": "prior-session",
-            }), encoding="utf-8")
-            (continued_concurrent / "conflicts.json").write_text(json.dumps({
-                "session_id": "continued-session",
-                "status": "manual_resolution_required",
-                "continued_from_conflict_artifact": str(prior_concurrent / "conflicts.json"),
-                "paths": [
-                    {"path": "README.md", "contributors": []},
-                ],
-            }), encoding="utf-8")
+            (continued_concurrent / "claims.json").write_text(
+                json.dumps(
+                    {
+                        "session_id": "continued-session",
+                        "status": "resolution_continuation",
+                        "continued_from_session_id": "prior-session",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (continued_concurrent / "conflicts.json").write_text(
+                json.dumps(
+                    {
+                        "session_id": "continued-session",
+                        "status": "manual_resolution_required",
+                        "continued_from_conflict_artifact": str(
+                            prior_concurrent / "conflicts.json"
+                        ),
+                        "paths": [
+                            {"path": "README.md", "contributors": []},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
 
             context = infer_conflict_resolution_context(repo_root, "continued-session")
 
@@ -251,12 +294,17 @@ class ConflictResolutionContextTests(TestCase):
             ):
                 concurrent_dir = sessions_root / session_id / "concurrent"
                 concurrent_dir.mkdir(parents=True, exist_ok=True)
-                (concurrent_dir / "conflicts.json").write_text(json.dumps({
-                    "session_id": session_id,
-                    "status": status,
-                    "updated_at": f"{session_id}Z",
-                    "paths": [],
-                }), encoding="utf-8")
+                (concurrent_dir / "conflicts.json").write_text(
+                    json.dumps(
+                        {
+                            "session_id": session_id,
+                            "status": status,
+                            "updated_at": f"{session_id}Z",
+                            "paths": [],
+                        }
+                    ),
+                    encoding="utf-8",
+                )
 
             latest = latest_unresolved_conflict_session_id(repo_root)
 
@@ -299,9 +347,18 @@ class AgentOutcomeTests(TestCase):
 
     def test_none_exit_code_for_killed(self) -> None:
         outcome = AgentOutcome(
-            slot=0, agent_key="claude", tmux_session="relay-test-00", phase="planning", exit_code=None,
-            raw_stdout="", raw_stderr="", text="", summary="",
-            done_signal=False, started_at="", finished_at="",
+            slot=0,
+            agent_key="claude",
+            tmux_session="relay-test-00",
+            phase="planning",
+            exit_code=None,
+            raw_stdout="",
+            raw_stderr="",
+            text="",
+            summary="",
+            done_signal=False,
+            started_at="",
+            finished_at="",
         )
         self.assertIsNone(outcome.exit_code)
 
@@ -376,6 +433,7 @@ class RunConcurrentTests(TestCase):
         worktree_overrides = worktree_overrides or {}
         resolution_worktree_overrides = resolution_worktree_overrides or {}
         prior_conflict_files = prior_conflict_files or {}
+
         def run_in_repo(repo_root: Path) -> ConcurrentResult:
             for relative_path, content in baseline_files.items():
                 target = repo_root / relative_path
@@ -383,7 +441,13 @@ class RunConcurrentTests(TestCase):
                 target.write_text(content, encoding="utf-8")
 
             if continue_from_session_id and prior_conflict_artifact is not None:
-                artifact_dir = repo_root / ".agent-relay" / "sessions" / continue_from_session_id / "concurrent"
+                artifact_dir = (
+                    repo_root
+                    / ".agent-relay"
+                    / "sessions"
+                    / continue_from_session_id
+                    / "concurrent"
+                )
                 (artifact_dir / "conflicts").mkdir(parents=True, exist_ok=True)
                 for relative_path in baseline_files:
                     source = repo_root / relative_path
@@ -438,7 +502,9 @@ class RunConcurrentTests(TestCase):
                 baseline_paths,
             ) -> Path:
                 worktree_path = repo_root / f"worktree-{session_id}-{slot:02d}"
-                return fake_create_worktree_at(worktree_path, slot, baseline_paths, worktree_overrides)
+                return fake_create_worktree_at(
+                    worktree_path, slot, baseline_paths, worktree_overrides
+                )
 
             def fake_create_resolution_worktree(
                 _repo_root: Path,
@@ -448,62 +514,79 @@ class RunConcurrentTests(TestCase):
                 baseline_paths,
             ) -> Path:
                 worktree_path = repo_root / f"resolver-{session_id}-{slot:02d}"
-                return fake_create_worktree_at(worktree_path, slot, baseline_paths, resolution_worktree_overrides)
+                return fake_create_worktree_at(
+                    worktree_path, slot, baseline_paths, resolution_worktree_overrides
+                )
 
-            with patch("agent_relay.concurrent._require_tmux"), patch(
-                "agent_relay.concurrent.require_available"
-            ), patch(
-                "agent_relay.concurrent.start_session"
-            ), patch(
-                "agent_relay.concurrent.is_session",
-                return_value=True if continue_from_session_id else False,
-            ), patch(
-                "agent_relay.concurrent._current_repo_file_paths",
-                return_value=tuple(sorted(baseline_files)),
-            ), patch(
-                "agent_relay.concurrent._build_baseline_manifest",
-                side_effect=lambda _repo_root, _relative_paths: {
-                    relative_path: sha256_path(repo_root / relative_path)
-                    for relative_path in baseline_files
-                },
-            ), patch(
-                "agent_relay.concurrent._create_agent_worktree",
-                side_effect=fake_create_worktree,
-            ), patch(
-                "agent_relay.concurrent._create_resolution_worktree",
-                side_effect=fake_create_resolution_worktree,
-            ), patch(
-                "agent_relay.concurrent._cleanup_worktrees",
-            ), patch(
-                "agent_relay.concurrent._tmux",
-                return_value=subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="", stderr=""),
-            ), patch(
-                "agent_relay.concurrent._tmux_session_exists",
-                side_effect=session_exists,
-            ), patch(
-                "agent_relay.concurrent._tmux_pane_dead",
-                side_effect=pane_dead,
-            ), patch(
-                "agent_relay.concurrent._tmux_capture_pane",
-                side_effect=lambda session_name, _slot: (
-                    planning_contents.get(self._phase_and_slot(session_name)[1], "")
-                    if self._phase_and_slot(session_name)[0] == "planning"
-                    else resolution_contents.get(self._phase_and_slot(session_name)[1], "")
-                    if self._phase_and_slot(session_name)[0] == "resolution"
-                    else review_contents.get(self._phase_and_slot(session_name)[1], "")
-                    if self._phase_and_slot(session_name)[0] == "review"
-                    else implementation_contents.get(self._phase_and_slot(session_name)[1], "")
+            with (
+                patch("agent_relay.concurrent._require_tmux"),
+                patch("agent_relay.concurrent.require_available"),
+                patch("agent_relay.concurrent.start_session"),
+                patch(
+                    "agent_relay.concurrent.is_session",
+                    return_value=bool(continue_from_session_id),
                 ),
-            ), patch(
-                "agent_relay.concurrent._read_exit_code",
-                side_effect=lambda path: (
-                    planning_exit_codes.get(int(path.parent.name.split("-")[-1]), None)
-                    if path.name == "planning-exit-code.txt"
-                    else resolution_exit_codes.get(int(path.parent.name.split("-")[-1]), None)
-                    if path.name == "resolution-exit-code.txt"
-                    else review_exit_codes.get(int(path.parent.name.split("-")[-1]), None)
-                    if path.name == "review-exit-code.txt"
-                    else implementation_exit_codes.get(int(path.parent.name.split("-")[-1]), None)
+                patch(
+                    "agent_relay.concurrent._current_repo_file_paths",
+                    return_value=tuple(sorted(baseline_files)),
+                ),
+                patch(
+                    "agent_relay.concurrent._build_baseline_manifest",
+                    side_effect=lambda _repo_root, _relative_paths: {
+                        relative_path: sha256_path(repo_root / relative_path)
+                        for relative_path in baseline_files
+                    },
+                ),
+                patch(
+                    "agent_relay.concurrent._create_agent_worktree",
+                    side_effect=fake_create_worktree,
+                ),
+                patch(
+                    "agent_relay.concurrent._create_resolution_worktree",
+                    side_effect=fake_create_resolution_worktree,
+                ),
+                patch(
+                    "agent_relay.concurrent._cleanup_worktrees",
+                ),
+                patch(
+                    "agent_relay.concurrent._tmux",
+                    return_value=subprocess.CompletedProcess(
+                        args=["tmux"], returncode=0, stdout="", stderr=""
+                    ),
+                ),
+                patch(
+                    "agent_relay.concurrent._tmux_session_exists",
+                    side_effect=session_exists,
+                ),
+                patch(
+                    "agent_relay.concurrent._tmux_pane_dead",
+                    side_effect=pane_dead,
+                ),
+                patch(
+                    "agent_relay.concurrent._tmux_capture_pane",
+                    side_effect=lambda session_name, _slot: (
+                        planning_contents.get(self._phase_and_slot(session_name)[1], "")
+                        if self._phase_and_slot(session_name)[0] == "planning"
+                        else resolution_contents.get(self._phase_and_slot(session_name)[1], "")
+                        if self._phase_and_slot(session_name)[0] == "resolution"
+                        else review_contents.get(self._phase_and_slot(session_name)[1], "")
+                        if self._phase_and_slot(session_name)[0] == "review"
+                        else implementation_contents.get(self._phase_and_slot(session_name)[1], "")
+                    ),
+                ),
+                patch(
+                    "agent_relay.concurrent._read_exit_code",
+                    side_effect=lambda path: (
+                        planning_exit_codes.get(int(path.parent.name.split("-")[-1]), None)
+                        if path.name == "planning-exit-code.txt"
+                        else resolution_exit_codes.get(int(path.parent.name.split("-")[-1]), None)
+                        if path.name == "resolution-exit-code.txt"
+                        else review_exit_codes.get(int(path.parent.name.split("-")[-1]), None)
+                        if path.name == "review-exit-code.txt"
+                        else implementation_exit_codes.get(
+                            int(path.parent.name.split("-")[-1]), None
+                        )
+                    ),
                 ),
             ):
                 return run_concurrent(
@@ -545,9 +628,15 @@ class RunConcurrentTests(TestCase):
             [f"relay-{result.session_id}-00", f"relay-{result.session_id}-01"],
         )
 
-    def test_start_session_uses_schema_valid_workstream_kind_and_separate_tmux_sessions(self) -> None:
+    def test_start_session_uses_schema_valid_workstream_kind_and_separate_tmux_sessions(
+        self,
+    ) -> None:
         start_session_mock = MagicMock()
-        tmux_mock = MagicMock(return_value=subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="", stderr=""))
+        tmux_mock = MagicMock(
+            return_value=subprocess.CompletedProcess(
+                args=["tmux"], returncode=0, stdout="", stderr=""
+            )
+        )
         with TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
             (repo_root / "README.md").write_text("baseline\n", encoding="utf-8")
@@ -568,41 +657,51 @@ class RunConcurrentTests(TestCase):
                     destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
                 return worktree_path
 
-            with patch("agent_relay.concurrent._require_tmux"), patch(
-                "agent_relay.concurrent.require_available"
-            ), patch(
-                "agent_relay.concurrent.start_session",
-                start_session_mock,
-            ), patch(
-                "agent_relay.concurrent._current_repo_file_paths",
-                return_value=baseline_files,
-            ), patch(
-                "agent_relay.concurrent._build_baseline_manifest",
-                return_value={"README.md": sha256_path(repo_root / "README.md")},
-            ), patch(
-                "agent_relay.concurrent._create_agent_worktree",
-                side_effect=fake_create_worktree,
-            ), patch(
-                "agent_relay.concurrent._tmux",
-                tmux_mock,
-            ), patch(
-                "agent_relay.concurrent._tmux_session_exists",
-                return_value=True,
-            ), patch(
-                "agent_relay.concurrent._tmux_pane_dead",
-                return_value=True,
-            ), patch(
-                "agent_relay.concurrent._tmux_capture_pane",
-                side_effect=lambda session_name, _slot: (
-                    'Plan\nRELAY_STATUS: {"status":"planning","reason":"Ready","claims":["README.md"],"remaining_work":["implement"],"verification":[]}'
-                    if "-planning-" in session_name and session_name.endswith("-00")
-                    else 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Ready","claims":["tests/test_concurrent.py"],"remaining_work":["implement"],"verification":[]}'
-                    if "-planning-" in session_name
-                    else 'Done\nRELAY_STATUS: {"status":"done","reason":"Ready","remaining_work":[],"verification":[]}'
+            with (
+                patch("agent_relay.concurrent._require_tmux"),
+                patch("agent_relay.concurrent.require_available"),
+                patch(
+                    "agent_relay.concurrent.start_session",
+                    start_session_mock,
                 ),
-            ), patch(
-                "agent_relay.concurrent._read_exit_code",
-                return_value=0,
+                patch(
+                    "agent_relay.concurrent._current_repo_file_paths",
+                    return_value=baseline_files,
+                ),
+                patch(
+                    "agent_relay.concurrent._build_baseline_manifest",
+                    return_value={"README.md": sha256_path(repo_root / "README.md")},
+                ),
+                patch(
+                    "agent_relay.concurrent._create_agent_worktree",
+                    side_effect=fake_create_worktree,
+                ),
+                patch(
+                    "agent_relay.concurrent._tmux",
+                    tmux_mock,
+                ),
+                patch(
+                    "agent_relay.concurrent._tmux_session_exists",
+                    return_value=True,
+                ),
+                patch(
+                    "agent_relay.concurrent._tmux_pane_dead",
+                    return_value=True,
+                ),
+                patch(
+                    "agent_relay.concurrent._tmux_capture_pane",
+                    side_effect=lambda session_name, _slot: (
+                        'Plan\nRELAY_STATUS: {"status":"planning","reason":"Ready","claims":["README.md"],"remaining_work":["implement"],"verification":[]}'
+                        if "-planning-" in session_name and session_name.endswith("-00")
+                        else 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Ready","claims":["tests/test_concurrent.py"],"remaining_work":["implement"],"verification":[]}'
+                        if "-planning-" in session_name
+                        else 'Done\nRELAY_STATUS: {"status":"done","reason":"Ready","remaining_work":[],"verification":[]}'
+                    ),
+                ),
+                patch(
+                    "agent_relay.concurrent._read_exit_code",
+                    return_value=0,
+                ),
             ):
                 run_concurrent(
                     repo_root,
@@ -657,7 +756,9 @@ class RunConcurrentTests(TestCase):
             session_exists=lambda _session: True,
         )
         self.assertEqual(result.stop_reason, "incomplete")
-        self.assertEqual([outcome.control_status for outcome in result.outcomes], ["continue", "done"])
+        self.assertEqual(
+            [outcome.control_status for outcome in result.outcomes], ["continue", "done"]
+        )
 
     def test_nonzero_exit_is_agent_error(self) -> None:
         result = self._run(
@@ -735,7 +836,9 @@ class RunConcurrentTests(TestCase):
             self.assertEqual(result.stop_reason, "scope_violation")
             self.assertIn("src/unexpected.py", result.outcomes[0].scope_violations)
             self.assertEqual(result.outcomes[0].merged_paths, ())
-            self.assertEqual((repo_root / "README.md").read_text(encoding="utf-8"), "baseline readme\n")
+            self.assertEqual(
+                (repo_root / "README.md").read_text(encoding="utf-8"), "baseline readme\n"
+            )
             self.assertFalse((repo_root / "src" / "unexpected.py").exists())
 
     def test_delete_within_claim_merges_cleanly(self) -> None:
@@ -793,7 +896,9 @@ class RunConcurrentTests(TestCase):
             )
             self.assertEqual(result.stop_reason, "all_done")
             self.assertFalse((repo_root / "README.md").exists())
-            self.assertEqual((repo_root / "docs" / "README.md").read_text(encoding="utf-8"), "before\n")
+            self.assertEqual(
+                (repo_root / "docs" / "README.md").read_text(encoding="utf-8"), "before\n"
+            )
             self.assertEqual(set(result.outcomes[0].merged_paths), {"README.md", "docs/README.md"})
 
     def test_delete_conflict_requires_manual_resolution(self) -> None:
@@ -958,7 +1063,9 @@ class RunConcurrentTests(TestCase):
                 repo_root=repo_root,
             )
             self.assertEqual(result.stop_reason, "all_done")
-            self.assertEqual((repo_root / "README.md").read_text(encoding="utf-8"), "resolved line\n")
+            self.assertEqual(
+                (repo_root / "README.md").read_text(encoding="utf-8"), "resolved line\n"
+            )
             self.assertIsNotNone(result.conflict_artifact_path)
             self.assertTrue(Path(result.conflict_artifact_path).exists())
             self.assertTrue(all(not outcome.merge_conflicts for outcome in result.outcomes))
@@ -997,7 +1104,9 @@ class RunConcurrentTests(TestCase):
             self.assertIsNotNone(result.conflict_artifact_path)
             artifact = Path(result.conflict_artifact_path)
             self.assertTrue(artifact.exists())
-            self.assertIn('"status": "manual_resolution_required"', artifact.read_text(encoding="utf-8"))
+            self.assertIn(
+                '"status": "manual_resolution_required"', artifact.read_text(encoding="utf-8")
+            )
             self.assertTrue(any(outcome.merge_conflicts for outcome in result.outcomes))
 
     def test_continue_from_conflict_artifact_starts_resolution_and_review(self) -> None:
@@ -1010,8 +1119,16 @@ class RunConcurrentTests(TestCase):
                     "base_version": {"exists": True, "path": "conflicts/base/README.md"},
                     "repo_version": {"exists": True, "path": "conflicts/repo/README.md"},
                     "contributors": [
-                        {"slot": 0, "agent": "claude", "version_path": "conflicts/slot-00/README.md"},
-                        {"slot": 1, "agent": "codex", "version_path": "conflicts/slot-01/README.md"},
+                        {
+                            "slot": 0,
+                            "agent": "claude",
+                            "version_path": "conflicts/slot-00/README.md",
+                        },
+                        {
+                            "slot": 1,
+                            "agent": "codex",
+                            "version_path": "conflicts/slot-01/README.md",
+                        },
                     ],
                 }
             ],
@@ -1048,8 +1165,13 @@ class RunConcurrentTests(TestCase):
                 repo_root=repo_root,
             )
             self.assertEqual(result.stop_reason, "all_done")
-            self.assertEqual((repo_root / "README.md").read_text(encoding="utf-8"), "resolved from continuation\n")
-            self.assertEqual([outcome.phase for outcome in result.outcomes], ["resolution", "review"])
+            self.assertEqual(
+                (repo_root / "README.md").read_text(encoding="utf-8"),
+                "resolved from continuation\n",
+            )
+            self.assertEqual(
+                [outcome.phase for outcome in result.outcomes], ["resolution", "review"]
+            )
             self.assertTrue(all(outcome.control_status == "done" for outcome in result.outcomes))
 
     def test_continue_from_binary_conflict_artifact_requires_manual_resolution(self) -> None:
@@ -1062,7 +1184,11 @@ class RunConcurrentTests(TestCase):
                     "base_version": {"exists": True, "path": "conflicts/base/assets/logo.bin"},
                     "repo_version": {"exists": True, "path": "conflicts/repo/assets/logo.bin"},
                     "contributors": [
-                        {"slot": 0, "agent": "claude", "version_path": "conflicts/slot-00/assets/logo.bin"},
+                        {
+                            "slot": 0,
+                            "agent": "claude",
+                            "version_path": "conflicts/slot-00/assets/logo.bin",
+                        },
                     ],
                 }
             ],
@@ -1116,7 +1242,9 @@ class RunConcurrentTests(TestCase):
             )
             self.assertEqual(result.stop_reason, "scope_violation")
             self.assertIn("README.md", result.outcomes[1].scope_violations)
-            self.assertEqual((repo_root / "README.md").read_text(encoding="utf-8"), "claimed change\n")
+            self.assertEqual(
+                (repo_root / "README.md").read_text(encoding="utf-8"), "claimed change\n"
+            )
 
     def test_killed_tmux_session_is_interrupted(self) -> None:
         result = self._run(
@@ -1148,43 +1276,55 @@ class RunConcurrentTests(TestCase):
                     destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
                 return worktree_path
 
-            with patch("agent_relay.concurrent._require_tmux"), patch(
-                "agent_relay.concurrent.require_available"
-            ), patch(
-                "agent_relay.concurrent.start_session"
-            ), patch(
-                "agent_relay.concurrent._current_repo_file_paths",
-                return_value=("README.md",),
-            ), patch(
-                "agent_relay.concurrent._build_baseline_manifest",
-                return_value={"README.md": sha256_path(repo_root / "README.md")},
-            ), patch(
-                "agent_relay.concurrent._create_agent_worktree",
-                side_effect=fake_create_worktree,
-            ), patch(
-                "agent_relay.concurrent._cleanup_worktrees",
-            ), patch(
-                "agent_relay.concurrent._tmux",
-                return_value=subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="", stderr=""),
-            ), patch(
-                "agent_relay.concurrent._tmux_session_exists",
-                return_value=True,
-            ), patch(
-                "agent_relay.concurrent._tmux_pane_dead",
-                return_value=False,
-            ), patch(
-                "agent_relay.concurrent._tmux_capture_pane",
-                side_effect=lambda session_name, _slot: (
-                    'Still running\nRELAY_STATUS: {"status":"planning","reason":"Work in progress","claims":["README.md"],"remaining_work":["finish"],"verification":[]}'
-                    if int(session_name.rsplit("-", 1)[-1]) == 0
-                    else ""
+            with (
+                patch("agent_relay.concurrent._require_tmux"),
+                patch("agent_relay.concurrent.require_available"),
+                patch("agent_relay.concurrent.start_session"),
+                patch(
+                    "agent_relay.concurrent._current_repo_file_paths",
+                    return_value=("README.md",),
                 ),
-            ), patch(
-                "agent_relay.concurrent._read_exit_code",
-                return_value=None,
-            ), patch(
-                "time.time",
-                return_value=10**20,
+                patch(
+                    "agent_relay.concurrent._build_baseline_manifest",
+                    return_value={"README.md": sha256_path(repo_root / "README.md")},
+                ),
+                patch(
+                    "agent_relay.concurrent._create_agent_worktree",
+                    side_effect=fake_create_worktree,
+                ),
+                patch(
+                    "agent_relay.concurrent._cleanup_worktrees",
+                ),
+                patch(
+                    "agent_relay.concurrent._tmux",
+                    return_value=subprocess.CompletedProcess(
+                        args=["tmux"], returncode=0, stdout="", stderr=""
+                    ),
+                ),
+                patch(
+                    "agent_relay.concurrent._tmux_session_exists",
+                    return_value=True,
+                ),
+                patch(
+                    "agent_relay.concurrent._tmux_pane_dead",
+                    return_value=False,
+                ),
+                patch(
+                    "agent_relay.concurrent._tmux_capture_pane",
+                    side_effect=lambda session_name, _slot: (
+                        'Still running\nRELAY_STATUS: {"status":"planning","reason":"Work in progress","claims":["README.md"],"remaining_work":["finish"],"verification":[]}'
+                        if int(session_name.rsplit("-", 1)[-1]) == 0
+                        else ""
+                    ),
+                ),
+                patch(
+                    "agent_relay.concurrent._read_exit_code",
+                    return_value=None,
+                ),
+                patch(
+                    "time.time",
+                    return_value=10**20,
+                ),
             ):
                 result = run_concurrent(
                     repo_root,
@@ -1223,50 +1363,62 @@ class RunConcurrentTests(TestCase):
                     (worktree_path / "README.md").write_text("timed out draft\n", encoding="utf-8")
                 return worktree_path
 
-            with patch("agent_relay.concurrent._require_tmux"), patch(
-                "agent_relay.concurrent.require_available"
-            ), patch(
-                "agent_relay.concurrent.start_session"
-            ), patch(
-                "agent_relay.concurrent._current_repo_file_paths",
-                return_value=tuple(sorted(baseline_files)),
-            ), patch(
-                "agent_relay.concurrent._build_baseline_manifest",
-                side_effect=lambda _repo_root, _relative_paths: {
-                    relative_path: sha256_path(repo_root / relative_path)
-                    for relative_path in baseline_files
-                },
-            ), patch(
-                "agent_relay.concurrent._create_agent_worktree",
-                side_effect=fake_create_worktree,
-            ), patch(
-                "agent_relay.concurrent._cleanup_worktrees",
-            ), patch(
-                "agent_relay.concurrent._tmux",
-                return_value=subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="", stderr=""),
-            ), patch(
-                "agent_relay.concurrent._tmux_session_exists",
-                return_value=True,
-            ), patch(
-                "agent_relay.concurrent._tmux_pane_dead",
-                side_effect=lambda session_name, _slot: "-planning-" in session_name,
-            ), patch(
-                "agent_relay.concurrent._tmux_capture_pane",
-                side_effect=lambda session_name, _slot: (
-                    (
-                        'Plan\nRELAY_STATUS: {"status":"planning","reason":"Docs","claims":[{"path":"README.md","role":"owner"}],"remaining_work":["docs"],"verification":[]}'
-                        if session_name.endswith("-00")
-                        else 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Tests","claims":[{"path":"tests/test_concurrent.py","role":"owner"}],"remaining_work":["tests"],"verification":[]}'
-                    )
-                    if "-planning-" in session_name
-                    else 'Still running\nRELAY_STATUS: {"status":"continue","reason":"Need more time","remaining_work":["polish"],"verification":[]}'
+            with (
+                patch("agent_relay.concurrent._require_tmux"),
+                patch("agent_relay.concurrent.require_available"),
+                patch("agent_relay.concurrent.start_session"),
+                patch(
+                    "agent_relay.concurrent._current_repo_file_paths",
+                    return_value=tuple(sorted(baseline_files)),
                 ),
-            ), patch(
-                "agent_relay.concurrent._read_exit_code",
-                side_effect=lambda path: 0 if path.name == "planning-exit-code.txt" else None,
-            ), patch(
-                "time.time",
-                side_effect=[0, 0, 10**20, 10**20, 10**20],
+                patch(
+                    "agent_relay.concurrent._build_baseline_manifest",
+                    side_effect=lambda _repo_root, _relative_paths: {
+                        relative_path: sha256_path(repo_root / relative_path)
+                        for relative_path in baseline_files
+                    },
+                ),
+                patch(
+                    "agent_relay.concurrent._create_agent_worktree",
+                    side_effect=fake_create_worktree,
+                ),
+                patch(
+                    "agent_relay.concurrent._cleanup_worktrees",
+                ),
+                patch(
+                    "agent_relay.concurrent._tmux",
+                    return_value=subprocess.CompletedProcess(
+                        args=["tmux"], returncode=0, stdout="", stderr=""
+                    ),
+                ),
+                patch(
+                    "agent_relay.concurrent._tmux_session_exists",
+                    return_value=True,
+                ),
+                patch(
+                    "agent_relay.concurrent._tmux_pane_dead",
+                    side_effect=lambda session_name, _slot: "-planning-" in session_name,
+                ),
+                patch(
+                    "agent_relay.concurrent._tmux_capture_pane",
+                    side_effect=lambda session_name, _slot: (
+                        (
+                            'Plan\nRELAY_STATUS: {"status":"planning","reason":"Docs","claims":[{"path":"README.md","role":"owner"}],"remaining_work":["docs"],"verification":[]}'
+                            if session_name.endswith("-00")
+                            else 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Tests","claims":[{"path":"tests/test_concurrent.py","role":"owner"}],"remaining_work":["tests"],"verification":[]}'
+                        )
+                        if "-planning-" in session_name
+                        else 'Still running\nRELAY_STATUS: {"status":"continue","reason":"Need more time","remaining_work":["polish"],"verification":[]}'
+                    ),
+                ),
+                patch(
+                    "agent_relay.concurrent._read_exit_code",
+                    side_effect=lambda path: 0 if path.name == "planning-exit-code.txt" else None,
+                ),
+                patch(
+                    "time.time",
+                    side_effect=[0, 0, 10**20, 10**20, 10**20],
+                ),
             ):
                 result = run_concurrent(
                     repo_root,
@@ -1276,7 +1428,9 @@ class RunConcurrentTests(TestCase):
                 )
             self.assertEqual(result.stop_reason, "max_time")
             self.assertEqual(result.outcomes[0].merged_paths, ("README.md",))
-            self.assertEqual((repo_root / "README.md").read_text(encoding="utf-8"), "timed out draft\n")
+            self.assertEqual(
+                (repo_root / "README.md").read_text(encoding="utf-8"), "timed out draft\n"
+            )
 
     def test_inline_done_marker_text_does_not_count(self) -> None:
         result = self._run(
@@ -1316,44 +1470,55 @@ class RunConcurrentTests(TestCase):
                     destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
                 return worktree_path
 
-            with patch("agent_relay.concurrent._require_tmux"), patch(
-                "agent_relay.concurrent.require_available"
-            ), patch(
-                "agent_relay.concurrent.start_session"
-            ), patch(
-                "agent_relay.concurrent._current_repo_file_paths",
-                return_value=("README.md",),
-            ), patch(
-                "agent_relay.concurrent._build_baseline_manifest",
-                return_value={"README.md": sha256_path(repo_root / "README.md")},
-            ), patch(
-                "agent_relay.concurrent._create_agent_worktree",
-                side_effect=fake_create_worktree,
-            ), patch(
-                "agent_relay.concurrent._cleanup_worktrees",
-            ), patch(
-                "agent_relay.concurrent._tmux",
-                return_value=subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="", stderr=""),
-            ), patch(
-                "agent_relay.concurrent._tmux_session_exists",
-                return_value=True,
-            ), patch(
-                "agent_relay.concurrent._tmux_pane_dead",
-                return_value=True,
-            ), patch(
-                "agent_relay.concurrent._tmux_capture_pane",
-                side_effect=lambda session_name, _slot: (
-                    (
-                        'Plan\nRELAY_STATUS: {"status":"planning","reason":"Docs","claims":["README.md"],"remaining_work":["docs"],"verification":[]}'
-                        if session_name.endswith("-00")
-                        else 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Tests","claims":["tests/test_concurrent.py"],"remaining_work":["tests"],"verification":[]}'
-                    )
-                    if "-planning-" in session_name
-                    else f"implementation slot {int(session_name.rsplit('-', 1)[-1])} snapshot"
+            with (
+                patch("agent_relay.concurrent._require_tmux"),
+                patch("agent_relay.concurrent.require_available"),
+                patch("agent_relay.concurrent.start_session"),
+                patch(
+                    "agent_relay.concurrent._current_repo_file_paths",
+                    return_value=("README.md",),
                 ),
-            ), patch(
-                "agent_relay.concurrent._read_exit_code",
-                return_value=0,
+                patch(
+                    "agent_relay.concurrent._build_baseline_manifest",
+                    return_value={"README.md": sha256_path(repo_root / "README.md")},
+                ),
+                patch(
+                    "agent_relay.concurrent._create_agent_worktree",
+                    side_effect=fake_create_worktree,
+                ),
+                patch(
+                    "agent_relay.concurrent._cleanup_worktrees",
+                ),
+                patch(
+                    "agent_relay.concurrent._tmux",
+                    return_value=subprocess.CompletedProcess(
+                        args=["tmux"], returncode=0, stdout="", stderr=""
+                    ),
+                ),
+                patch(
+                    "agent_relay.concurrent._tmux_session_exists",
+                    return_value=True,
+                ),
+                patch(
+                    "agent_relay.concurrent._tmux_pane_dead",
+                    return_value=True,
+                ),
+                patch(
+                    "agent_relay.concurrent._tmux_capture_pane",
+                    side_effect=lambda session_name, _slot: (
+                        (
+                            'Plan\nRELAY_STATUS: {"status":"planning","reason":"Docs","claims":["README.md"],"remaining_work":["docs"],"verification":[]}'
+                            if session_name.endswith("-00")
+                            else 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Tests","claims":["tests/test_concurrent.py"],"remaining_work":["tests"],"verification":[]}'
+                        )
+                        if "-planning-" in session_name
+                        else f"implementation slot {int(session_name.rsplit('-', 1)[-1])} snapshot"
+                    ),
+                ),
+                patch(
+                    "agent_relay.concurrent._read_exit_code",
+                    return_value=0,
+                ),
             ):
                 result = run_concurrent(
                     repo_root,
@@ -1361,7 +1526,9 @@ class RunConcurrentTests(TestCase):
                     task="Finish the task",
                 )
 
-                session_dir = repo_root / ".agent-relay" / "sessions" / result.session_id / "concurrent"
+                session_dir = (
+                    repo_root / ".agent-relay" / "sessions" / result.session_id / "concurrent"
+                )
                 self.assertEqual(
                     (session_dir / "agent-00" / "pane.txt").read_text(encoding="utf-8"),
                     "implementation slot 0 snapshot",
@@ -1371,7 +1538,13 @@ class RunConcurrentTests(TestCase):
                     "implementation slot 1 snapshot",
                 )
                 self.assertEqual(
-                    (repo_root / f"worktree-{result.session_id}-00" / ".agent-relay" / "concurrent" / "slot-01.txt").read_text(encoding="utf-8"),
+                    (
+                        repo_root
+                        / f"worktree-{result.session_id}-00"
+                        / ".agent-relay"
+                        / "concurrent"
+                        / "slot-01.txt"
+                    ).read_text(encoding="utf-8"),
                     "implementation slot 1 snapshot",
                 )
 
@@ -1390,7 +1563,9 @@ class RunConcurrentTests(TestCase):
             implementation_exit_codes={0: 0, 1: 0},
             pane_dead=lambda _session, _slot: True,
             session_exists=lambda _session: True,
-            on_agent_start=lambda slot, agent_key, tmux_session: started.append((slot, agent_key, tmux_session)),
+            on_agent_start=lambda slot, agent_key, tmux_session: started.append(
+                (slot, agent_key, tmux_session)
+            ),
         )
         self.assertEqual(
             started,
@@ -1420,40 +1595,51 @@ class RunConcurrentTests(TestCase):
                     destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
                 return worktree_path
 
-            with patch("agent_relay.concurrent._require_tmux"), patch(
-                "agent_relay.concurrent.require_available"
-            ), patch(
-                "agent_relay.concurrent.start_session"
-            ), patch(
-                "agent_relay.concurrent._current_repo_file_paths",
-                return_value=("README.md",),
-            ), patch(
-                "agent_relay.concurrent._build_baseline_manifest",
-                return_value={"README.md": sha256_path(repo_root / "README.md")},
-            ), patch(
-                "agent_relay.concurrent._create_agent_worktree",
-                side_effect=fake_create_worktree,
-            ), patch(
-                "agent_relay.concurrent._cleanup_worktrees",
-            ), patch(
-                "agent_relay.concurrent._tmux",
-                return_value=subprocess.CompletedProcess(args=["tmux"], returncode=0, stdout="", stderr=""),
-            ), patch(
-                "agent_relay.concurrent._tmux_session_exists",
-                return_value=True,
-            ), patch(
-                "agent_relay.concurrent._tmux_pane_dead",
-                return_value=True,
-            ), patch(
-                "agent_relay.concurrent._tmux_capture_pane",
-                side_effect=lambda session_name, _slot: (
-                    'Plan\nRELAY_STATUS: {"status":"planning","reason":"Own docs","claims":["README.md"],"remaining_work":["docs"],"verification":[]}'
-                    if session_name.endswith("-00")
-                    else 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Also own docs","claims":["README.md"],"remaining_work":["docs"],"verification":[]}'
+            with (
+                patch("agent_relay.concurrent._require_tmux"),
+                patch("agent_relay.concurrent.require_available"),
+                patch("agent_relay.concurrent.start_session"),
+                patch(
+                    "agent_relay.concurrent._current_repo_file_paths",
+                    return_value=("README.md",),
                 ),
-            ), patch(
-                "agent_relay.concurrent._read_exit_code",
-                return_value=0,
+                patch(
+                    "agent_relay.concurrent._build_baseline_manifest",
+                    return_value={"README.md": sha256_path(repo_root / "README.md")},
+                ),
+                patch(
+                    "agent_relay.concurrent._create_agent_worktree",
+                    side_effect=fake_create_worktree,
+                ),
+                patch(
+                    "agent_relay.concurrent._cleanup_worktrees",
+                ),
+                patch(
+                    "agent_relay.concurrent._tmux",
+                    return_value=subprocess.CompletedProcess(
+                        args=["tmux"], returncode=0, stdout="", stderr=""
+                    ),
+                ),
+                patch(
+                    "agent_relay.concurrent._tmux_session_exists",
+                    return_value=True,
+                ),
+                patch(
+                    "agent_relay.concurrent._tmux_pane_dead",
+                    return_value=True,
+                ),
+                patch(
+                    "agent_relay.concurrent._tmux_capture_pane",
+                    side_effect=lambda session_name, _slot: (
+                        'Plan\nRELAY_STATUS: {"status":"planning","reason":"Own docs","claims":["README.md"],"remaining_work":["docs"],"verification":[]}'
+                        if session_name.endswith("-00")
+                        else 'Plan\nRELAY_STATUS: {"status":"planning","reason":"Also own docs","claims":["README.md"],"remaining_work":["docs"],"verification":[]}'
+                    ),
+                ),
+                patch(
+                    "agent_relay.concurrent._read_exit_code",
+                    return_value=0,
+                ),
             ):
                 result = run_concurrent(
                     repo_root,
@@ -1492,8 +1678,9 @@ class RunConcurrentTests(TestCase):
 
     def test_continue_from_missing_session_raises(self) -> None:
         with TemporaryDirectory() as tmpdir:
-            with patch("agent_relay.concurrent._require_tmux"), patch(
-                "agent_relay.concurrent.require_available"
+            with (
+                patch("agent_relay.concurrent._require_tmux"),
+                patch("agent_relay.concurrent.require_available"),
             ):
                 with self.assertRaises(SystemExit) as ctx:
                     run_concurrent(

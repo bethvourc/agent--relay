@@ -6,7 +6,6 @@ import tempfile
 from pathlib import Path
 from unittest import TestCase
 
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
@@ -149,9 +148,22 @@ class TransactionTests(TestCase):
 
             report = recover_session_transactions(repo_root, fixture["session_id"])
             view = load_session_view(repo_root, fixture["session_id"])
-            quarantine = repo_root / ".agent-relay" / "sessions" / fixture["session_id"] / "recovery" / "quarantine"
+            quarantine = (
+                repo_root
+                / ".agent-relay"
+                / "sessions"
+                / fixture["session_id"]
+                / "recovery"
+                / "quarantine"
+            )
             promoted_dir = (
-                repo_root / ".agent-relay" / "sessions" / fixture["session_id"] / "objects" / "checkpoints" / checkpoint_id
+                repo_root
+                / ".agent-relay"
+                / "sessions"
+                / fixture["session_id"]
+                / "objects"
+                / "checkpoints"
+                / checkpoint_id
             )
 
             self.assertEqual(report.quarantined_transactions, 1)

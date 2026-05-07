@@ -1,11 +1,12 @@
 """Tests for agent discovery functionality."""
+
 from __future__ import annotations
 
-from unittest import TestCase
-from unittest.mock import patch, MagicMock
 import subprocess
+from unittest import TestCase
+from unittest.mock import MagicMock, patch
 
-from agent_relay.agents import discover, require_available, DiscoveryResult
+from agent_relay.agents import discover, require_available
 
 
 class DiscoverTests(TestCase):
@@ -61,6 +62,7 @@ class DetectVersionTests(TestCase):
     @patch("subprocess.run")
     def test_returns_first_line(self, mock_run) -> None:
         from agent_relay.agents import _detect_version
+
         mock_run.return_value = MagicMock(returncode=0, stdout="claude v1.0.30\nmore info")
         result = _detect_version("claude")
         self.assertEqual(result, "claude v1.0.30")
@@ -68,6 +70,7 @@ class DetectVersionTests(TestCase):
     @patch("subprocess.run")
     def test_returns_none_on_failure(self, mock_run) -> None:
         from agent_relay.agents import _detect_version
+
         mock_run.side_effect = FileNotFoundError
         result = _detect_version("nonexistent")
         self.assertIsNone(result)
@@ -75,6 +78,7 @@ class DetectVersionTests(TestCase):
     @patch("subprocess.run")
     def test_returns_none_on_timeout(self, mock_run) -> None:
         from agent_relay.agents import _detect_version
+
         mock_run.side_effect = subprocess.TimeoutExpired("cmd", 5)
         result = _detect_version("slow_cli")
         self.assertIsNone(result)

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 STATE_DIRNAME = ".agent-relay"
 LAYOUT_VERSION = "2"
 OBJECT_DIRNAMES = {
@@ -79,7 +78,9 @@ def object_dir(repo_root: Path, session_id: str, object_kind: str, object_id: st
     return objects_dir(repo_root, session_id) / object_dirname(object_kind) / object_id
 
 
-def object_manifest_path(repo_root: Path, session_id: str, object_kind: str, object_id: str) -> Path:
+def object_manifest_path(
+    repo_root: Path, session_id: str, object_kind: str, object_id: str
+) -> Path:
     return object_dir(repo_root, session_id, object_kind, object_id) / "manifest.json"
 
 
@@ -101,6 +102,7 @@ def derived_view_path(repo_root: Path, session_id: str) -> Path:
 
 def recovery_dir(repo_root: Path, session_id: str) -> Path:
     return session_root(repo_root, session_id) / "recovery"
+
 
 def pending_tx_dir(repo_root: Path, session_id: str) -> Path:
     return recovery_dir(repo_root, session_id) / "pending-tx"

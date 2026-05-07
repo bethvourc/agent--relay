@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import io
 import json
-from contextlib import redirect_stdout
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
@@ -25,7 +24,6 @@ from agent_relay.layout import (
 )
 from agent_relay.ui import create_console
 from agent_relay.watch import WatchEvent
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -132,14 +130,10 @@ def _status_change_event(to_status: str, sequence: int = 99) -> WatchEvent:
 
 class ParseHeaderPairsTests(TestCase):
     def test_colon_separator(self) -> None:
-        self.assertEqual(
-            parse_header_pairs(["X-Token: abc"]), {"X-Token": "abc"}
-        )
+        self.assertEqual(parse_header_pairs(["X-Token: abc"]), {"X-Token": "abc"})
 
     def test_equals_separator(self) -> None:
-        self.assertEqual(
-            parse_header_pairs(["X-Token=abc"]), {"X-Token": "abc"}
-        )
+        self.assertEqual(parse_header_pairs(["X-Token=abc"]), {"X-Token": "abc"})
 
     def test_invalid_header_raises(self) -> None:
         with self.assertRaises(ValueError):
@@ -266,11 +260,7 @@ class TailJsonlAlertsTests(TestCase):
             source = _FakeSource(repo, "s1", [_turn_completed_event(1)])
             buf = io.StringIO()
             tail_jsonl(source, output=buf, alert_config=cfg)
-        lines = [
-            json.loads(line)
-            for line in buf.getvalue().splitlines()
-            if line.strip()
-        ]
+        lines = [json.loads(line) for line in buf.getvalue().splitlines() if line.strip()]
         kinds = [obj["kind"] for obj in lines]
         self.assertIn("metrics.alert", kinds)
         alert = next(obj for obj in lines if obj["kind"] == "metrics.alert")
@@ -287,11 +277,7 @@ class TailJsonlAlertsTests(TestCase):
             source = _FakeSource(repo, "s1", [_turn_completed_event(1)])
             buf = io.StringIO()
             tail_jsonl(source, output=buf, alert_config=AlertConfig())
-        kinds = [
-            json.loads(line)["kind"]
-            for line in buf.getvalue().splitlines()
-            if line.strip()
-        ]
+        kinds = [json.loads(line)["kind"] for line in buf.getvalue().splitlines() if line.strip()]
         self.assertNotIn("metrics.alert", kinds)
 
 
@@ -312,8 +298,12 @@ class WebhookDeliveryTests(TestCase):
 
             class _Resp:
                 status = 200
-                def __enter__(self): return self
-                def __exit__(self, *a): return False
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *a):
+                    return False
 
             def fake_urlopen(req, timeout=5.0):
                 posted.append((req.full_url, req.data, dict(req.header_items())))
@@ -387,8 +377,12 @@ class WebhookDeliveryTests(TestCase):
 
             class _Resp:
                 status = 200
-                def __enter__(self): return self
-                def __exit__(self, *a): return False
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *a):
+                    return False
 
             with patch(
                 "agent_relay.exporters.jsonl.urllib_request.urlopen",
@@ -441,9 +435,7 @@ class CmdMetricsTailTests(TestCase):
             repo = Path(tmp)
             _scaffold(repo, "s1")
             _write_view(repo, "s1")
-            args = _make_args(
-                repo=tmp, session_id="s1", webhook_header=["nocolon"]
-            )
+            args = _make_args(repo=tmp, session_id="s1", webhook_header=["nocolon"])
             with patch("agent_relay.cli.is_session", return_value=True):
                 rc = cmd_metrics_tail(args)
         self.assertEqual(rc, 2)

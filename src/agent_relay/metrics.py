@@ -11,10 +11,11 @@ watch panel) are all thin renderers on top of these dataclasses.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any
 
 from agent_relay.layout import (
     derived_view_path,
@@ -23,7 +24,6 @@ from agent_relay.layout import (
     turns_dir,
 )
 from agent_relay.storage import is_session
-
 
 _FAILURE_STATUSES = frozenset({"error", "failed", "interrupted", "timeout"})
 _KNOWN_AGENTS = ("claude", "codex", "gemini")
@@ -59,7 +59,7 @@ class TokenUsage:
             "total": self.total,
         }
 
-    def __add__(self, other: "TokenUsage") -> "TokenUsage":
+    def __add__(self, other: TokenUsage) -> TokenUsage:
         return TokenUsage(
             input=_add_optional(self.input, other.input),
             output=_add_optional(self.output, other.output),
@@ -550,12 +550,10 @@ def _tokens_from_usage(usage: Mapping[str, Any]) -> TokenUsage:
             or usage.get("candidatesTokenCount")
         ),
         cache_read=_coerce_int(
-            usage.get("cache_read_input_tokens")
-            or usage.get("cacheReadInputTokens")
+            usage.get("cache_read_input_tokens") or usage.get("cacheReadInputTokens")
         ),
         cache_creation=_coerce_int(
-            usage.get("cache_creation_input_tokens")
-            or usage.get("cacheCreationInputTokens")
+            usage.get("cache_creation_input_tokens") or usage.get("cacheCreationInputTokens")
         ),
     )
 
@@ -605,9 +603,7 @@ def _guess_agent_from_events(events: list[dict[str, Any]]) -> str | None:
             if role == "model":
                 return "gemini"
         # Claude result events carry distinctive modelUsage / total_cost_usd.
-        if event.get("type") == "result" and (
-            "modelUsage" in event or "total_cost_usd" in event
-        ):
+        if event.get("type") == "result" and ("modelUsage" in event or "total_cost_usd" in event):
             return "claude"
     return None
 

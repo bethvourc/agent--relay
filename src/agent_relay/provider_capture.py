@@ -50,7 +50,9 @@ def capture_provider_state(
         )
 
     if completed.returncode != 0:
-        error = completed.stderr.strip() or completed.stdout.strip() or f"exit {completed.returncode}"
+        error = (
+            completed.stderr.strip() or completed.stdout.strip() or f"exit {completed.returncode}"
+        )
         return ProviderCaptureResult(
             source_agent=agent_key,
             hook_name=spec.hook_name,
@@ -71,14 +73,18 @@ def capture_provider_state(
         return ProviderCaptureResult(
             source_agent=agent_key,
             hook_name=spec.hook_name,
-            warnings=(f"{get_agent_display_name(agent_key)} capture hook returned invalid JSON: {exc}",),
+            warnings=(
+                f"{get_agent_display_name(agent_key)} capture hook returned invalid JSON: {exc}",
+            ),
         )
 
     if not isinstance(payload, dict):
         return ProviderCaptureResult(
             source_agent=agent_key,
             hook_name=spec.hook_name,
-            warnings=(f"{get_agent_display_name(agent_key)} capture hook returned an unexpected payload shape.",),
+            warnings=(
+                f"{get_agent_display_name(agent_key)} capture hook returned an unexpected payload shape.",
+            ),
         )
 
     resumable_state = _normalize_resumable_state_text(payload.get("resumable_state"))
