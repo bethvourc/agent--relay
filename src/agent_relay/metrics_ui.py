@@ -23,6 +23,7 @@ from agent_relay.metrics import (
     TokenUsage,
     TurnMetrics,
 )
+from agent_relay.ui import STATUS_SYMBOLS, status_badge
 
 
 # ---------------------------------------------------------------------------
@@ -35,7 +36,12 @@ def render_session_metrics(console: Console, metrics: SessionMetrics) -> None:
     header.append("session ", style="muted")
     header.append(metrics.session_id, style="brand")
     header.append("  ")
-    header.append(f"{metrics.current_agent} ({metrics.current_status})", style="value")
+    header.append(metrics.current_agent, style="value")
+    header.append("  ")
+    if metrics.current_status in STATUS_SYMBOLS:
+        header.append_text(status_badge(metrics.current_status))
+    else:
+        header.append(metrics.current_status, style="value")
     console.print(header)
 
     if metrics.objective:
@@ -280,10 +286,26 @@ _fmt_cost = fmt_cost
 _fmt_duration_ms = fmt_duration_ms
 
 
+# DS-canonical turn-status aliases. Internal control-protocol values
+# like ``propose_done`` get mapped onto the fixed status vocabulary so
+# the per-turn `status` column stays aligned with the rest of the UI.
+_TURN_STATUS_ALIASES = {
+    "propose_done": "done",
+    "propose_continue": "active",
+    "propose_blocked": "blocked",
+    "succeeded": "ok",
+}
+
+
 def _status_text(status: str | None, succeeded: bool) -> str:
-    if status:
+    if not status:
+        return "ok" if succeeded else "failed"
+    if status in _TURN_STATUS_ALIASES:
+        return _TURN_STATUS_ALIASES[status]
+    if status in STATUS_SYMBOLS:
         return status
-    return "ok" if succeeded else "err"
+    # Unknown internal value — fall back to the binary outcome.
+    return "ok" if succeeded else "failed"
 
 
 __all__ = [
