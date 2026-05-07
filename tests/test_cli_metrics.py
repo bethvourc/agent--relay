@@ -327,9 +327,9 @@ class WatchMetricsPanelTests(TestCase):
         capture.record = True
         capture.print(panel)
         output = capture.export_text()
-        self.assertIn("Tokens", output)
-        self.assertIn("Cost", output)
-        self.assertIn("Turns", output)
+        self.assertIn("tokens", output)
+        self.assertIn("cost", output)
+        self.assertIn("turns", output)
         self.assertIn("3", output)
 
 

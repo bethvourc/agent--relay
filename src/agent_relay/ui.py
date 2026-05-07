@@ -17,47 +17,80 @@ from rich.theme import Theme
 from rich.tree import Tree
 
 from agent_relay import __version__
+from agent_relay import tokens as T
 
 RELAY_THEME = Theme(
     {
-        "brand": "bold #FFB000",
-        "brand.dim": "#B87A00",
+        # Brand & signal accents
+        "brand": f"bold {T.BRAND}",
+        "brand.dim": T.BRAND_DIM,
+        "signal": f"bold {T.SIGNAL}",
+        "signal.dim": T.SIGNAL_DIM,
+        # Foreground — existing keys preserved for back-compat;
+        # `fg.N` are the new explicit tokens consumers should migrate to.
         "heading": "bold white",
         "label": "dim white",
         "value": "white",
-        "path": "dim cyan",
-        "success": "bold green",
-        "error": "bold red",
-        "warning": "bold yellow",
-        "status.active": "bold green",
-        "status.paused": "bold yellow",
-        "status.blocked": "bold red",
-        "status.completed": "bold #FFB000",
-        "status.handoff_prepared": "bold cyan",
-        "status.ready_for_handoff": "bold cyan",
-        "status.launching": "bold magenta",
-        "status.launch_failed": "bold red",
-        "status.awaiting_resume": "bold #FFB000",
-        "status.degraded": "bold yellow",
-        "status.corrupt": "bold red",
-        "status.ready": "bold dim white",
-        "status.succeeded": "bold green",
-        "status.failed": "bold red",
-        "status.interrupted": "bold yellow",
-        "status.not_run": "dim",
-        "agent.claude": "bold #FFB000",
-        "agent.codex": "bold cyan",
-        "agent.gemini": "bold #4285F4",
         "muted": "dim",
-        "banner.border": "#B87A00",
-        "banner.accent": "bold #FFB000",
-        "banner.title": "bold #FFB000",
-        "banner.subtitle": "bold white",
-        "banner.note": "dim white",
-        "banner.prompt": "bold #FFB000",
-        "banner.icon": "#B87A00",
-        "banner.signal": "bold #7EE34B",
-        "banner.surface": "on #121212",
+        "path": "dim cyan",
+        "fg.1": T.FG_1,
+        "fg.2": T.FG_2,
+        "fg.3": T.FG_3,
+        "fg.4": T.FG_4,
+        # Surfaces (used as `on` backgrounds)
+        "surface.0": f"on {T.SURFACE_0}",
+        "surface.1": f"on {T.SURFACE_1}",
+        "surface.2": f"on {T.SURFACE_2}",
+        "surface.3": f"on {T.SURFACE_3}",
+        # Terminal cells are wider than 1px CSS hairlines; bind to fg-4
+        # (the DS "separators" gray) so borders stay visible against the
+        # default terminal background.
+        "surface.rule": T.FG_4,
+        # Semantic roles
+        "success": f"bold {T.SUCCESS}",
+        "error": f"bold {T.ERROR}",
+        "warning": f"bold {T.WARNING}",
+        "info": f"bold {T.INFO}",
+        # Status semantic
+        "status.active": f"bold {T.SUCCESS}",
+        "status.paused": f"bold {T.WARNING}",
+        "status.blocked": f"bold {T.ERROR}",
+        "status.completed": f"bold {T.BRAND}",
+        "status.handoff_prepared": f"bold {T.AGENT_CODEX}",
+        "status.ready_for_handoff": f"bold {T.AGENT_CODEX}",
+        "status.launching": f"bold {T.KIND_WORKSPACE}",
+        "status.launch_failed": f"bold {T.ERROR}",
+        "status.awaiting_resume": f"bold {T.BRAND}",
+        "status.degraded": f"bold {T.WARNING}",
+        "status.corrupt": f"bold {T.ERROR}",
+        "status.ready": f"bold {T.FG_3}",
+        "status.succeeded": f"bold {T.SUCCESS}",
+        "status.failed": f"bold {T.ERROR}",
+        "status.interrupted": f"bold {T.WARNING}",
+        "status.not_run": T.FG_4,
+        # Agent palette
+        "agent.claude": f"bold {T.AGENT_CLAUDE}",
+        "agent.codex": f"bold {T.AGENT_CODEX}",
+        "agent.gemini": f"bold {T.AGENT_GEMINI}",
+        # Event kinds (watch_ui)
+        "kind.journal": T.KIND_JOURNAL,
+        "kind.workspace": T.KIND_WORKSPACE,
+        "kind.turn": f"bold {T.KIND_TURN}",
+        "kind.turn_started": f"bold {T.SUCCESS}",
+        "kind.turn_completed": f"bold {T.KIND_TURN}",
+        "kind.output": T.KIND_OUTPUT,
+        "kind.status": f"bold {T.KIND_STATUS}",
+        "kind.heartbeat": T.KIND_HEARTBEAT,
+        # Banner
+        "banner.border": T.BRAND_DIM,
+        "banner.accent": f"bold {T.BRAND}",
+        "banner.title": f"bold {T.BRAND}",
+        "banner.subtitle": f"bold {T.FG_1}",
+        "banner.note": T.FG_2,
+        "banner.prompt": f"bold {T.BRAND}",
+        "banner.icon": T.BRAND_DIM,
+        "banner.signal": f"bold {T.SIGNAL}",
+        "banner.surface": f"on {T.SURFACE_1}",
     }
 )
 
@@ -144,8 +177,8 @@ def render_banner(console: Console) -> None:
 
 
 def _banner_icon() -> Text:
-    signal = "bold #7EE34B"
-    frame = "#B87A00"
+    signal = "banner.signal"
+    frame = "banner.icon"
 
     icon = Text()
     # Antenna
@@ -170,19 +203,14 @@ def _banner_body(*, include_tips: bool) -> Text:
     body.append("Agent Relay", style="banner.title")
     body.append(f" v{__version__}", style="muted")
     body.append("\n")
-    body.append("Local-first agent handoff CLI", style="banner.subtitle")
-    body.append("\n")
-    body.append(
-        "Capture context, hand off cleanly, and resume with full session state intact.",
-        style="banner.note",
-    )
+    body.append("local-first agent handoff CLI", style="banner.subtitle")
     if include_tips:
         body.append("\n\n")
-        body.append("Help:", style="banner.note")
+        body.append("help:", style="banner.note")
         body.append(" ", style="banner.note")
         body.append("agent-relay --help", style="banner.prompt")
         body.append("  •  ", style="banner.border")
-        body.append("Sessions:", style="banner.note")
+        body.append("sessions:", style="banner.note")
         body.append(" ", style="banner.note")
         body.append("agent-relay status", style="banner.prompt")
     return body
@@ -606,25 +634,25 @@ def render_inspect(console: Console, session_dict: dict[str, Any]) -> None:
 
     if decisions or blockers or research_notes or implementation_notes:
         console.print()
-        console.print(Rule(style="brand.dim"))
+        console.print(Rule(style="surface.rule"))
 
     if decisions:
-        console.print("\n  [heading]Decisions[/]")
+        console.print("\n  [heading]decisions[/]")
         for d in decisions:
             console.print(f"    [brand]▸[/] {d}")
 
     if blockers:
-        console.print("\n  [heading]Blockers[/]")
+        console.print("\n  [heading]blockers[/]")
         for b in blockers:
             console.print(f"    [error]▸[/] {b}")
 
     if research_notes:
-        console.print("\n  [heading]Research Notes[/]")
+        console.print("\n  [heading]research notes[/]")
         for note in research_notes:
             console.print(f"    [brand]▸[/] {note}")
 
     if implementation_notes:
-        console.print("\n  [heading]Implementation Notes[/]")
+        console.print("\n  [heading]implementation notes[/]")
         for note in implementation_notes:
             console.print(f"    [brand]▸[/] {note}")
 
@@ -632,8 +660,8 @@ def render_inspect(console: Console, session_dict: dict[str, Any]) -> None:
     touched = session_dict.get("touched_files", [])
     if touched:
         console.print()
-        console.print(Rule(style="brand.dim"))
-        console.print("\n  [heading]Touched files[/]")
+        console.print(Rule(style="surface.rule"))
+        console.print("\n  [heading]touched files[/]")
         tree = Tree("  [muted].[/]")
         for f in touched:
             tree.add(f"[path]{f}[/]")
@@ -643,13 +671,13 @@ def render_inspect(console: Console, session_dict: dict[str, Any]) -> None:
     suggested_repair = session_dict.get("suggested_repair", [])
     if broken_paths or suggested_repair:
         console.print()
-        console.print(Rule(style="brand.dim"))
+        console.print(Rule(style="surface.rule"))
     if broken_paths:
-        console.print("\n  [heading]Broken paths[/]")
+        console.print("\n  [heading]broken paths[/]")
         for path in broken_paths:
             console.print(f"    [error]▸[/] [path]{path}[/]")
     if suggested_repair:
-        console.print("\n  [heading]Suggested repair[/]")
+        console.print("\n  [heading]suggested repair[/]")
         for command in suggested_repair:
             console.print(f"    [brand]▸[/] [value]{command}[/]")
 
@@ -657,13 +685,13 @@ def render_inspect(console: Console, session_dict: dict[str, Any]) -> None:
     handoffs = session_dict.get("handoffs", [])
     if handoffs:
         console.print()
-        console.print(Rule(style="brand.dim"))
-        console.print("\n  [heading]Handoff history[/]\n")
+        console.print(Rule(style="surface.rule"))
+        console.print("\n  [heading]handoff history[/]\n")
         table = Table(show_header=True, header_style="label", box=None, padding=(0, 2))
-        table.add_column("From", style="value")
-        table.add_column("To", style="value")
-        table.add_column("Reason", style="muted")
-        table.add_column("Status", style="value")
+        table.add_column("from", style="value")
+        table.add_column("to", style="value")
+        table.add_column("reason", style="muted")
+        table.add_column("status", style="value")
         for h in handoffs:
             table.add_row(
                 str(agent_badge(h["from_agent"])),
@@ -678,9 +706,9 @@ def render_inspect(console: Console, session_dict: dict[str, Any]) -> None:
     v_status = validation.get("status", "not_run")
     v_summary = validation.get("summary", "")
     console.print()
-    console.print(Rule(style="brand.dim"))
+    console.print(Rule(style="surface.rule"))
     console.print(
-        f"\n  [heading]Validation[/]  {status_badge(v_status) if v_status in STATUS_SYMBOLS else v_status}"
+        f"\n  [heading]validation[/]  {status_badge(v_status) if v_status in STATUS_SYMBOLS else v_status}"
     )
     if v_summary:
         console.print(f"    {v_summary}")
@@ -751,16 +779,16 @@ def render_dashboard(console: Console, sessions: list[dict[str, Any]]) -> None:
     table = Table(
         show_header=True,
         header_style="heading",
-        border_style="brand.dim",
-        title="[heading]Sessions[/]",
+        border_style="surface.rule",
+        title="[heading]sessions[/]",
         title_style="heading",
         padding=(0, 1),
     )
-    table.add_column("Session ID", style="brand", no_wrap=True)
-    table.add_column("Agent", no_wrap=True)
-    table.add_column("Status", no_wrap=True)
-    table.add_column("Objective", style="value")
-    table.add_column("Updated", style="muted", no_wrap=True)
+    table.add_column("session id", style="brand", no_wrap=True)
+    table.add_column("agent", no_wrap=True)
+    table.add_column("status", no_wrap=True)
+    table.add_column("objective", style="value")
+    table.add_column("updated", style="muted", no_wrap=True)
 
     for s in sessions:
         obj = s.get("objective", "")
@@ -791,7 +819,12 @@ def render_help(console: Console) -> None:
     compact = is_compact(console)
 
     if compact:
-        console.print("[heading]Usage[/]")
+        console.print("[heading]synopsis[/]")
+        console.print(
+            "  [brand]agent-relay[/] [muted]<command>[/] [muted][options] [args][/]"
+        )
+        console.print()
+        console.print("[heading]commands[/]")
         console.print()
         console.print(
             "  [brand]agent-relay <agent>[/]                  Relay to an agent"
@@ -820,6 +853,18 @@ def render_help(console: Console) -> None:
         )
         console.print("  [brand]agent-relay status[/]                  View sessions")
         console.print(
+            "  [brand]agent-relay watch <id>[/]              Live session view"
+        )
+        console.print(
+            "  [brand]agent-relay metrics [id][/]            Tokens, cost, duration"
+        )
+        console.print(
+            "  [brand]agent-relay metrics-tail <id>[/]       Stream metrics as JSONL"
+        )
+        console.print(
+            "  [brand]agent-relay metrics-serve[/]           Local dashboard + exporters"
+        )
+        console.print(
             "  [brand]agent-relay inspect-conflicts <id>[/]  Inspect saved conflict artifacts"
         )
         console.print(
@@ -827,15 +872,25 @@ def render_help(console: Console) -> None:
         )
         console.print()
         console.print(
-            "[heading]Aliases[/]  [muted]c = claude, x = codex (see: agent-relay discover)[/]"
+            "[heading]aliases[/]  [muted]c = claude, x = codex (see: agent-relay discover)[/]"
         )
         console.print()
         return
 
-    # Usage examples
+    # Synopsis — single-line, man-page style
+    synopsis = Text()
+    synopsis.append("  agent-relay", style="brand")
+    synopsis.append(" <command>", style="muted")
+    synopsis.append(" [options]", style="muted")
+    synopsis.append(" [args]", style="muted")
+    console.print("[heading]synopsis[/]")
+    console.print(synopsis)
+    console.print()
+
+    # Commands
     examples = Table(show_header=False, box=None, padding=(0, 2), pad_edge=True)
-    examples.add_column("Command", style="brand", no_wrap=True)
-    examples.add_column("Description", style="muted")
+    examples.add_column("command", style="brand", no_wrap=True)
+    examples.add_column("description", style="muted")
 
     examples.add_row("agent-relay <agent>", "Relay to an agent (codex, claude)")
     examples.add_row('agent-relay run c "fix tests"', "Single-agent managed run")
@@ -868,13 +923,33 @@ def render_help(console: Console) -> None:
     )
     examples.add_row("agent-relay discover", "Show available agents & aliases")
     examples.add_row("agent-relay status", "View all relay sessions")
+    examples.add_row(
+        "agent-relay watch <session>",
+        "Live session view (events, status, last turn state)",
+    )
+    examples.add_row(
+        "agent-relay watch <session> --metrics",
+        "Live view with running tokens/cost/duration panel",
+    )
+    examples.add_row(
+        "agent-relay metrics [session]",
+        "Token usage, cost, and duration totals",
+    )
+    examples.add_row(
+        "agent-relay metrics-tail <session>",
+        "Stream per-turn metrics as JSONL",
+    )
+    examples.add_row(
+        "agent-relay metrics-serve",
+        "Local metrics dashboard + Prometheus / OTLP exporters",
+    )
     examples.add_row("agent-relay clean", "Remove all sessions")
 
     console.print(
         Panel(
             examples,
             border_style="brand",
-            title="[heading]usage[/]",
+            title="[heading]commands[/]",
             title_align="left",
             padding=(1, 2),
             expand=False,
@@ -885,8 +960,8 @@ def render_help(console: Console) -> None:
 
     # Options
     opts = Table(show_header=False, box=None, padding=(0, 2), pad_edge=True)
-    opts.add_column("Flag", style="brand", no_wrap=True, min_width=14)
-    opts.add_column("Description", style="value")
+    opts.add_column("flag", style="brand", no_wrap=True, min_width=14)
+    opts.add_column("description", style="value")
 
     opts.add_row("--task   -t", "Task for agents (alternative to positional)")
     opts.add_row("--continue", "Continue from a prior relay session id")
@@ -913,6 +988,11 @@ def render_help(console: Console) -> None:
         )
     )
 
+    console.print()
+    console.print(
+        "  [heading]aliases[/]  [muted]c = claude, x = codex"
+        "  ·  see [/][brand]agent-relay discover[/]"
+    )
     console.print()
 
 
@@ -959,7 +1039,7 @@ def render_conflict_inspect(console: Console, summary: dict[str, Any]) -> None:
         path = str(item.get("path", "")).strip() or "?"
         kind = str(item.get("kind", "unknown")).strip() or "unknown"
         console.print(
-            f"  [brand]•[/] [value]{path}[/]  [muted]({kind})[/]", highlight=False
+            f"  [brand]▸[/] [value]{path}[/]  [muted]({kind})[/]", highlight=False
         )
         manual_reasons = item.get("manual_reasons", [])
         if isinstance(manual_reasons, list) and manual_reasons:
@@ -1128,11 +1208,11 @@ def render_error(console: Console, message: str) -> None:
 def render_discover_results(console: Console, results: list[Any]) -> None:
     render_banner(console)
     table = Table(box=None, padding=(0, 2), show_header=True, header_style="label")
-    table.add_column("Agent")
-    table.add_column("Alias")
-    table.add_column("Status")
-    table.add_column("Path")
-    table.add_column("Version")
+    table.add_column("agent")
+    table.add_column("alias")
+    table.add_column("status")
+    table.add_column("path")
+    table.add_column("version")
 
     for r in results:
         badge = agent_badge(r.key, short=True)
@@ -1404,7 +1484,7 @@ def _concurrent_next_action(result: "ConcurrentResult") -> str | None:  # noqa: 
         return "Adjust the planning claims so each agent has a concrete, non-conflicting slice, then rerun `race`."
     if result.stop_reason in {"max_time", "interrupted", "incomplete", "agent_error"}:
         return (
-            f"If you want to keep going, continue with "
+            f"To continue, run "
             f'`agent-relay race --continue {result.session_id} <agents> "continue the task"`.'
         )
     return None
