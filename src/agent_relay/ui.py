@@ -778,7 +778,37 @@ def render_dashboard(console: Console, sessions: list[dict[str, Any]]) -> None:
     console.print()
 
 
-def render_help(console: Console) -> None:
+_FALLBACK_COMMANDS: tuple[tuple[str, str], ...] = (
+    ("agent-relay <agent>", "Relay to a target agent (claude, codex, gemini)"),
+    ("agent-relay run", "Run a single agent in a Relay-managed session"),
+    ("agent-relay chat", "Turn-based agent-to-agent conversation"),
+    ("agent-relay race", "Concurrent workflow with planning, worktrees, and conflict recovery"),
+    ("agent-relay resolve", "Resume an unresolved race conflict"),
+    ("agent-relay inspect-conflicts", "Inspect saved conflict artifacts"),
+    ("agent-relay status", "Show relay sessions"),
+    ("agent-relay watch", "Live view of an in-progress session"),
+    ("agent-relay metrics", "Token / cost / latency metrics for sessions"),
+    ("agent-relay metrics-tail", "Stream metric events as JSONL"),
+    ("agent-relay metrics-serve", "Run a metrics exporter (Prometheus / OTLP)"),
+    ("agent-relay discover", "Detect available agent CLIs"),
+    ("agent-relay clean", "Remove all relay sessions"),
+)
+
+
+def render_help(
+    console: Console,
+    *,
+    commands: Sequence[tuple[str, str]] | None = None,
+) -> None:
+    """Render `agent-relay --help`.
+
+    ``commands`` is an iterable of ``(usage, description)`` pairs derived from
+    the live argparse tree by ``cli.iter_commands()`` — the single source of
+    truth so subcommands can never drift out of help. When called standalone
+    (e.g. from tests) we fall back to a static snapshot.
+    """
+    rows = list(commands) if commands is not None else list(_FALLBACK_COMMANDS)
+
     render_banner(console)
 
     compact = is_compact(console)
@@ -789,28 +819,9 @@ def render_help(console: Console) -> None:
         console.print()
         console.print("[heading]commands[/]")
         console.print()
-        console.print("  [brand]agent-relay <agent>[/]                  Relay to an agent")
-        console.print('  [brand]agent-relay run c "fix tests"[/]       Single-agent managed run')
-        console.print("  [brand]agent-relay codex[/]                   Relay to Codex")
-        console.print('  [brand]agent-relay claude --task "..."[/]     With instructions')
-        console.print('  [brand]agent-relay chat c x "fix tests"[/]    Turn-based conversation')
-        console.print(
-            '  [brand]agent-relay race c x "build auth"[/]   Parallel workflow with planning'
-        )
-        console.print("  [brand]agent-relay race --continue <id> ...[/] Continue a race session")
-        console.print(
-            "  [brand]agent-relay resolve [id][/]            Resume unresolved race conflicts"
-        )
-        console.print("  [brand]agent-relay discover[/]                Show available agents")
-        console.print("  [brand]agent-relay status[/]                  View sessions")
-        console.print("  [brand]agent-relay watch <id>[/]              Live session view")
-        console.print("  [brand]agent-relay metrics [id][/]            Tokens, cost, duration")
-        console.print("  [brand]agent-relay metrics-tail <id>[/]       Stream metrics as JSONL")
-        console.print("  [brand]agent-relay metrics-serve[/]           Local dashboard + exporters")
-        console.print(
-            "  [brand]agent-relay inspect-conflicts <id>[/]  Inspect saved conflict artifacts"
-        )
-        console.print("  [brand]agent-relay clean[/]                   Remove all sessions")
+        usage_width = max((len(usage) for usage, _ in rows), default=0)
+        for usage, desc in rows:
+            console.print(f"  [brand]{usage:<{usage_width}}[/]  {desc}")
         console.print()
         console.print(
             "[heading]aliases[/]  [muted]c = claude, x = codex (see: agent-relay discover)[/]"
@@ -828,53 +839,12 @@ def render_help(console: Console) -> None:
     console.print(synopsis)
     console.print()
 
-    # Commands
+    # Commands — auto-generated from the argparse tree
     examples = Table(show_header=False, box=None, padding=(0, 2), pad_edge=True)
     examples.add_column("command", style="brand", no_wrap=True)
     examples.add_column("description", style="muted")
-
-    examples.add_row("agent-relay <agent>", "Relay to an agent (codex, claude)")
-    examples.add_row('agent-relay run c "fix tests"', "Single-agent managed run")
-    examples.add_row('agent-relay claude --task "..."', "With instructions for the next agent")
-    examples.add_row("agent-relay codex --no-launch", "Create the packet without launching")
-    examples.add_row('agent-relay chat c x "fix tests"', "Turn-based agent conversation")
-    examples.add_row('agent-relay chat c x c "review" -n 6', "3-agent, 6 turns max")
-    examples.add_row(
-        'agent-relay race c x "build auth"',
-        "Parallel workflow: planning, worktrees, and conflict recovery",
-    )
-    examples.add_row(
-        'agent-relay race --continue <session> c x "continue"',
-        "Continue an interrupted, timed-out, or incomplete race",
-    )
-    examples.add_row("agent-relay resolve <session>", "Resume an unresolved race conflict")
-    examples.add_row("agent-relay resolve --latest", "Resume the latest unresolved race conflict")
-    examples.add_row(
-        "agent-relay inspect-conflicts <session>", "Inspect saved conflict artifacts and versions"
-    )
-    examples.add_row("agent-relay discover", "Show available agents & aliases")
-    examples.add_row("agent-relay status", "View all relay sessions")
-    examples.add_row(
-        "agent-relay watch <session>",
-        "Live session view (events, status, last turn state)",
-    )
-    examples.add_row(
-        "agent-relay watch <session> --metrics",
-        "Live view with running tokens/cost/duration panel",
-    )
-    examples.add_row(
-        "agent-relay metrics [session]",
-        "Token usage, cost, and duration totals",
-    )
-    examples.add_row(
-        "agent-relay metrics-tail <session>",
-        "Stream per-turn metrics as JSONL",
-    )
-    examples.add_row(
-        "agent-relay metrics-serve",
-        "Local metrics dashboard + Prometheus / OTLP exporters",
-    )
-    examples.add_row("agent-relay clean", "Remove all sessions")
+    for usage, desc in rows:
+        examples.add_row(usage, desc)
 
     console.print(
         Panel(

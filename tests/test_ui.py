@@ -275,7 +275,6 @@ class HelpRenderTests(TestCase):
         self.assertIn("clean", output)
         self.assertIn("resolve", output)
         self.assertIn("inspect-conflicts", output)
-        self.assertIn("race --continue", output)
         self.assertIn("Inspect saved", output)
         self.assertIn("artifacts", output)
 

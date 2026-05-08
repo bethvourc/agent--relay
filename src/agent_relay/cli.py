@@ -1508,13 +1508,50 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def iter_commands(parser: argparse.ArgumentParser) -> list[tuple[str, str]]:
+    """Return ``(usage, help_text)`` for every subcommand in declaration order.
+
+    Source of truth for `agent-relay --help` so a new subparser cannot drift
+    out of the help output. Agent-named subparsers (`claude`, `codex`,
+    `gemini`) collapse into a single ``agent-relay <agent>`` row to keep the
+    list terse — their per-agent flags live on each subparser's own --help.
+    """
+    subparsers_action = next(
+        (a for a in parser._actions if isinstance(a, argparse._SubParsersAction)),
+        None,
+    )
+    if subparsers_action is None:
+        return []
+
+    help_by_name = {
+        action.dest: (action.help or "") for action in subparsers_action._choices_actions
+    }
+
+    rows: list[tuple[str, str]] = []
+    seen_agents = False
+    for name in subparsers_action.choices:
+        if name in AGENT_NAMES:
+            if seen_agents:
+                continue
+            seen_agents = True
+            rows.append(
+                (
+                    "agent-relay <agent>",
+                    "Relay to a target agent (claude, codex, gemini)",
+                )
+            )
+            continue
+        rows.append((f"agent-relay {name}", help_by_name.get(name, "")))
+    return rows
+
+
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     args.console = create_console(json_mode=args.json, quiet=args.quiet)
 
     if args.help or args.command is None:
-        render_help(args.console)
+        render_help(args.console, commands=iter_commands(parser))
         return 0
 
     try:

@@ -125,10 +125,14 @@ def render_cross_session_metrics(console: Console, metrics: CrossSessionMetrics)
     table.add_column("cost", justify="right")
     table.add_column("duration", justify="right")
     for s in metrics.sessions:
+        if s.current_status in STATUS_SYMBOLS:
+            status_cell = str(status_badge(s.current_status))
+        else:
+            status_cell = s.current_status
         table.add_row(
             s.session_id,
             s.current_agent,
-            s.current_status,
+            status_cell,
             f"{s.turn_count}",
             _fmt_int(s.total_tokens.total),
             _fmt_cost(s.total_cost_usd),
