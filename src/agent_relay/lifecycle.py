@@ -195,7 +195,9 @@ def _normalize_checkpoint_task_status(task_status: str | None) -> str:
 def _require_command_name(command_name: str, allowed: set[str]) -> None:
     if command_name not in allowed:
         names = ", ".join(sorted(allowed))
-        raise LifecycleViolation(f"unsupported lifecycle command {command_name!r}; expected one of: {names}")
+        raise LifecycleViolation(
+            f"unsupported lifecycle command {command_name!r}; expected one of: {names}"
+        )
 
 
 def _require_phase(command_name: str, current_phase: str, allowed_phases: set[str]) -> str:

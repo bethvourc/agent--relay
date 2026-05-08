@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from agent_relay.fs import write_json_atomic
 from agent_relay.errors import CorruptionError, ValidationError
+from agent_relay.fs import write_json_atomic
 from agent_relay.hashing import sha256_path
 from agent_relay.layout import (
     LAYOUT_VERSION,
@@ -20,7 +20,6 @@ from agent_relay.layout import (
 )
 from agent_relay.models import (
     DerivedSessionView,
-    HeadRef,
     JournalEvent,
     ObjectManifest,
     ObjectRef,
@@ -53,7 +52,11 @@ def load_session_manifest(repo_root: Path, session_id: str) -> SessionManifest:
         raise SystemExit(f"Session not found: {session_id}")
     manifest = _load_session_manifest_path(path, session_id=session_id)
     if manifest.session_id != session_id:
-        raise CorruptionError("session manifest session_id does not match directory name", session_id=session_id, path=path)
+        raise CorruptionError(
+            "session manifest session_id does not match directory name",
+            session_id=session_id,
+            path=path,
+        )
     return manifest
 
 
@@ -101,7 +104,9 @@ def load_latest_journal_event(repo_root: Path, session_id: str) -> JournalEvent:
     return load_journal_events(repo_root, session_id)[-1]
 
 
-def load_referenced_object(repo_root: Path, session_id: str, object_kind: str, object_id: str) -> ObjectManifest:
+def load_referenced_object(
+    repo_root: Path, session_id: str, object_kind: str, object_id: str
+) -> ObjectManifest:
     events = load_journal_events(repo_root, session_id)
     session_path = session_root(repo_root, session_id)
     for event in reversed(events):
@@ -162,7 +167,9 @@ def _load_object_from_ref(session_root_path: Path, ref: ObjectRef):
             path=manifest_path,
         ) from exc
     except ValidationError as exc:
-        raise CorruptionError(str(exc), session_id=session_root_path.name, path=manifest_path) from exc
+        raise CorruptionError(
+            str(exc), session_id=session_root_path.name, path=manifest_path
+        ) from exc
 
     if manifest.object_id != ref.object_id:
         raise CorruptionError(

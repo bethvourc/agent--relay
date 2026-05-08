@@ -7,11 +7,16 @@ from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
 
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from agent_relay.agents import AGENT_NAMES, AGENT_ALIASES, get_agent_adapter, get_agent_display_name, resolve_agent_key  # noqa: E402
+from agent_relay.agents import (  # noqa: E402
+    AGENT_ALIASES,
+    AGENT_NAMES,
+    get_agent_adapter,
+    get_agent_display_name,
+    resolve_agent_key,
+)
 
 
 class AgentAdapterTests(TestCase):
@@ -47,7 +52,9 @@ class AgentAdapterTests(TestCase):
 
             with patch.dict(
                 "os.environ",
-                {"AGENT_RELAY_CLAUDE_LAUNCH_TEMPLATE": "cd {repo_root} && {agent_cli} --resume {resume_path}"},
+                {
+                    "AGENT_RELAY_CLAUDE_LAUNCH_TEMPLATE": "cd {repo_root} && {agent_cli} --resume {resume_path}"
+                },
                 clear=False,
             ):
                 launch_spec = adapter.render_launch_spec(repo_root, resume_path)
@@ -86,7 +93,9 @@ class AgentAdapterTests(TestCase):
 
             with patch.dict(
                 "os.environ",
-                {"AGENT_RELAY_CLAUDE_CAPTURE_TEMPLATE": "cd {repo_root} && {agent_cli} export --session {session_id}"},
+                {
+                    "AGENT_RELAY_CLAUDE_CAPTURE_TEMPLATE": "cd {repo_root} && {agent_cli} export --session {session_id}"
+                },
                 clear=False,
             ):
                 capture_spec = adapter.render_capture_hook_spec(repo_root, "s-123")

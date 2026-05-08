@@ -7,7 +7,6 @@ import http.client
 import json
 import socket
 import threading
-import time
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -31,7 +30,6 @@ from agent_relay.metrics import (
     TurnMetrics,
 )
 from agent_relay.ui import create_console
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -128,19 +126,13 @@ def _build_metrics() -> CrossSessionMetrics:
         total_tokens=TokenUsage(input=14, output=26, cache_read=5, cache_creation=3),
         total_cost_usd=0.4818,
         total_duration_ms=52000,
-        by_agent={
-            "claude": TokenUsage(
-                input=14, output=26, cache_read=5, cache_creation=3
-            )
-        },
+        by_agent={"claude": TokenUsage(input=14, output=26, cache_read=5, cache_creation=3)},
         cost_by_agent={"claude": 0.4818},
         turns=(turn1, turn2),
     )
     return CrossSessionMetrics(
         sessions=(sm,),
-        by_agent={
-            "claude": TokenUsage(input=14, output=26, cache_read=5, cache_creation=3)
-        },
+        by_agent={"claude": TokenUsage(input=14, output=26, cache_read=5, cache_creation=3)},
         cost_by_agent={"claude": 0.4818},
         by_day={},
         total_tokens=TokenUsage(input=14, output=26, cache_read=5, cache_creation=3),
@@ -180,34 +172,22 @@ class RenderPrometheusTextTests(TestCase):
 
     def test_cost_sample(self) -> None:
         text = render_prometheus_text(_build_metrics())
-        self.assertRegex(
-            text, r'agent_relay_cost_usd_total\{agent="claude"\} 0\.4818'
-        )
+        self.assertRegex(text, r'agent_relay_cost_usd_total\{agent="claude"\} 0\.4818')
 
     def test_duration_summary_sum_and_count(self) -> None:
         text = render_prometheus_text(_build_metrics())
-        self.assertIn(
-            'agent_relay_turn_duration_ms_sum{agent="claude"} 52000', text
-        )
-        self.assertIn(
-            'agent_relay_turn_duration_ms_count{agent="claude"} 2', text
-        )
+        self.assertIn('agent_relay_turn_duration_ms_sum{agent="claude"} 52000', text)
+        self.assertIn('agent_relay_turn_duration_ms_count{agent="claude"} 2', text)
 
     def test_outcome_breakdown_per_agent(self) -> None:
         text = render_prometheus_text(_build_metrics())
-        self.assertIn(
-            'agent_relay_turns_total{agent="claude",result="success"} 1', text
-        )
-        self.assertIn(
-            'agent_relay_turns_total{agent="claude",result="error"} 1', text
-        )
+        self.assertIn('agent_relay_turns_total{agent="claude",result="success"} 1', text)
+        self.assertIn('agent_relay_turns_total{agent="claude",result="error"} 1', text)
 
     def test_session_active_gauge(self) -> None:
         text = render_prometheus_text(_build_metrics())
         self.assertIn("agent_relay_session_active 1", text)
-        self.assertIn(
-            'agent_relay_sessions_total{status="active"} 1', text
-        )
+        self.assertIn('agent_relay_sessions_total{status="active"} 1', text)
 
     def test_empty_metrics_renders_only_metadata(self) -> None:
         text = render_prometheus_text(CrossSessionMetrics(sessions=()))

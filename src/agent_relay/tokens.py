@@ -8,8 +8,8 @@ dashboard stay in lockstep.
 Two accents only: ``BRAND`` (amber) and ``SIGNAL`` (green). Everything
 else is grayscale or a semantic role.
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 # Surfaces (dark, default)
 SURFACE_0 = "#0a0a0a"

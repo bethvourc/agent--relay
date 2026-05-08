@@ -23,13 +23,12 @@ from __future__ import annotations
 import json
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TextIO
 
 from agent_relay.layout import relay_root
 from agent_relay.metrics import SessionMetrics, TurnMetrics
-
 
 _CONFIG_RELATIVE_PATH = Path("config") / "alerts.toml"
 
@@ -150,9 +149,7 @@ def _opt_int(value: Any) -> int | None:
 # ---------------------------------------------------------------------------
 
 
-def evaluate_turn(
-    turn: TurnMetrics, session: SessionMetrics, cfg: AlertConfig
-) -> list[Alert]:
+def evaluate_turn(turn: TurnMetrics, session: SessionMetrics, cfg: AlertConfig) -> list[Alert]:
     if cfg.is_empty:
         return []
 
@@ -182,9 +179,7 @@ def evaluate_turn(
             out.append(
                 Alert(
                     rule="duration_per_turn",
-                    severity=_severity_ratio(
-                        turn.duration_ms, cfg.duration_per_turn_ms
-                    ),
+                    severity=_severity_ratio(turn.duration_ms, cfg.duration_per_turn_ms),
                     session_id=session.session_id,
                     turn_number=turn.turn_number,
                     threshold=cfg.duration_per_turn_ms,
@@ -232,9 +227,7 @@ def evaluate_session(session: SessionMetrics, cfg: AlertConfig) -> list[Alert]:
             out.append(
                 Alert(
                     rule="cost_per_session",
-                    severity=_severity_ratio(
-                        session.total_cost_usd, cfg.cost_per_session_usd
-                    ),
+                    severity=_severity_ratio(session.total_cost_usd, cfg.cost_per_session_usd),
                     session_id=session.session_id,
                     turn_number=None,
                     threshold=cfg.cost_per_session_usd,
@@ -247,10 +240,7 @@ def evaluate_session(session: SessionMetrics, cfg: AlertConfig) -> list[Alert]:
                 )
             )
 
-    if (
-        cfg.error_rate_threshold is not None
-        and session.turn_count >= cfg.error_rate_min_turns
-    ):
+    if cfg.error_rate_threshold is not None and session.turn_count >= cfg.error_rate_min_turns:
         failures = session.turn_count - session.successful_turns
         rate = failures / session.turn_count if session.turn_count else 0.0
         if rate > cfg.error_rate_threshold:
@@ -280,10 +270,7 @@ def _severity_ratio(observed: float, threshold: float) -> str:
 
 
 def _now_iso() -> str:
-    return (
-        datetime.now(timezone.utc)
-        .strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-    )
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 # ---------------------------------------------------------------------------

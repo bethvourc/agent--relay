@@ -21,9 +21,10 @@ import json
 import sys
 import threading
 import time
-from datetime import datetime, timezone
+from collections.abc import Callable, Mapping
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
@@ -102,8 +103,7 @@ def render_otlp_payload(
     outcomes = _per_agent_outcomes(metrics)
 
     duration_points = [
-        _int_point(ts, ms, {"agent": agent})
-        for agent, ms in sorted(duration_sum.items())
+        _int_point(ts, ms, {"agent": agent}) for agent, ms in sorted(duration_sum.items())
     ]
     if duration_points:
         sum_metrics.append(
@@ -118,9 +118,7 @@ def render_otlp_payload(
     turn_count_points: list[dict[str, Any]] = []
     for agent, results in sorted(outcomes.items()):
         for result, count in sorted(results.items()):
-            turn_count_points.append(
-                _int_point(ts, count, {"agent": agent, "result": result})
-            )
+            turn_count_points.append(_int_point(ts, count, {"agent": agent, "result": result}))
     if turn_count_points:
         sum_metrics.append(
             _counter(
@@ -134,8 +132,7 @@ def render_otlp_payload(
     # ---- Session counts (gauges) ----
     statuses = _session_status_counts(metrics)
     active = sum(
-        v for k, v in statuses.items()
-        if k in ("active", "launching", "awaiting_resume", "paused")
+        v for k, v in statuses.items() if k in ("active", "launching", "awaiting_resume", "paused")
     )
     gauge_metrics.append(
         _gauge(
@@ -161,11 +158,7 @@ def render_otlp_payload(
     return {
         "resourceMetrics": [
             {
-                "resource": {
-                    "attributes": [
-                        _kv(k, v) for k, v in sorted(attrs.items())
-                    ]
-                },
+                "resource": {"attributes": [_kv(k, v) for k, v in sorted(attrs.items())]},
                 "scopeMetrics": [
                     {
                         "scope": {"name": _SCOPE_NAME, "version": _SCOPE_VERSION},
@@ -191,19 +184,13 @@ def export_otlp(
     base_headers = {"Content-Type": "application/json"}
     if headers:
         base_headers.update(headers)
-    req = urllib_request.Request(
-        endpoint, data=body, headers=base_headers, method="POST"
-    )
+    req = urllib_request.Request(endpoint, data=body, headers=base_headers, method="POST")
     try:
         with urllib_request.urlopen(req, timeout=timeout) as resp:
             if not (200 <= resp.status < 300):
-                sys.stderr.write(
-                    f"otlp delivery failed: HTTP {resp.status} from {endpoint}\n"
-                )
+                sys.stderr.write(f"otlp delivery failed: HTTP {resp.status} from {endpoint}\n")
     except urllib_error.HTTPError as exc:
-        sys.stderr.write(
-            f"otlp delivery failed: HTTP {exc.code} from {endpoint}\n"
-        )
+        sys.stderr.write(f"otlp delivery failed: HTTP {exc.code} from {endpoint}\n")
     except (urllib_error.URLError, TimeoutError, OSError) as exc:
         sys.stderr.write(f"otlp delivery failed: {exc} ({endpoint})\n")
 
@@ -267,9 +254,7 @@ def _kv(key: str, value: Any) -> dict[str, Any]:
     return {"key": key, "value": {"stringValue": str(value)}}
 
 
-def _int_point(
-    ts_ns: int, value: int, attrs: Mapping[str, Any]
-) -> dict[str, Any]:
+def _int_point(ts_ns: int, value: int, attrs: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "attributes": [_kv(k, v) for k, v in sorted(attrs.items())],
         "timeUnixNano": str(ts_ns),
@@ -277,9 +262,7 @@ def _int_point(
     }
 
 
-def _double_point(
-    ts_ns: int, value: float, attrs: Mapping[str, Any]
-) -> dict[str, Any]:
+def _double_point(ts_ns: int, value: float, attrs: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "attributes": [_kv(k, v) for k, v in sorted(attrs.items())],
         "timeUnixNano": str(ts_ns),
@@ -363,7 +346,7 @@ def _session_status_counts(metrics: CrossSessionMetrics) -> dict[str, int]:
 
 
 def _now_ns() -> int:
-    return int(datetime.now(timezone.utc).timestamp() * 1_000_000_000)
+    return int(datetime.now(UTC).timestamp() * 1_000_000_000)
 
 
 __all__ = ["render_otlp_payload", "export_otlp", "serve_otlp"]

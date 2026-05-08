@@ -14,15 +14,11 @@ from agent_relay.layout import (
     turns_dir,
 )
 from agent_relay.metrics import (
-    CrossSessionMetrics,
-    SessionMetrics,
     TokenUsage,
-    TurnMetrics,
     extract_cross_session_metrics,
     extract_session_metrics,
     extract_turn_metrics,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -158,7 +154,9 @@ class ExtractTurnMetricsTests(TestCase):
             repo = _scaffold(Path(tmp), "s1")
             _write_view(repo, "s1")
             _write_turn(
-                repo, "s1", 1,
+                repo,
+                "s1",
+                1,
                 output_lines=[_claude_assistant_with_tool_use(), _claude_result_event()],
                 state=_claude_turn_state(),
             )
@@ -218,7 +216,9 @@ class ExtractTurnMetricsTests(TestCase):
             repo = _scaffold(Path(tmp), "s1")
             _write_view(repo, "s1")
             _write_turn(
-                repo, "s1", 1,
+                repo,
+                "s1",
+                1,
                 output_lines=[_claude_result_event()],
                 state=_claude_turn_state(status="error"),
             )
@@ -311,7 +311,9 @@ class ExtractSessionMetricsTests(TestCase):
             _write_view(repo, "s1")
             for i in (1, 2, 3):
                 _write_turn(
-                    repo, "s1", i,
+                    repo,
+                    "s1",
+                    i,
                     output_lines=[_claude_result_event()],
                     state=_claude_turn_state(turn_number=i),
                 )
@@ -340,14 +342,18 @@ class ExtractSessionMetricsTests(TestCase):
             repo = _scaffold(Path(tmp), "s1")
             _write_view(repo, "s1")
             _write_turn(
-                repo, "s1", 1,
+                repo,
+                "s1",
+                1,
                 output_lines=[_claude_result_event()],
                 state=_claude_turn_state(turn_number=1),
             )
             codex_state = _claude_turn_state(turn_number=2)
             codex_state["agent_key"] = "codex"
             _write_turn(
-                repo, "s1", 2,
+                repo,
+                "s1",
+                2,
                 output_lines=[
                     {"type": "result", "token_usage": {"input_tokens": 5, "output_tokens": 7}}
                 ],
@@ -367,12 +373,16 @@ class ExtractSessionMetricsTests(TestCase):
             repo = _scaffold(Path(tmp), "s1")
             _write_view(repo, "s1")
             _write_turn(
-                repo, "s1", 1,
+                repo,
+                "s1",
+                1,
                 output_lines=[_claude_result_event()],
                 state=_claude_turn_state(turn_number=1, status="continue"),
             )
             _write_turn(
-                repo, "s1", 2,
+                repo,
+                "s1",
+                2,
                 output_lines=[_claude_result_event()],
                 state=_claude_turn_state(turn_number=2, status="error"),
             )
@@ -400,7 +410,9 @@ class ExtractCrossSessionMetricsTests(TestCase):
                 _scaffold(repo, sid)
                 _write_view(repo, sid)
                 _write_turn(
-                    repo, sid, 1,
+                    repo,
+                    sid,
+                    1,
                     output_lines=[_claude_result_event()],
                     state=_claude_turn_state(),
                 )
@@ -437,7 +449,9 @@ class ExtractCrossSessionMetricsTests(TestCase):
             _scaffold(repo, "claude-only")
             _write_view(repo, "claude-only")
             _write_turn(
-                repo, "claude-only", 1,
+                repo,
+                "claude-only",
+                1,
                 output_lines=[_claude_result_event()],
                 state=_claude_turn_state(),
             )
@@ -446,10 +460,10 @@ class ExtractCrossSessionMetricsTests(TestCase):
             codex_state = _claude_turn_state()
             codex_state["agent_key"] = "codex"
             _write_turn(
-                repo, "codex-only", 1,
-                output_lines=[
-                    {"type": "result", "token_usage": {"input_tokens": 9}}
-                ],
+                repo,
+                "codex-only",
+                1,
+                output_lines=[{"type": "result", "token_usage": {"input_tokens": 9}}],
                 state=codex_state,
             )
             with patch("agent_relay.metrics.is_session", return_value=True):
@@ -464,7 +478,9 @@ class ExtractCrossSessionMetricsTests(TestCase):
             _scaffold(repo, "real")
             _write_view(repo, "real")
             _write_turn(
-                repo, "real", 1,
+                repo,
+                "real",
+                1,
                 output_lines=[_claude_result_event()],
                 state=_claude_turn_state(),
             )

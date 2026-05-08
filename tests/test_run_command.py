@@ -8,7 +8,6 @@ import tempfile
 from pathlib import Path
 from unittest import TestCase
 
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
@@ -34,9 +33,7 @@ class RunCommandTests(TestCase):
         )
 
     def init_git_repo(self, repo_root: Path) -> None:
-        subprocess.run(
-            ["git", "init"], cwd=repo_root, check=True, capture_output=True, text=True
-        )
+        subprocess.run(["git", "init"], cwd=repo_root, check=True, capture_output=True, text=True)
         subprocess.run(
             ["git", "config", "user.email", "relay@example.com"],
             cwd=repo_root,
@@ -224,9 +221,7 @@ class RunCommandTests(TestCase):
 
             self.assertEqual(second_result.returncode, 0, second_result.stderr)
             second_data = json.loads(second_result.stdout)
-            self.assertEqual(
-                second_data["continued_from_session_id"], first_data["session_id"]
-            )
+            self.assertEqual(second_data["continued_from_session_id"], first_data["session_id"])
             self.assertNotEqual(second_data["session_id"], first_data["session_id"])
 
             second_view = load_session_view(repo_root, second_data["session_id"])

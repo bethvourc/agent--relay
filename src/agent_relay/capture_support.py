@@ -71,7 +71,11 @@ def capture_git_touched_files(repo_root: Path) -> list[str]:
         if " -> " in path_text:
             path_text = path_text.split(" -> ", 1)[1]
         normalized = path_text.strip()
-        if not normalized or normalized == STATE_DIRNAME or normalized.startswith(f"{STATE_DIRNAME}/"):
+        if (
+            not normalized
+            or normalized == STATE_DIRNAME
+            or normalized.startswith(f"{STATE_DIRNAME}/")
+        ):
             continue
         _append_unique(touched_files, normalized)
     return touched_files

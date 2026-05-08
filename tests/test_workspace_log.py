@@ -1,4 +1,5 @@
 """Tests for workspace log module."""
+
 from __future__ import annotations
 
 import tempfile
@@ -72,14 +73,15 @@ class WorkspaceLogTests(TestCase):
 
     def test_entry_type_formatting(self) -> None:
         wlog = WorkspaceLog(self.log_path)
-        wlog.append(LogEntry("2025-01-01T00:00:00Z", "claude", 0, "file_changed", "Updated main.py."))
+        wlog.append(
+            LogEntry("2025-01-01T00:00:00Z", "claude", 0, "file_changed", "Updated main.py.")
+        )
         content = self.log_path.read_text()
         self.assertIn("File Changed", content)
 
     def test_utc_timestamp_format(self) -> None:
         ts = utc_timestamp()
         # Should match ISO format: YYYY-MM-DDTHH:MM:SSZ
-        import re
         self.assertRegex(ts, r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
     def test_header_written_only_once(self) -> None:

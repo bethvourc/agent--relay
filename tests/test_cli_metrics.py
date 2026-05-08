@@ -20,14 +20,12 @@ from agent_relay.layout import (
 from agent_relay.metrics import (
     SessionMetrics,
     TokenUsage,
-    TurnMetrics,
 )
 from agent_relay.metrics_ui import (
     render_cross_session_metrics,
     render_session_metrics,
 )
 from agent_relay.ui import create_console
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -282,9 +280,7 @@ class CmdMetricsAllTests(TestCase):
             _scaffold(repo, "new")
             _write_view(repo, "new")
             _write_turn(repo, "new", 1)
-            args = _make_args(
-                repo=tmp, all_=True, since="2026-01-01", json_mode=True
-            )
+            args = _make_args(repo=tmp, all_=True, since="2026-01-01", json_mode=True)
             buf = io.StringIO()
             with patch("agent_relay.metrics.is_session", return_value=True), redirect_stdout(buf):
                 rc = cmd_metrics(args)

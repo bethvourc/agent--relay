@@ -5,23 +5,14 @@ import json
 import os
 import subprocess
 import sys
+from datetime import UTC
 from pathlib import Path
 
 from agent_relay.agents import AGENT_NAMES, AGENT_REGISTRY, resolve_agent_key
 from agent_relay.errors import RelayError
-from agent_relay.relay import relay as do_relay
-from agent_relay.read_views import list_sessions_for_dashboard
-from agent_relay.storage import is_session
-from agent_relay.watch import (
-    WatchSource,
-    pick_latest_active_session,
-    pick_latest_session,
-)
-from agent_relay.watch_ui import (
-    render_watch_live,
-    stream_json_events,
-    stream_quiet_lines,
-)
+from agent_relay.exporters.jsonl import parse_header_pairs, tail_jsonl
+from agent_relay.exporters.otlp import serve_otlp
+from agent_relay.exporters.prometheus import serve_prometheus
 from agent_relay.metrics import (
     extract_cross_session_metrics,
     extract_session_metrics,
@@ -34,16 +25,16 @@ from agent_relay.metrics_ui import (
     render_cross_session_metrics,
     render_session_metrics,
 )
-from agent_relay.exporters.jsonl import parse_header_pairs, tail_jsonl
-from agent_relay.exporters.otlp import serve_otlp
-from agent_relay.exporters.prometheus import serve_prometheus
+from agent_relay.read_views import list_sessions_for_dashboard
+from agent_relay.relay import relay as do_relay
+from agent_relay.storage import is_session
 from agent_relay.ui import (
     create_console,
     emit_json,
     emit_quiet,
-    render_conflict_inspect,
     render_concurrent_result,
     render_concurrent_start,
+    render_conflict_inspect,
     render_converse_result,
     render_converse_start,
     render_converse_turn_active,
@@ -53,8 +44,17 @@ from agent_relay.ui import (
     render_error,
     render_help,
     render_relay_launch_result,
-    render_relay_launching,
     render_relay_success,
+)
+from agent_relay.watch import (
+    WatchSource,
+    pick_latest_active_session,
+    pick_latest_session,
+)
+from agent_relay.watch_ui import (
+    render_watch_live,
+    stream_json_events,
+    stream_quiet_lines,
 )
 
 
@@ -142,16 +142,13 @@ def _load_conflict_paths(conflict_artifact_path: str | None) -> list[str]:
     )
 
 
-def _race_next_action(result: "ConcurrentResult") -> str | None:  # noqa: F821
+def _race_next_action(result: ConcurrentResult) -> str | None:  # noqa: F821
     if result.stop_reason == "manual_resolution_required":
         return f"agent-relay resolve {result.session_id}"
     if result.stop_reason == "merge_conflict":
         return f"agent-relay resolve {result.session_id}"
     if result.stop_reason in {"max_time", "interrupted", "incomplete", "agent_error"}:
-        return (
-            f"agent-relay race --continue {result.session_id} <agents> "
-            f'"continue the task"'
-        )
+        return f'agent-relay race --continue {result.session_id} <agents> "continue the task"'
     return None
 
 
@@ -162,18 +159,14 @@ def _default_resolution_task(status: str) -> str:
     return "Resolve the merge conflict and review the final merged result."
 
 
-def _race_result_metadata(result: "ConcurrentResult") -> dict[str, object]:  # noqa: F821
+def _race_result_metadata(result: ConcurrentResult) -> dict[str, object]:  # noqa: F821
     conflict_paths = _load_conflict_paths(result.conflict_artifact_path)
     if not conflict_paths:
         conflict_paths = list(
-            dict.fromkeys(
-                path for outcome in result.outcomes for path in outcome.merge_conflicts
-            )
+            dict.fromkeys(path for outcome in result.outcomes for path in outcome.merge_conflicts)
         )
     scope_violation_paths = list(
-        dict.fromkeys(
-            path for outcome in result.outcomes for path in outcome.scope_violations
-        )
+        dict.fromkeys(path for outcome in result.outcomes for path in outcome.scope_violations)
     )
     metadata: dict[str, object] = {
         "conflict_paths": conflict_paths,
@@ -235,9 +228,7 @@ def cmd_resolve(args: argparse.Namespace) -> int:
     )
     if len(agents) < 2:
         raise SystemExit("Conflict resolution requires at least 2 agents.")
-    task = getattr(args, "task_flag", None) or _default_resolution_task(
-        str(context["status"])
-    )
+    task = getattr(args, "task_flag", None) or _default_resolution_task(str(context["status"]))
     max_time = args.max_time
     auto_open_terminals = _should_auto_open_terminals(
         interactive=interactive,
@@ -271,7 +262,7 @@ def cmd_resolve(args: argparse.Namespace) -> int:
                 if error is not None:
                     console.print(f"      [warning]{error}[/]", highlight=False)
 
-    def on_agent_done(outcome: "AgentOutcome") -> None:  # noqa: F821
+    def on_agent_done(outcome: AgentOutcome) -> None:  # noqa: F821
         if interactive:
             from agent_relay.agents import get_agent_display_name
 
@@ -282,11 +273,7 @@ def cmd_resolve(args: argparse.Namespace) -> int:
                 status = f"[warning]{outcome.control_status}[/]"
             else:
                 status = f"[warning]exit {outcome.exit_code}[/]"
-            phase_label = (
-                f"[muted]{outcome.phase}[/] "
-                if outcome.phase != "implementation"
-                else ""
-            )
+            phase_label = f"[muted]{outcome.phase}[/] " if outcome.phase != "implementation" else ""
             console.print(
                 f"  [brand]▸[/] Slot {outcome.slot}: [bold]{name}[/] {phase_label}{status} — {outcome.summary}",
                 highlight=False,
@@ -331,8 +318,7 @@ def cmd_resolve(args: argparse.Namespace) -> int:
                         "completion_reason": o.control_reason,
                         "claims": list(o.claims),
                         "claim_specs": [
-                            {"path": claim.path, "role": claim.role}
-                            for claim in o.claim_specs
+                            {"path": claim.path, "role": claim.role} for claim in o.claim_specs
                         ],
                         "changed_paths": list(o.changed_paths),
                         "merged_paths": list(o.merged_paths),
@@ -533,9 +519,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
         return stream_quiet_lines(source)
     if fallback_notice:
         args.console.print(f"[warning]{fallback_notice}[/]")
-    return render_watch_live(
-        args.console, source, show_metrics=getattr(args, "metrics", False)
-    )
+    return render_watch_live(args.console, source, show_metrics=getattr(args, "metrics", False))
 
 
 def cmd_metrics(args: argparse.Namespace) -> int:
@@ -558,9 +542,7 @@ def cmd_metrics(args: argparse.Namespace) -> int:
     agents_filter = getattr(args, "agent", None) or None
 
     if args.all:
-        cross = extract_cross_session_metrics(
-            repo_root, since=since_dt, agents=agents_filter
-        )
+        cross = extract_cross_session_metrics(repo_root, since=since_dt, agents=agents_filter)
         if args.json:
             emit_cross_session_metrics_json(cross)
         elif args.quiet:
@@ -577,8 +559,7 @@ def cmd_metrics(args: argparse.Namespace) -> int:
         if latest is None:
             render_error(
                 args.console,
-                "No relay sessions found in this repo. Start one with "
-                "`agent-relay run/chat/race`.",
+                "No relay sessions found in this repo. Start one with `agent-relay run/chat/race`.",
             )
             return 2
         session_id = latest["session_id"]
@@ -632,10 +613,7 @@ def cmd_metrics_serve(args: argparse.Namespace) -> int:
     otlp_stop = _threading.Event()
     otlp_thread: _threading.Thread | None = None
     if args.otlp:
-        sys.stderr.write(
-            f"OTLP exporter pushing to {args.otlp} every "
-            f"{args.otlp_interval:.1f}s\n"
-        )
+        sys.stderr.write(f"OTLP exporter pushing to {args.otlp} every {args.otlp_interval:.1f}s\n")
         otlp_thread = _threading.Thread(
             target=serve_otlp,
             kwargs={
@@ -762,24 +740,22 @@ def cmd_metrics_tail(args: argparse.Namespace) -> int:
 
 def _parse_since(value: str):
     """Parse `--since` (YYYY-MM-DD or ISO-8601). Raises ValueError on bad input."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     text = value.strip()
     try:
         if len(text) == 10:
             dt = datetime.strptime(text, "%Y-%m-%d")
-            return dt.replace(tzinfo=timezone.utc)
+            return dt.replace(tzinfo=UTC)
         return datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError as exc:
-        raise ValueError(
-            f"--since must be YYYY-MM-DD or ISO-8601 (got: {value!r})"
-        ) from exc
+        raise ValueError(f"--since must be YYYY-MM-DD or ISO-8601 (got: {value!r})") from exc
 
 
 def cmd_clean(args: argparse.Namespace) -> int:
     import shutil
-    from agent_relay.layout import relay_root, sessions_root, session_root
-    from agent_relay.storage import is_session
+
+    from agent_relay.layout import relay_root, sessions_root
 
     repo_root = _resolve_repo(args.repo)
     root = relay_root(repo_root)
@@ -799,9 +775,7 @@ def cmd_clean(args: argparse.Namespace) -> int:
         elif args.quiet:
             emit_quiet(str(root))
         else:
-            args.console.print(
-                "[success]Cleaned[/]  Removed all relay data.", highlight=False
-            )
+            args.console.print("[success]Cleaned[/]  Removed all relay data.", highlight=False)
         return 0
 
     # Remove all sessions
@@ -866,9 +840,7 @@ def cmd_discover(args: argparse.Namespace) -> int:
     return 0
 
 
-def _parse_agents_and_task(
-    args: argparse.Namespace, min_agents: int = 2
-) -> tuple[list[str], str]:
+def _parse_agents_and_task(args: argparse.Namespace, min_agents: int = 2) -> tuple[list[str], str]:
     """Parse the positional args into agent keys and a task string.
 
     Supports two forms:
@@ -946,12 +918,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     def on_turn_start(agent_key: str, turn_number: int, max_turns: int) -> None:
         nonlocal _spinner_ctx
         if interactive:
-            _spinner_ctx = render_converse_turn_active(
-                console, agent_key, turn_number, max_turns
-            )
+            _spinner_ctx = render_converse_turn_active(console, agent_key, turn_number, max_turns)
             _spinner_ctx.__enter__()
 
-    def on_turn_complete(turn: "TurnResult") -> None:  # noqa: F821
+    def on_turn_complete(turn: TurnResult) -> None:  # noqa: F821
         nonlocal _spinner_ctx
         if _spinner_ctx is not None:
             _spinner_ctx.__exit__(None, None, None)
@@ -1037,12 +1007,10 @@ def cmd_chat(args: argparse.Namespace) -> int:
     def on_turn_start(agent_key: str, turn_number: int, max_turns: int) -> None:
         nonlocal _spinner_ctx
         if interactive:
-            _spinner_ctx = render_converse_turn_active(
-                console, agent_key, turn_number, max_turns
-            )
+            _spinner_ctx = render_converse_turn_active(console, agent_key, turn_number, max_turns)
             _spinner_ctx.__enter__()
 
-    def on_turn_complete(turn: "TurnResult") -> None:  # noqa: F821
+    def on_turn_complete(turn: TurnResult) -> None:  # noqa: F821
         nonlocal _spinner_ctx
         if _spinner_ctx is not None:
             _spinner_ctx.__exit__(None, None, None)
@@ -1152,7 +1120,7 @@ def cmd_race(args: argparse.Namespace) -> int:
                 if error is not None:
                     console.print(f"      [warning]{error}[/]", highlight=False)
 
-    def on_agent_done(outcome: "AgentOutcome") -> None:  # noqa: F821
+    def on_agent_done(outcome: AgentOutcome) -> None:  # noqa: F821
         if interactive:
             from agent_relay.agents import get_agent_display_name
 
@@ -1163,11 +1131,7 @@ def cmd_race(args: argparse.Namespace) -> int:
                 status = f"[warning]{outcome.control_status}[/]"
             else:
                 status = f"[warning]exit {outcome.exit_code}[/]"
-            phase_label = (
-                f"[muted]{outcome.phase}[/] "
-                if outcome.phase != "implementation"
-                else ""
-            )
+            phase_label = f"[muted]{outcome.phase}[/] " if outcome.phase != "implementation" else ""
             console.print(
                 f"  [brand]▸[/] Slot {outcome.slot}: [bold]{name}[/] {phase_label}{status} — {outcome.summary}",
                 highlight=False,
@@ -1211,8 +1175,7 @@ def cmd_race(args: argparse.Namespace) -> int:
                         "completion_reason": o.control_reason,
                         "claims": list(o.claims),
                         "claim_specs": [
-                            {"path": claim.path, "role": claim.role}
-                            for claim in o.claim_specs
+                            {"path": claim.path, "role": claim.role} for claim in o.claim_specs
                         ],
                         "changed_paths": list(o.changed_paths),
                         "merged_paths": list(o.merged_paths),
@@ -1238,9 +1201,7 @@ def cmd_race(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agent-relay", add_help=False)
     parser.add_argument("--help", "-h", action="store_true", default=False)
-    parser.add_argument(
-        "--json", action="store_true", help="Machine-readable JSON output"
-    )
+    parser.add_argument("--json", action="store_true", help="Machine-readable JSON output")
     parser.add_argument("--quiet", "-q", action="store_true", help="Minimal output")
     subparsers = parser.add_subparsers(dest="command")
 
@@ -1260,9 +1221,7 @@ def build_parser() -> argparse.ArgumentParser:
             "--planning-note",
             help="Planning snapshot to preserve even when no code changed",
         )
-        agent_cmd.add_argument(
-            "--planning-note-file", help="Path to a planning snapshot file"
-        )
+        agent_cmd.add_argument("--planning-note-file", help="Path to a planning snapshot file")
         agent_cmd.add_argument(
             "--proposed-edits",
             help="UI-only or not-yet-applied proposed edits to preserve",
@@ -1270,12 +1229,8 @@ def build_parser() -> argparse.ArgumentParser:
         agent_cmd.add_argument(
             "--proposed-edits-file", help="Path to a proposed edits file or diff"
         )
-        agent_cmd.add_argument(
-            "--no-launch", action="store_true", help="Just create the packet"
-        )
-        agent_cmd.add_argument(
-            "--yes", "-y", action="store_true", help="Skip confirmation"
-        )
+        agent_cmd.add_argument("--no-launch", action="store_true", help="Just create the packet")
+        agent_cmd.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
         agent_cmd.add_argument("--repo", help="Repository path (default: cwd)")
         agent_cmd.set_defaults(func=cmd_relay, to=agent_key)
 
@@ -1432,9 +1387,7 @@ def build_parser() -> argparse.ArgumentParser:
     disc.set_defaults(func=cmd_discover)
 
     # agent-relay run <agent> <task> — single-agent managed session
-    run = subparsers.add_parser(
-        "run", help="Run a single agent in a Relay-managed session"
-    )
+    run = subparsers.add_parser("run", help="Run a single agent in a Relay-managed session")
     run.add_argument("agent", help="Agent key or alias")
     run.add_argument("task", nargs="?", help="Task (omit when using -t or --continue)")
     run.add_argument(
@@ -1449,9 +1402,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="continue_session",
         help="Continue from a prior relay session id",
     )
-    run.add_argument(
-        "--max-turns", "-n", type=int, default=10, help="Maximum turns (default: 10)"
-    )
+    run.add_argument("--max-turns", "-n", type=int, default=10, help="Maximum turns (default: 10)")
     run.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
     run.add_argument("--repo", help="Repository path (default: cwd)")
     run.set_defaults(func=cmd_run)
@@ -1476,9 +1427,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="continue_session",
         help="Continue from a prior relay session id",
     )
-    chat.add_argument(
-        "--max-turns", "-n", type=int, default=10, help="Maximum turns (default: 10)"
-    )
+    chat.add_argument("--max-turns", "-n", type=int, default=10, help="Maximum turns (default: 10)")
     chat.add_argument("--yes", "-y", action="store_true", help="Skip confirmation")
     chat.add_argument("--repo", help="Repository path (default: cwd)")
     chat.set_defaults(func=cmd_chat)
@@ -1505,9 +1454,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="continue_session",
         help="Continue from a prior race session id",
     )
-    race.add_argument(
-        "--max-time", type=int, default=600, help="Max seconds (default: 600)"
-    )
+    race.add_argument("--max-time", type=int, default=600, help="Max seconds (default: 600)")
     race.add_argument(
         "--open-terminals",
         action=argparse.BooleanOptionalAction,
@@ -1540,9 +1487,7 @@ def build_parser() -> argparse.ArgumentParser:
     resolve.add_argument(
         "--task", "-t", dest="task_flag", default=None, help="Resolution task override"
     )
-    resolve.add_argument(
-        "--max-time", type=int, default=600, help="Max seconds (default: 600)"
-    )
+    resolve.add_argument("--max-time", type=int, default=600, help="Max seconds (default: 600)")
     resolve.add_argument(
         "--open-terminals",
         action=argparse.BooleanOptionalAction,

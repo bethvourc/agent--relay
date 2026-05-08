@@ -17,12 +17,13 @@ from agent_relay.cli import (
 from agent_relay.concurrent import AgentOutcome, ConcurrentResult
 from agent_relay.ui import create_console
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class AgentRelayCliTests(TestCase):
-    def run_cli(self, *args: str, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    def run_cli(
+        self, *args: str, extra_env: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
         env = {
             "PYTHONPATH": str(ROOT / "src"),
         }
@@ -141,7 +142,9 @@ class RaceCliHelpersTests(TestCase):
     @patch.dict("os.environ", {"TERM_PROGRAM": "iTerm.app"}, clear=False)
     @patch("subprocess.run")
     def test_open_tmux_session_in_terminal_uses_osascript_for_iterm(self, run_mock) -> None:
-        run_mock.return_value = subprocess.CompletedProcess(args=["osascript"], returncode=0, stdout="", stderr="")
+        run_mock.return_value = subprocess.CompletedProcess(
+            args=["osascript"], returncode=0, stdout="", stderr=""
+        )
         error = _open_tmux_session_in_terminal("relay-test-00")
         self.assertIsNone(error)
         self.assertEqual(run_mock.call_args.args[0][:2], ["osascript", "-e"])
@@ -150,13 +153,18 @@ class RaceCliHelpersTests(TestCase):
     def test_race_result_metadata_surfaces_conflict_paths_and_next_action(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             artifact_path = Path(tmpdir) / "conflicts.json"
-            artifact_path.write_text(json.dumps({
-                "status": "manual_resolution_required",
-                "paths": [
-                    {"path": "README.md"},
-                    {"path": "docs/guide.md"},
-                ],
-            }), encoding="utf-8")
+            artifact_path.write_text(
+                json.dumps(
+                    {
+                        "status": "manual_resolution_required",
+                        "paths": [
+                            {"path": "README.md"},
+                            {"path": "docs/guide.md"},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
             result = ConcurrentResult(
                 session_id="sess-123",
                 agents=("claude", "codex"),
@@ -218,17 +226,24 @@ class RaceCliHelpersTests(TestCase):
             elapsed_seconds=5.0,
             outcomes=(),
         )
-        with patch("agent_relay.concurrent.infer_conflict_resolution_context", return_value={
-            "session_id": "sess-123",
-            "status": "manual_resolution_required",
-            "agents": ["claude", "codex"],
-            "conflict_artifact_path": "/tmp/conflicts.json",
-        }), patch(
-            "agent_relay.concurrent.run_concurrent",
-            return_value=result,
-        ) as run_mock, patch(
-            "agent_relay.cli.emit_json",
-        ) as emit_json_mock:
+        with (
+            patch(
+                "agent_relay.concurrent.infer_conflict_resolution_context",
+                return_value={
+                    "session_id": "sess-123",
+                    "status": "manual_resolution_required",
+                    "agents": ["claude", "codex"],
+                    "conflict_artifact_path": "/tmp/conflicts.json",
+                },
+            ),
+            patch(
+                "agent_relay.concurrent.run_concurrent",
+                return_value=result,
+            ) as run_mock,
+            patch(
+                "agent_relay.cli.emit_json",
+            ) as emit_json_mock,
+        ):
             exit_code = args.func(args)
 
         self.assertEqual(exit_code, 0)
@@ -256,22 +271,27 @@ class RaceCliHelpersTests(TestCase):
             elapsed_seconds=4.0,
             outcomes=(),
         )
-        with patch(
-            "agent_relay.concurrent.latest_unresolved_conflict_session_id",
-            return_value="sess-latest",
-        ), patch(
-            "agent_relay.concurrent.infer_conflict_resolution_context",
-            return_value={
-                "session_id": "sess-latest",
-                "status": "merge_conflict",
-                "agents": ["claude", "codex"],
-                "conflict_artifact_path": "/tmp/conflicts.json",
-            },
-        ), patch(
-            "agent_relay.concurrent.run_concurrent",
-            return_value=result,
-        ) as run_mock, patch(
-            "agent_relay.cli.emit_json",
+        with (
+            patch(
+                "agent_relay.concurrent.latest_unresolved_conflict_session_id",
+                return_value="sess-latest",
+            ),
+            patch(
+                "agent_relay.concurrent.infer_conflict_resolution_context",
+                return_value={
+                    "session_id": "sess-latest",
+                    "status": "merge_conflict",
+                    "agents": ["claude", "codex"],
+                    "conflict_artifact_path": "/tmp/conflicts.json",
+                },
+            ),
+            patch(
+                "agent_relay.concurrent.run_concurrent",
+                return_value=result,
+            ) as run_mock,
+            patch(
+                "agent_relay.cli.emit_json",
+            ),
         ):
             exit_code = args.func(args)
 

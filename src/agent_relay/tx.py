@@ -3,13 +3,14 @@ from __future__ import annotations
 import json
 import secrets
 import shutil
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-from typing import Any, Mapping
+from typing import Any
 
+from agent_relay.errors import RelayError, TransactionError
 from agent_relay.fs import write_json_atomic, write_text_atomic
-from agent_relay.errors import TransactionError, RelayError
 from agent_relay.hashing import sha256_path
 from agent_relay.layout import (
     object_dirname,
@@ -67,7 +68,9 @@ class PendingTransactionObject:
             object_id=_require_str(data["object_id"], "pending_object.object_id"),
             staged_dir=_require_relative_path(data["staged_dir"], "pending_object.staged_dir"),
             final_dir=_require_relative_path(data["final_dir"], "pending_object.final_dir"),
-            manifest_path=_require_relative_path(data["manifest_path"], "pending_object.manifest_path"),
+            manifest_path=_require_relative_path(
+                data["manifest_path"], "pending_object.manifest_path"
+            ),
             manifest_sha256=_require_str(data["manifest_sha256"], "pending_object.manifest_sha256"),
         )
 
@@ -115,7 +118,9 @@ class PendingTransactionManifest:
             raise TransactionError("pending_tx.state must be staging, promoted, or committed")
         for item in self.staged_objects:
             if not isinstance(item, PendingTransactionObject):
-                raise TransactionError("pending_tx.staged_objects entries must be PendingTransactionObject")
+                raise TransactionError(
+                    "pending_tx.staged_objects entries must be PendingTransactionObject"
+                )
         for item in self.promoted_object_dirs:
             _require_relative_path(item, "pending_tx.promoted_object_dirs[]")
         if self.planned_event_path is not None:
@@ -146,7 +151,10 @@ class PendingTransactionManifest:
             updated_at=_require_str(data["updated_at"], "pending_tx.updated_at"),
             state=_require_str(data["state"], "pending_tx.state"),
             staged_objects=tuple(PendingTransactionObject.from_dict(item) for item in staged),
-            promoted_object_dirs=tuple(_require_relative_path(item, "pending_tx.promoted_object_dirs[]") for item in promoted),
+            promoted_object_dirs=tuple(
+                _require_relative_path(item, "pending_tx.promoted_object_dirs[]")
+                for item in promoted
+            ),
             planned_event_path=data.get("planned_event_path"),
             planned_event_hash=data.get("planned_event_hash"),
             planned_event_id=data.get("planned_event_id"),
@@ -317,7 +325,9 @@ class SessionTransaction:
         object_kind = _object_kind_from_manifest(manifest)
         final_dir_relative = f"objects/{object_dirname(object_kind)}/{manifest.object_id}"
         if any(item.final_dir == final_dir_relative for item in self._manifest.staged_objects):
-            raise TransactionError(f"Object already staged in this transaction: {final_dir_relative}")
+            raise TransactionError(
+                f"Object already staged in this transaction: {final_dir_relative}"
+            )
 
         staged_dir_relative = f"staging/{final_dir_relative}"
         staged_object_dir = self._pending_root / staged_dir_relative
@@ -340,11 +350,17 @@ class SessionTransaction:
         for file_entry in manifest.files:
             candidate = staged_object_dir / file_entry.relative_path
             if not candidate.exists():
-                raise TransactionError(f"staged object is missing expected file {file_entry.relative_path}")
+                raise TransactionError(
+                    f"staged object is missing expected file {file_entry.relative_path}"
+                )
             if sha256_path(candidate) != file_entry.sha256:
-                raise TransactionError(f"staged object file hash mismatch for {file_entry.relative_path}")
+                raise TransactionError(
+                    f"staged object file hash mismatch for {file_entry.relative_path}"
+                )
             if candidate.stat().st_size != file_entry.size_bytes:
-                raise TransactionError(f"staged object file size mismatch for {file_entry.relative_path}")
+                raise TransactionError(
+                    f"staged object file size mismatch for {file_entry.relative_path}"
+                )
 
         manifest_path = staged_object_dir / "manifest.json"
         write_json_atomic(manifest_path, manifest.to_dict())
@@ -386,7 +402,9 @@ class SessionTransaction:
         )
         object_refs = request.object_refs if request.object_refs is not None else staged_refs
         if tuple(object_refs) != staged_refs:
-            raise TransactionError("commit request object_refs must match the transaction's staged objects exactly")
+            raise TransactionError(
+                "commit request object_refs must match the transaction's staged objects exactly"
+            )
 
         events = load_journal_events(self.repo_root, self.session_id)
         last_event = events[-1]
@@ -408,7 +426,9 @@ class SessionTransaction:
             prev_event_hash=last_event.event_hash,
             event_hash="sha256:" + ("0" * 64),
         )
-        event = JournalEvent.from_dict({**event.to_dict(), "event_hash": event.expected_event_hash()})
+        event = JournalEvent.from_dict(
+            {**event.to_dict(), "event_hash": event.expected_event_hash()}
+        )
         event_path_relative = f"journal/{sequence:06d}-{request.event_type}.json"
 
         self._manifest = replace(
@@ -489,7 +509,7 @@ def recover_session_transactions(repo_root: Path, session_id: str) -> RecoveryRe
                 raise TransactionError("pending transaction is missing transaction.json")
             raw = json.loads(manifest_path.read_text(encoding="utf-8"))
             manifest = PendingTransactionManifest.from_dict(raw)
-        except (json.JSONDecodeError, TransactionError) as exc:
+        except (json.JSONDecodeError, TransactionError):
             _quarantine_path(candidate, quarantine_root / f"{candidate.name}-broken")
             quarantined += 1
             continue

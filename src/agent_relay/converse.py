@@ -11,16 +11,13 @@ import os
 import secrets
 import shlex
 import subprocess
-import sys
 import threading
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from collections.abc import Sequence
-from typing import Callable
 
 from agent_relay.agents import (
-    AGENT_REGISTRY,
     get_agent_adapter,
     get_agent_display_name,
     require_available,
@@ -29,8 +26,7 @@ from agent_relay.bootstrap import start_session
 from agent_relay.layout import session_root, turn_dir, turns_dir, workspace_log_path
 from agent_relay.resumable_state import normalize_resumable_state, resumable_state_text
 from agent_relay.storage import is_session
-from agent_relay.workspace_log import LogEntry, WorkspaceLog, utc_timestamp
-
+from agent_relay.workspace_log import LogEntry, WorkspaceLog
 
 # ---------------------------------------------------------------------------
 # Data structures
@@ -60,7 +56,9 @@ class ConverseResult:
     session_id: str
     agents: tuple[str, ...]
     turns_completed: int
-    stop_reason: str  # "max_turns" | "all_done" | "done_signal" | "blocked" | "interrupted" | "agent_error"
+    stop_reason: (
+        str  # "max_turns" | "all_done" | "done_signal" | "blocked" | "interrupted" | "agent_error"
+    )
     turn_results: tuple[TurnResult, ...]
     continued_from_session_id: str | None = None
 
@@ -188,9 +186,7 @@ def _strip_done_marker(text: str) -> str:
     """Remove the CONVERSATION_COMPLETE marker from display text."""
     import re
 
-    return re.sub(
-        r"\s*CONVERSATION_COMPLETE\s*", " ", text, flags=re.IGNORECASE
-    ).strip()
+    return re.sub(r"\s*CONVERSATION_COMPLETE\s*", " ", text, flags=re.IGNORECASE).strip()
 
 
 def _strip_turn_control(text: str) -> str:
@@ -569,9 +565,7 @@ def _build_agent_command(agent_key: str, prompt_path: Path, repo_root: Path) -> 
     rr = shlex.quote(str(repo_root))
 
     if agent_key == "claude":
-        return (
-            f'cd {rr} && {cli} -p "$(cat {pp})" --output-format stream-json --verbose'
-        )
+        return f'cd {rr} && {cli} -p "$(cat {pp})" --output-format stream-json --verbose'
     elif agent_key == "codex":
         return f'cd {rr} && {cli} exec "$(cat {pp})" --json'
     elif agent_key == "gemini":
@@ -687,9 +681,7 @@ def _store_turn_artifacts(
     if raw_stderr.strip():
         (tdir / "stderr.log").write_text(raw_stderr, encoding="utf-8")
     if state_payload is not None:
-        (tdir / "state.json").write_text(
-            resumable_state_text(state_payload), encoding="utf-8"
-        )
+        (tdir / "state.json").write_text(resumable_state_text(state_payload), encoding="utf-8")
 
     return tdir
 
@@ -745,8 +737,7 @@ def _build_turn_state(
         "assumptions": _state_list(explicit_state, "assumptions"),
         "blockers": _state_list(explicit_state, "blockers"),
         "intended_edits": _state_list(explicit_state, "intended_edits"),
-        "remaining_work": _state_list(explicit_state, "remaining_work")
-        or remaining_work,
+        "remaining_work": _state_list(explicit_state, "remaining_work") or remaining_work,
         "verification": _state_list(explicit_state, "verification") or verification,
         "next_step": next_step,
         "agent_key": agent_key,
@@ -832,9 +823,7 @@ def converse(
     agent_names = [get_agent_display_name(a) for a in agents]
 
     # Create session
-    session_id = (
-        datetime.now(UTC).strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(3)
-    )
+    session_id = datetime.now(UTC).strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(3)
     start_session(
         repo_root,
         session_id=session_id,
@@ -861,9 +850,7 @@ def converse(
     continuation_context: str | None = None
     if continue_from_session_id:
         ctx_parts: list[str] = []
-        ctx_parts.append(
-            f"This run continues prior relay session: {continue_from_session_id}"
-        )
+        ctx_parts.append(f"This run continues prior relay session: {continue_from_session_id}")
         prior_session_dir = session_root(repo_root, continue_from_session_id)
         ctx_parts.append(f"Prior session root: {prior_session_dir}")
 
@@ -892,9 +879,7 @@ def converse(
                             if next_step:
                                 ctx_parts.append(f"Planned next step: {next_step}")
                             if remaining:
-                                ctx_parts.append(
-                                    f"Remaining work: {', '.join(remaining)}"
-                                )
+                                ctx_parts.append(f"Remaining work: {', '.join(remaining)}")
                     except (OSError, json.JSONDecodeError):
                         pass
                     break
@@ -963,9 +948,12 @@ def converse(
                 elif status == "reopen":
                     status = "continue"
             else:
-                if status in {"propose_done", "agree_done"} and turn_number < n:
-                    status = "continue"
-                elif status == "agree_done" and active_completion_epoch is None:
+                if (
+                    status in {"propose_done", "agree_done"}
+                    and turn_number < n
+                    or status == "agree_done"
+                    and active_completion_epoch is None
+                ):
                     status = "continue"
                 elif status == "propose_done" and active_completion_epoch is not None:
                     status = "agree_done"
@@ -1055,8 +1043,7 @@ def converse(
                 if active_completion_epoch is not None:
                     agreeing_slots.add(slot)
             elif (
-                status in {"continue", "blocked", "reopen"}
-                and active_completion_epoch is not None
+                status in {"continue", "blocked", "reopen"} and active_completion_epoch is not None
             ):
                 active_completion_epoch = None
                 proposed_by_slot = None

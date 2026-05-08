@@ -45,7 +45,7 @@ class AgentAdapter:
     key: str
     display_name: str
     cli_command: str
-    alias: str                      # Short alias (e.g. "c" for claude)
+    alias: str  # Short alias (e.g. "c" for claude)
     launch_template_env: str
     default_launch_template: str
     launch_instructions_template: str
@@ -65,9 +65,7 @@ class AgentAdapter:
         packet_aware = launch_template_uses_resume_packet(template)
         if source == "default" and not packet_aware:
             placeholders = " or ".join(RESUME_PACKET_PLACEHOLDERS)
-            raise SystemExit(
-                f"Built-in launch template for {self.key} must include {placeholders}"
-            )
+            raise SystemExit(f"Built-in launch template for {self.key} must include {placeholders}")
         values = self._template_values(repo_root, resume_path)
         try:
             command = template.format(**values)
@@ -86,9 +84,7 @@ class AgentAdapter:
                 f"{self.display_name} launch template does not pass the resume packet. "
                 f"`launch --execute` will refuse until the template includes {placeholders}."
             )
-            instructions = (
-                f"{warning} Resume packet: {resume_path}."
-            )
+            instructions = f"{warning} Resume packet: {resume_path}."
         return LaunchSpec(
             command=command,
             template=template,
@@ -218,10 +214,7 @@ AGENT_REGISTRY: dict[str, AgentAdapter] = {
 AGENT_NAMES = tuple(AGENT_REGISTRY)
 
 # Alias → key lookup (e.g. "c" → "claude", "x" → "codex")
-AGENT_ALIASES: dict[str, str] = {
-    adapter.alias: adapter.key
-    for adapter in AGENT_REGISTRY.values()
-}
+AGENT_ALIASES: dict[str, str] = {adapter.alias: adapter.key for adapter in AGENT_REGISTRY.values()}
 
 
 def resolve_agent_key(name_or_alias: str) -> str:
@@ -233,9 +226,7 @@ def resolve_agent_key(name_or_alias: str) -> str:
         return name_or_alias
     if name_or_alias in AGENT_ALIASES:
         return AGENT_ALIASES[name_or_alias]
-    allowed = ", ".join(
-        f"{a.key} ({a.alias})" for a in AGENT_REGISTRY.values()
-    )
+    allowed = ", ".join(f"{a.key} ({a.alias})" for a in AGENT_REGISTRY.values())
     raise SystemExit(f"Unknown agent: {name_or_alias}. Choose from: {allowed}")
 
 
@@ -254,6 +245,7 @@ def get_agent_display_name(agent: str) -> str:
 # Agent discovery
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True, slots=True)
 class DiscoveryResult:
     key: str
@@ -268,10 +260,13 @@ class DiscoveryResult:
 def _detect_version(cli_command: str) -> str | None:
     """Try to get version string from a CLI tool."""
     import subprocess
+
     try:
         result = subprocess.run(
             [cli_command, "--version"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip().splitlines()[0]
@@ -283,6 +278,7 @@ def _detect_version(cli_command: str) -> str | None:
 def discover(keys: Iterable[str] | None = None) -> list[DiscoveryResult]:
     """Check which registered agents have their CLI available on PATH."""
     import shutil
+
     target_keys = keys if keys is not None else AGENT_REGISTRY.keys()
     results: list[DiscoveryResult] = []
     for key in target_keys:
@@ -291,21 +287,24 @@ def discover(keys: Iterable[str] | None = None) -> list[DiscoveryResult]:
             continue
         cli_path = shutil.which(adapter.cli_command)
         version = _detect_version(adapter.cli_command) if cli_path else None
-        results.append(DiscoveryResult(
-            key=adapter.key,
-            display_name=adapter.display_name,
-            cli_command=adapter.cli_command,
-            alias=adapter.alias,
-            available=cli_path is not None,
-            cli_path=cli_path,
-            version=version,
-        ))
+        results.append(
+            DiscoveryResult(
+                key=adapter.key,
+                display_name=adapter.display_name,
+                cli_command=adapter.cli_command,
+                alias=adapter.alias,
+                available=cli_path is not None,
+                cli_path=cli_path,
+                version=version,
+            )
+        )
     return results
 
 
 def require_available(keys: Iterable[str]) -> None:
     """Raise SystemExit if any specified agent CLI is not installed."""
     import shutil
+
     for key in keys:
         adapter = AGENT_REGISTRY.get(key)
         if adapter is None:

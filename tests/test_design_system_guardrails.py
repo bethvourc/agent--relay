@@ -5,6 +5,7 @@ in ``Agent Relay Design System/`` — literal Rich color names appearing
 outside the theme module, missing tokens, or banner/help losing their
 DS-shaped structure.
 """
+
 from __future__ import annotations
 
 import re
@@ -27,7 +28,7 @@ _THEME_FILES = {"ui.py", "tokens.py"}
 # Matches a quoted color name that isn't part of a longer identifier.
 _LITERAL_COLOR_RE = re.compile(
     r'"\s*(bold\s+|dim\s+)?'
-    r'(cyan|magenta|yellow|red|green|blue|white|black)'
+    r"(cyan|magenta|yellow|red|green|blue|white|black)"
     r'(\s+\w+)?\s*"'
 )
 
@@ -56,19 +57,39 @@ class RequiredThemeTokens(TestCase):
 
     REQUIRED = (
         # accents
-        "brand", "brand.dim", "signal", "signal.dim",
+        "brand",
+        "brand.dim",
+        "signal",
+        "signal.dim",
         # surfaces and rules
-        "surface.0", "surface.1", "surface.2", "surface.3", "surface.rule",
+        "surface.0",
+        "surface.1",
+        "surface.2",
+        "surface.3",
+        "surface.rule",
         # foreground ramp
-        "fg.1", "fg.2", "fg.3", "fg.4",
+        "fg.1",
+        "fg.2",
+        "fg.3",
+        "fg.4",
         # semantic
-        "success", "error", "warning", "info",
+        "success",
+        "error",
+        "warning",
+        "info",
         # event kinds (watch_ui)
-        "kind.journal", "kind.workspace", "kind.turn",
-        "kind.turn_started", "kind.turn_completed",
-        "kind.output", "kind.status", "kind.heartbeat",
+        "kind.journal",
+        "kind.workspace",
+        "kind.turn",
+        "kind.turn_started",
+        "kind.turn_completed",
+        "kind.output",
+        "kind.status",
+        "kind.heartbeat",
         # agents
-        "agent.claude", "agent.codex", "agent.gemini",
+        "agent.claude",
+        "agent.codex",
+        "agent.gemini",
     )
 
     def test_all_required_tokens_present(self) -> None:

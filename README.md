@@ -146,48 +146,48 @@ If an agent was working outside of Relay and needs to hand off, open a new termi
 
 ### Primary commands
 
-| Command | Description |
-|---------|-------------|
-| `agent-relay run <agent> <task>` | Single-agent managed session with live capture. Best starting point for any task. |
-| `agent-relay chat <agents...> <task>` | Turn-based agent conversation. Agents alternate with full history context. |
+| Command                               | Description                                                                          |
+| ------------------------------------- | ------------------------------------------------------------------------------------ |
+| `agent-relay run <agent> <task>`      | Single-agent managed session with live capture. Best starting point for any task.    |
+| `agent-relay chat <agents...> <task>` | Turn-based agent conversation. Agents alternate with full history context.           |
 | `agent-relay race <agents...> <task>` | Concurrent workflow with planning, isolated worktrees, and conflict recovery (tmux). |
-| `agent-relay <agent>` | One-command relay to a target agent. Creates packet and optionally launches. |
+| `agent-relay <agent>`                 | One-command relay to a target agent. Creates packet and optionally launches.         |
 
 ### Conflict resolution
 
-| Command | Description |
-|---------|-------------|
-| `agent-relay resolve [session-id]` | Resume unresolved race conflicts. |
-| `agent-relay resolve --latest` | Resume the most recent unresolved conflict. |
+| Command                                      | Description                                                       |
+| -------------------------------------------- | ----------------------------------------------------------------- |
+| `agent-relay resolve [session-id]`           | Resume unresolved race conflicts.                                 |
+| `agent-relay resolve --latest`               | Resume the most recent unresolved conflict.                       |
 | `agent-relay inspect-conflicts <session-id>` | Inspect saved conflict artifacts, versions, and resolution hints. |
 
 ### Session management
 
-| Command | Description |
-|---------|-------------|
-| `agent-relay discover` | Show available agents, aliases, and CLI paths. |
-| `agent-relay status` | List all relay sessions in the current repo. |
-| `agent-relay watch [session-id]` | Live TUI of an in-progress session. Auto-picks newest active when no id is given. `--json` streams JSONL events; `--quiet` streams one terse line per event; `--no-follow` prints a single snapshot and exits. Add `--metrics` for a token / cost / duration panel. |
-| `agent-relay metrics [session-id]` | Token / cost / latency rollup for a session. Use `--all` for cross-session totals, `--since YYYY-MM-DD` to filter, `--agent claude` (repeatable) to scope. |
-| `agent-relay metrics-tail [session-id]` | Stream metric events as JSONL — one line per `turn_completed`, plus a final session rollup. Optional `--webhook URL` POSTs each line. |
-| `agent-relay metrics-serve` | Run a metrics exporter. `--prometheus :9464` exposes `/metrics` in Prometheus text format; `--otlp http://collector:4318/v1/metrics` pushes OTLP/HTTP-JSON every 30s. Both can run together. |
-| `agent-relay clean` | Remove all sessions. Use `--all` to remove entire `.agent-relay/` directory. |
+| Command                                 | Description                                                                                                                                                                                                                                                         |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agent-relay discover`                  | Show available agents, aliases, and CLI paths.                                                                                                                                                                                                                      |
+| `agent-relay status`                    | List all relay sessions in the current repo.                                                                                                                                                                                                                        |
+| `agent-relay watch [session-id]`        | Live TUI of an in-progress session. Auto-picks newest active when no id is given. `--json` streams JSONL events; `--quiet` streams one terse line per event; `--no-follow` prints a single snapshot and exits. Add `--metrics` for a token / cost / duration panel. |
+| `agent-relay metrics [session-id]`      | Token / cost / latency rollup for a session. Use `--all` for cross-session totals, `--since YYYY-MM-DD` to filter, `--agent claude` (repeatable) to scope.                                                                                                          |
+| `agent-relay metrics-tail [session-id]` | Stream metric events as JSONL — one line per `turn_completed`, plus a final session rollup. Optional `--webhook URL` POSTs each line.                                                                                                                               |
+| `agent-relay metrics-serve`             | Run a metrics exporter. `--prometheus :9464` exposes `/metrics` in Prometheus text format; `--otlp http://collector:4318/v1/metrics` pushes OTLP/HTTP-JSON every 30s. Both can run together.                                                                        |
+| `agent-relay clean`                     | Remove all sessions. Use `--all` to remove entire `.agent-relay/` directory.                                                                                                                                                                                        |
 
 ### Options
 
-| Option | Description |
-|--------|-------------|
-| `--task`, `-t` | Task for agents (alternative to positional argument) |
-| `--continue` | Continue from a prior relay session id |
-| `-n` | Max turns for `run`/`chat` (default: 10) |
-| `--max-time` | Max seconds for `race` (default: 600) |
-| `--open-terminals` | Auto-open terminal windows/tabs for `race`/`resolve` on macOS |
-| `--no-open-terminals` | Disable auto-open terminal behavior |
-| `--from` | Source agent for relay (auto-detected by default) |
-| `--no-launch` | Create the handoff packet without launching the target agent |
-| `--yes`, `-y` | Skip confirmation prompt |
-| `--json` | Machine-readable JSON output |
-| `--quiet`, `-q` | Minimal output |
+| Option                | Description                                                   |
+| --------------------- | ------------------------------------------------------------- |
+| `--task`, `-t`        | Task for agents (alternative to positional argument)          |
+| `--continue`          | Continue from a prior relay session id                        |
+| `-n`                  | Max turns for `run`/`chat` (default: 10)                      |
+| `--max-time`          | Max seconds for `race` (default: 600)                         |
+| `--open-terminals`    | Auto-open terminal windows/tabs for `race`/`resolve` on macOS |
+| `--no-open-terminals` | Disable auto-open terminal behavior                           |
+| `--from`              | Source agent for relay (auto-detected by default)             |
+| `--no-launch`         | Create the handoff packet without launching the target agent  |
+| `--yes`, `-y`         | Skip confirmation prompt                                      |
+| `--json`              | Machine-readable JSON output                                  |
+| `--quiet`, `-q`       | Minimal output                                                |
 
 ## Recommended workflows
 
@@ -280,14 +280,14 @@ agent-relay metrics-serve --prometheus :9464 --otlp http://localhost:4318/v1/met
 
 Metrics emitted (Prometheus naming; OTLP uses dotted equivalents):
 
-| Metric | Type | Labels |
-|---|---|---|
-| `agent_relay_tokens_total` | counter | `agent`, `direction` (`input`, `output`, `cache_read`, `cache_creation`) |
-| `agent_relay_cost_usd_total` | counter | `agent` |
-| `agent_relay_turn_duration_ms_sum` / `_count` | summary | `agent` |
-| `agent_relay_turns_total` | counter | `agent`, `result` (`success`, `error`) |
-| `agent_relay_session_active` | gauge | — |
-| `agent_relay_sessions_total` | gauge | `status` |
+| Metric                                        | Type    | Labels                                                                   |
+| --------------------------------------------- | ------- | ------------------------------------------------------------------------ |
+| `agent_relay_tokens_total`                    | counter | `agent`, `direction` (`input`, `output`, `cache_read`, `cache_creation`) |
+| `agent_relay_cost_usd_total`                  | counter | `agent`                                                                  |
+| `agent_relay_turn_duration_ms_sum` / `_count` | summary | `agent`                                                                  |
+| `agent_relay_turns_total`                     | counter | `agent`, `result` (`success`, `error`)                                   |
+| `agent_relay_session_active`                  | gauge   | —                                                                        |
+| `agent_relay_sessions_total`                  | gauge   | `status`                                                                 |
 
 ### Alerts
 
@@ -307,7 +307,17 @@ When a turn breaches a threshold, `metrics-tail` writes a colored line to
 stderr and emits an extra JSONL line on stdout:
 
 ```json
-{"kind":"metrics.alert","rule":"cost_per_turn","severity":"warning","session_id":"...","turn_number":3,"threshold":0.5,"observed":0.71,"message":"turn 3 cost $0.7100 exceeds threshold $0.5000","timestamp":"..."}
+{
+  "kind": "metrics.alert",
+  "rule": "cost_per_turn",
+  "severity": "warning",
+  "session_id": "...",
+  "turn_number": 3,
+  "threshold": 0.5,
+  "observed": 0.71,
+  "message": "turn 3 cost $0.7100 exceeds threshold $0.5000",
+  "timestamp": "..."
+}
 ```
 
 Severity is `critical` at ≥ 2× threshold, `warning` otherwise. Webhook
@@ -361,43 +371,43 @@ This is the best fallback when an agent did useful planning but did not write co
 
 ### Capture helpers
 
-| Variable | Description |
-|----------|-------------|
-| `AGENT_RELAY_AUTOSAVE_GIT_TOUCHED_FILES=1` | Auto-save git diff of touched files |
-| `AGENT_RELAY_AUTOSAVE_RESEARCH_NOTE_FILE=<path>` | Auto-capture research notes |
-| `AGENT_RELAY_AUTOSAVE_IMPLEMENTATION_NOTE_FILE=<path>` | Auto-capture implementation notes |
-| `AGENT_RELAY_AUTOSAVE_VALIDATION_SUMMARY_FILE=<path>` | Auto-capture validation summary |
-| `AGENT_RELAY_AUTOSAVE_PLANNING_SNAPSHOT_FILE=<path>` | Auto-capture planning snapshot |
-| `AGENT_RELAY_AUTOSAVE_PROPOSED_EDITS_FILE=<path>` | Auto-capture proposed edits |
+| Variable                                               | Description                         |
+| ------------------------------------------------------ | ----------------------------------- |
+| `AGENT_RELAY_AUTOSAVE_GIT_TOUCHED_FILES=1`             | Auto-save git diff of touched files |
+| `AGENT_RELAY_AUTOSAVE_RESEARCH_NOTE_FILE=<path>`       | Auto-capture research notes         |
+| `AGENT_RELAY_AUTOSAVE_IMPLEMENTATION_NOTE_FILE=<path>` | Auto-capture implementation notes   |
+| `AGENT_RELAY_AUTOSAVE_VALIDATION_SUMMARY_FILE=<path>`  | Auto-capture validation summary     |
+| `AGENT_RELAY_AUTOSAVE_PLANNING_SNAPSHOT_FILE=<path>`   | Auto-capture planning snapshot      |
+| `AGENT_RELAY_AUTOSAVE_PROPOSED_EDITS_FILE=<path>`      | Auto-capture proposed edits         |
 
 ### Launch template overrides
 
-| Variable | Description |
-|----------|-------------|
+| Variable                             | Description                      |
+| ------------------------------------ | -------------------------------- |
 | `AGENT_RELAY_CLAUDE_LAUNCH_TEMPLATE` | Custom launch command for Claude |
-| `AGENT_RELAY_CODEX_LAUNCH_TEMPLATE` | Custom launch command for Codex |
+| `AGENT_RELAY_CODEX_LAUNCH_TEMPLATE`  | Custom launch command for Codex  |
 
 ### Capture hook templates
 
-| Variable | Description |
-|----------|-------------|
+| Variable                              | Description                            |
+| ------------------------------------- | -------------------------------------- |
 | `AGENT_RELAY_CLAUDE_CAPTURE_TEMPLATE` | Custom capture hook for Claude exports |
-| `AGENT_RELAY_CODEX_CAPTURE_TEMPLATE` | Custom capture hook for Codex exports |
+| `AGENT_RELAY_CODEX_CAPTURE_TEMPLATE`  | Custom capture hook for Codex exports  |
 
 ### Template placeholders
 
 Available in both launch and capture templates:
 
-| Placeholder | Description |
-|-------------|-------------|
-| `{agent}` | Agent key (e.g. `claude`) |
-| `{agent_name}` | Display name (e.g. `Claude Code`) |
-| `{agent_cli}` | Shell-quoted CLI command |
-| `{repo_root}` | Shell-quoted repo root path |
-| `{repo_root_path}` | Unquoted repo root path |
-| `{resume_path}` | Shell-quoted path to resume packet |
-| `{resume_path_path}` | Unquoted path to resume packet |
-| `{session_id}` | Session identifier |
+| Placeholder          | Description                        |
+| -------------------- | ---------------------------------- |
+| `{agent}`            | Agent key (e.g. `claude`)          |
+| `{agent_name}`       | Display name (e.g. `Claude Code`)  |
+| `{agent_cli}`        | Shell-quoted CLI command           |
+| `{repo_root}`        | Shell-quoted repo root path        |
+| `{repo_root_path}`   | Unquoted repo root path            |
+| `{resume_path}`      | Shell-quoted path to resume packet |
+| `{resume_path_path}` | Unquoted path to resume packet     |
+| `{session_id}`       | Session identifier                 |
 
 ### Built-in defaults
 

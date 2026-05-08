@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import Any
 
 from rich.console import Console
 from rich.panel import Panel
@@ -24,7 +23,6 @@ from agent_relay.metrics import (
     TurnMetrics,
 )
 from agent_relay.ui import STATUS_SYMBOLS, status_badge
-
 
 # ---------------------------------------------------------------------------
 # Rich tables
@@ -105,9 +103,7 @@ def render_session_metrics(console: Console, metrics: SessionMetrics) -> None:
     console.print()
 
 
-def render_cross_session_metrics(
-    console: Console, metrics: CrossSessionMetrics
-) -> None:
+def render_cross_session_metrics(console: Console, metrics: CrossSessionMetrics) -> None:
     if metrics.session_count == 0:
         console.print("  [muted]no sessions found.[/]")
         console.print()
@@ -149,13 +145,10 @@ def render_cross_session_metrics(
     totals.add_row("cost", _format_cost(metrics.total_cost_usd, metrics.cost_by_agent))
     totals.add_row("duration", _fmt_duration_ms(metrics.total_duration_ms))
     if metrics.by_agent:
-        totals.add_row(
-            "by agent", _format_by_agent(metrics.by_agent, metrics.cost_by_agent)
-        )
+        totals.add_row("by agent", _format_by_agent(metrics.by_agent, metrics.cost_by_agent))
     if metrics.by_day:
         days = ", ".join(
-            f"{day} ({_fmt_int(usage.total)})"
-            for day, usage in sorted(metrics.by_day.items())
+            f"{day} ({_fmt_int(usage.total)})" for day, usage in sorted(metrics.by_day.items())
         )
         totals.add_row("by day", days)
     console.print(totals)
@@ -175,11 +168,7 @@ def render_metrics_panel(metrics: SessionMetrics) -> Panel:
     if metrics.turn_count:
         err = metrics.turn_count - metrics.successful_turns
         body.append(f"({metrics.successful_turns} ok, {err} err)   ", style="muted")
-    avg_ms = (
-        metrics.total_duration_ms // metrics.turn_count
-        if metrics.turn_count
-        else 0
-    )
+    avg_ms = metrics.total_duration_ms // metrics.turn_count if metrics.turn_count else 0
     body.append("avg/turn ", style="label")
     body.append(f"{_fmt_duration_ms(avg_ms)}   ", style="value")
     body.append("total ", style="label")
@@ -211,11 +200,7 @@ def metrics_to_jsonl_line(item: SessionMetrics | TurnMetrics) -> str:
 
 
 def emit_session_metrics_quiet(metrics: SessionMetrics) -> None:
-    cost = (
-        f"${metrics.total_cost_usd:.4f}"
-        if metrics.total_cost_usd is not None
-        else "-"
-    )
+    cost = f"${metrics.total_cost_usd:.4f}" if metrics.total_cost_usd is not None else "-"
     sys.stdout.write(
         f"{metrics.session_id}\t{metrics.current_agent}\t{metrics.turn_count}\t"
         f"{metrics.total_tokens.total or 0}\t{cost}\n"
@@ -246,16 +231,12 @@ def _format_tokens(tokens: TokenUsage) -> str:
     return "  ".join(parts) if parts else "-"
 
 
-def _format_cost(
-    total: float | None, by_agent: dict[str, float] | None = None
-) -> str:
+def _format_cost(total: float | None, by_agent: dict[str, float] | None = None) -> str:
     if total is None:
         return "-"
     if not by_agent or len(by_agent) <= 1:
         return f"${total:.4f}"
-    breakdown = ", ".join(
-        f"{agent} ${cost:.4f}" for agent, cost in sorted(by_agent.items())
-    )
+    breakdown = ", ".join(f"{agent} ${cost:.4f}" for agent, cost in sorted(by_agent.items()))
     return f"${total:.4f}  ({breakdown})"
 
 

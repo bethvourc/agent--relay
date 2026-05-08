@@ -6,7 +6,6 @@ from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
 
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
@@ -30,7 +29,11 @@ class AgentRelayRepairTests(TestCase):
 
             def interrupt_on_journal_write(path: Path, payload) -> None:
                 nonlocal interrupted_path
-                if path.parent.name == "journal" and isinstance(payload, dict) and payload.get("kind") == "journal_event":
+                if (
+                    path.parent.name == "journal"
+                    and isinstance(payload, dict)
+                    and payload.get("kind") == "journal_event"
+                ):
                     interrupted_path = path
                     raise KeyboardInterrupt("simulated interruption before repair journal commit")
                 original_write_json_atomic(path, payload)

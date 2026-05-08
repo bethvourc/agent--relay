@@ -4,6 +4,7 @@ A structured markdown file that records what each agent did on each turn,
 giving agents visibility into others' work — our equivalent of smux's
 pane interaction.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -18,7 +19,7 @@ class LogEntry:
     timestamp: str
     agent_key: str
     agent_slot: int
-    entry_type: str     # "turn_complete" | "file_changed" | "signal"
+    entry_type: str  # "turn_complete" | "file_changed" | "signal"
     summary: str
 
 
@@ -43,7 +44,9 @@ class WorkspaceLog:
                 f.write(_LOG_HEADER)
             agent_name = get_agent_display_name(entry.agent_key)
             type_label = entry.entry_type.replace("_", " ").title()
-            f.write(f"## [{entry.timestamp}] {agent_name} (slot {entry.agent_slot}) — {type_label}\n\n")
+            f.write(
+                f"## [{entry.timestamp}] {agent_name} (slot {entry.agent_slot}) — {type_label}\n\n"
+            )
             f.write(f"{entry.summary}\n\n")
 
     def read_all(self) -> list[LogEntry]:
@@ -76,13 +79,15 @@ class WorkspaceLog:
             # Reverse-lookup agent key from display name
             agent_key = _agent_key_from_name(agent_name)
 
-            entries.append(LogEntry(
-                timestamp=timestamp,
-                agent_key=agent_key,
-                agent_slot=slot,
-                entry_type=entry_type,
-                summary=summary,
-            ))
+            entries.append(
+                LogEntry(
+                    timestamp=timestamp,
+                    agent_key=agent_key,
+                    agent_slot=slot,
+                    entry_type=entry_type,
+                    summary=summary,
+                )
+            )
 
         return entries
 
@@ -90,6 +95,7 @@ class WorkspaceLog:
 def _agent_key_from_name(display_name: str) -> str:
     """Best-effort reverse lookup of agent key from display name."""
     from agent_relay.agents import AGENT_REGISTRY
+
     for key, adapter in AGENT_REGISTRY.items():
         if adapter.display_name == display_name:
             return key

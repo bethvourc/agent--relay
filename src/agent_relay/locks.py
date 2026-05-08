@@ -38,10 +38,12 @@ class FileLock:
             try:
                 lock_mode = fcntl.LOCK_EX if self.exclusive else fcntl.LOCK_SH
                 fcntl.flock(handle.fileno(), lock_mode | fcntl.LOCK_NB)
-            except BlockingIOError:
+            except BlockingIOError as err:
                 handle.close()
                 if time.monotonic() >= deadline:
-                    raise LockTimeoutError(f"Timed out acquiring {self.scope} lock at {self.path}")
+                    raise LockTimeoutError(
+                        f"Timed out acquiring {self.scope} lock at {self.path}"
+                    ) from err
                 time.sleep(self.poll_interval_seconds)
                 continue
 
@@ -138,11 +140,11 @@ def acquire_session_lock(
     ).acquire()
     try:
         session_guard = FileLock(
-        path=session_lock_path(repo_root, session_id),
-        scope=f"session:{session_id}",
-        owner=owner,
-        timeout_seconds=timeout_seconds,
-        poll_interval_seconds=poll_interval_seconds,
+            path=session_lock_path(repo_root, session_id),
+            scope=f"session:{session_id}",
+            owner=owner,
+            timeout_seconds=timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
         ).acquire()
     except Exception:
         repo_guard.release()

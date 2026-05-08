@@ -38,3 +38,44 @@ version = {attr = "agent_relay.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+extend-exclude = ["Agent Relay Design System", "dist", "build"]
+
+[tool.ruff.lint]
+select = [
+  "E",    # pycodestyle errors
+  "F",    # pyflakes
+  "I",    # isort
+  "W",    # pycodestyle warnings
+  "B",    # flake8-bugbear
+  "UP",   # pyupgrade
+  "SIM",  # flake8-simplify
+]
+ignore = [
+  "E501",   # line-too-long (formatter handles it; long status strings are fine)
+  "B008",   # function-call-in-default-argument (argparse/Click idioms)
+  "B007",   # unused-loop-control-variable (intentional in some loops)
+  "SIM102", # collapsible-if (sometimes clearer separated)
+  "SIM103", # return-condition-directly (boolean filter readability)
+  "SIM105", # suppressible-exception (try/except pass is fine)
+  "SIM108", # use-ternary (not always more readable)
+  "SIM116", # if-else-block-instead-of-dict-lookup (sometimes intentional)
+  "SIM117", # combine `with` statements (often hurts readability)
+  "UP038",  # non-pep604-isinstance (older form is widely understood)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]  # tests bootstrap sys.path before imports
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q"

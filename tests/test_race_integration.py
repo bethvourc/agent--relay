@@ -12,7 +12,6 @@ from unittest.mock import patch
 
 from agent_relay.concurrent import run_concurrent
 
-
 FAKE_AGENT_SCRIPT = """#!/usr/bin/env python3
 from pathlib import Path
 import json
@@ -83,10 +82,7 @@ class RaceIntegrationTests(TestCase):
         # environment reasons rather than logic ones. Gate behind an
         # explicit opt-in so default test runs stay green.
         if not os.environ.get("AGENT_RELAY_RUN_INTEGRATION"):
-            self.skipTest(
-                "race integration tests are gated behind "
-                "AGENT_RELAY_RUN_INTEGRATION=1"
-            )
+            self.skipTest("race integration tests are gated behind AGENT_RELAY_RUN_INTEGRATION=1")
         self._initial_tmux_sessions = self._tmux_sessions()
 
     def tearDown(self) -> None:
@@ -110,21 +106,37 @@ class RaceIntegrationTests(TestCase):
         )
         if result.returncode != 0:
             return set()
-        return {
-            line.strip()
-            for line in result.stdout.splitlines()
-            if line.strip()
-        }
+        return {line.strip() for line in result.stdout.splitlines() if line.strip()}
 
     def _init_repo(self, repo_root: Path) -> None:
         subprocess.run(["git", "init"], cwd=repo_root, text=True, capture_output=True, check=True)
-        subprocess.run(["git", "config", "user.email", "tests@example.com"], cwd=repo_root, text=True, capture_output=True, check=True)
-        subprocess.run(["git", "config", "user.name", "Agent Relay Tests"], cwd=repo_root, text=True, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "tests@example.com"],
+            cwd=repo_root,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Agent Relay Tests"],
+            cwd=repo_root,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
         (repo_root / "README.md").write_text("shared line\n", encoding="utf-8")
         (repo_root / "tests").mkdir()
         (repo_root / "tests" / "placeholder.txt").write_text("baseline\n", encoding="utf-8")
-        subprocess.run(["git", "add", "."], cwd=repo_root, text=True, capture_output=True, check=True)
-        subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, text=True, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "add", "."], cwd=repo_root, text=True, capture_output=True, check=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "initial"],
+            cwd=repo_root,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
 
     def _write_fake_agents(self, bin_dir: Path) -> None:
         for agent_name in ("claude", "codex"):
@@ -150,42 +162,52 @@ class RaceIntegrationTests(TestCase):
             bin_dir.mkdir()
             self._write_fake_agents(bin_dir)
             plan_path = bin_dir / "fake-plan.json"
-            self._write_plan(plan_path, {
-                "planning": {
-                    "0": {
-                        "stdout": 'RELAY_STATUS: {"status":"planning","reason":"Shared docs","claims":[{"path":"README.md","role":"shared"}],"remaining_work":["docs"],"verification":[]}',
+            self._write_plan(
+                plan_path,
+                {
+                    "planning": {
+                        "0": {
+                            "stdout": 'RELAY_STATUS: {"status":"planning","reason":"Shared docs","claims":[{"path":"README.md","role":"shared"}],"remaining_work":["docs"],"verification":[]}',
+                        },
+                        "1": {
+                            "stdout": 'RELAY_STATUS: {"status":"planning","reason":"Shared docs too","claims":[{"path":"README.md","role":"shared"}],"remaining_work":["docs"],"verification":[]}',
+                        },
                     },
-                    "1": {
-                        "stdout": 'RELAY_STATUS: {"status":"planning","reason":"Shared docs too","claims":[{"path":"README.md","role":"shared"}],"remaining_work":["docs"],"verification":[]}',
+                    "implementation": {
+                        "0": {
+                            "writes": {"README.md": "slot zero line\n"},
+                            "stdout": 'RELAY_STATUS: {"status":"done","reason":"First shared edit","remaining_work":[],"verification":["review"]}',
+                        },
+                        "1": {
+                            "writes": {"README.md": "slot one line\n"},
+                            "stdout": 'RELAY_STATUS: {"status":"done","reason":"Second shared edit","remaining_work":[],"verification":["review"]}',
+                        },
+                    },
+                    "resolution": {
+                        "0": {
+                            "writes": {"README.md": "resolved line\n"},
+                            "stdout": 'RELAY_STATUS: {"status":"done","reason":"Resolved conflicted README","remaining_work":[],"verification":["manual review"]}',
+                        },
+                    },
+                    "review": {
+                        "0": {
+                            "stdout": 'RELAY_STATUS: {"status":"done","reason":"Resolution looks correct","remaining_work":[],"verification":["manual review"]}',
+                        },
                     },
                 },
-                "implementation": {
-                    "0": {
-                        "writes": {"README.md": "slot zero line\n"},
-                        "stdout": 'RELAY_STATUS: {"status":"done","reason":"First shared edit","remaining_work":[],"verification":["review"]}',
-                    },
-                    "1": {
-                        "writes": {"README.md": "slot one line\n"},
-                        "stdout": 'RELAY_STATUS: {"status":"done","reason":"Second shared edit","remaining_work":[],"verification":["review"]}',
-                    },
-                },
-                "resolution": {
-                    "0": {
-                        "writes": {"README.md": "resolved line\n"},
-                        "stdout": 'RELAY_STATUS: {"status":"done","reason":"Resolved conflicted README","remaining_work":[],"verification":["manual review"]}',
-                    },
-                },
-                "review": {
-                    "0": {
-                        "stdout": 'RELAY_STATUS: {"status":"done","reason":"Resolution looks correct","remaining_work":[],"verification":["manual review"]}',
-                    },
-                },
-            })
+            )
 
             path_value = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
-            with patch.dict(os.environ, {
-                "PATH": path_value,
-            }, clear=False), patch("agent_relay.concurrent._POLL_INTERVAL", 0.05):
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "PATH": path_value,
+                    },
+                    clear=False,
+                ),
+                patch("agent_relay.concurrent._POLL_INTERVAL", 0.05),
+            ):
                 result = run_concurrent(
                     repo_root,
                     agents=["claude", "codex"],
@@ -193,7 +215,9 @@ class RaceIntegrationTests(TestCase):
                 )
 
             self.assertEqual(result.stop_reason, "all_done")
-            self.assertEqual((repo_root / "README.md").read_text(encoding="utf-8"), "resolved line\n")
+            self.assertEqual(
+                (repo_root / "README.md").read_text(encoding="utf-8"), "resolved line\n"
+            )
             self.assertIsNotNone(result.conflict_artifact_path)
             self.assertTrue(Path(result.conflict_artifact_path).exists())
 
@@ -235,9 +259,16 @@ class RaceIntegrationTests(TestCase):
             }
             self._write_plan(plan_path, first_plan)
 
-            with patch.dict(os.environ, {
-                "PATH": path_value,
-            }, clear=False), patch("agent_relay.concurrent._POLL_INTERVAL", 0.05):
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "PATH": path_value,
+                    },
+                    clear=False,
+                ),
+                patch("agent_relay.concurrent._POLL_INTERVAL", 0.05),
+            ):
                 first_result = run_concurrent(
                     repo_root,
                     agents=["claude", "codex"],
@@ -262,9 +293,16 @@ class RaceIntegrationTests(TestCase):
             }
             self._write_plan(plan_path, second_plan)
 
-            with patch.dict(os.environ, {
-                "PATH": path_value,
-            }, clear=False), patch("agent_relay.concurrent._POLL_INTERVAL", 0.05):
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "PATH": path_value,
+                    },
+                    clear=False,
+                ),
+                patch("agent_relay.concurrent._POLL_INTERVAL", 0.05),
+            ):
                 second_result = run_concurrent(
                     repo_root,
                     agents=["claude", "codex"],
@@ -274,5 +312,10 @@ class RaceIntegrationTests(TestCase):
 
             self.assertEqual(second_result.stop_reason, "all_done")
             self.assertEqual(second_result.continued_from_session_id, first_result.session_id)
-            self.assertEqual((repo_root / "README.md").read_text(encoding="utf-8"), "resolved from continuation\n")
-            self.assertEqual([outcome.phase for outcome in second_result.outcomes], ["resolution", "review"])
+            self.assertEqual(
+                (repo_root / "README.md").read_text(encoding="utf-8"),
+                "resolved from continuation\n",
+            )
+            self.assertEqual(
+                [outcome.phase for outcome in second_result.outcomes], ["resolution", "review"]
+            )

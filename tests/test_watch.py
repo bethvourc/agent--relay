@@ -27,7 +27,6 @@ from agent_relay.watch import (
     pick_latest_active_session,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -289,9 +288,7 @@ class OutputTailTests(TestCase):
             _scaffold_session(tmpdir, sid)
             t1 = turn_dir(tmpdir, sid, 1)
             t1.mkdir(parents=True)
-            (t1 / "output.jsonl").write_text(
-                '{"turn":1}\n', encoding="utf-8"
-            )
+            (t1 / "output.jsonl").write_text('{"turn":1}\n', encoding="utf-8")
 
             tail = _OutputTail(tmpdir, sid)
             tail.reset_to_turn(1)
@@ -299,9 +296,7 @@ class OutputTailTests(TestCase):
 
             t2 = turn_dir(tmpdir, sid, 2)
             t2.mkdir(parents=True)
-            (t2 / "output.jsonl").write_text(
-                '{"turn":2}\n', encoding="utf-8"
-            )
+            (t2 / "output.jsonl").write_text('{"turn":2}\n', encoding="utf-8")
             tail.reset_to_turn(2)
             events = tail.poll()
             self.assertEqual(len(events), 1)
@@ -393,9 +388,7 @@ class PickLatestActiveSessionTests(TestCase):
             },
         ]
         # list_sessions_for_dashboard sorts by (updated_at, session_id) DESC.
-        rows_sorted = sorted(
-            rows, key=lambda r: (r["updated_at"], r["session_id"]), reverse=True
-        )
+        rows_sorted = sorted(rows, key=lambda r: (r["updated_at"], r["session_id"]), reverse=True)
         with patch(
             "agent_relay.watch.list_sessions_for_dashboard",
             return_value=rows_sorted,
@@ -414,9 +407,7 @@ class PickLatestActiveSessionTests(TestCase):
                 "health": "healthy",
             },
         ]
-        with patch(
-            "agent_relay.watch.list_sessions_for_dashboard", return_value=rows
-        ):
+        with patch("agent_relay.watch.list_sessions_for_dashboard", return_value=rows):
             self.assertIsNone(pick_latest_active_session(Path("/tmp/anything")))
 
     def test_skips_corrupt_sessions(self) -> None:
@@ -428,9 +419,7 @@ class PickLatestActiveSessionTests(TestCase):
                 "health": "corrupt",
             },
         ]
-        with patch(
-            "agent_relay.watch.list_sessions_for_dashboard", return_value=rows
-        ):
+        with patch("agent_relay.watch.list_sessions_for_dashboard", return_value=rows):
             self.assertIsNone(pick_latest_active_session(Path("/tmp/anything")))
 
 
@@ -440,9 +429,7 @@ class PickLatestActiveSessionTests(TestCase):
 
 
 class WatchSourceTests(TestCase):
-    def _make_source(
-        self, tmpdir: Path, sid: str, **kwargs
-    ) -> WatchSource:
+    def _make_source(self, tmpdir: Path, sid: str, **kwargs) -> WatchSource:
         with patch("agent_relay.watch.is_session", return_value=True):
             return WatchSource(tmpdir, sid, **kwargs)
 
@@ -458,9 +445,7 @@ class WatchSourceTests(TestCase):
                 sid,
                 poll_interval=0.01,
                 heartbeat_interval=10.0,
-                sleep=lambda _s: _write_derived_view(
-                    tmpdir, sid, phase="completed"
-                ),
+                sleep=lambda _s: _write_derived_view(tmpdir, sid, phase="completed"),
             )
             events = list(source.iter_events())
 
@@ -481,9 +466,7 @@ class WatchSourceTests(TestCase):
 
             # Note: pre-existing events are skipped by tails on init, so we
             # need to add a fresh one *between* construction and iteration.
-            source = self._make_source(
-                tmpdir, sid, follow=False, heartbeat_interval=10.0
-            )
+            source = self._make_source(tmpdir, sid, follow=False, heartbeat_interval=10.0)
             _write_journal_event(tmpdir, sid, 2, "checkpoint.recorded")
             events = list(source.iter_events())
 
@@ -499,7 +482,10 @@ class WatchSourceTests(TestCase):
             sid = "s1"
             _scaffold_session(tmpdir, sid)
             _write_derived_view(
-                tmpdir, sid, phase="active", current_agent="codex",
+                tmpdir,
+                sid,
+                phase="active",
+                current_agent="codex",
                 objective="ship the watch command",
             )
             t1 = turn_dir(tmpdir, sid, 2)
@@ -553,7 +539,8 @@ class WatchSourceTests(TestCase):
                     _write_derived_view(tmpdir, sid, phase="completed")
 
             source = self._make_source(
-                tmpdir, sid,
+                tmpdir,
+                sid,
                 poll_interval=0.01,
                 heartbeat_interval=10.0,
                 sleep=fake_sleep,

@@ -9,7 +9,6 @@ from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
 
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
@@ -32,15 +31,35 @@ from tests.session_fixtures import build_sample_session
 class HandoffTests(TestCase):
     def init_git_repo(self, repo_root: Path) -> None:
         subprocess.run(["git", "init"], cwd=repo_root, check=True, capture_output=True, text=True)
-        subprocess.run(["git", "config", "user.email", "relay@example.com"], cwd=repo_root, check=True, capture_output=True, text=True)
-        subprocess.run(["git", "config", "user.name", "Relay Test"], cwd=repo_root, check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "config", "user.email", "relay@example.com"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Relay Test"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
 
     def commit_file(self, repo_root: Path, relative_path: str, content: str, message: str) -> None:
         path = repo_root / relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
-        subprocess.run(["git", "add", relative_path], cwd=repo_root, check=True, capture_output=True, text=True)
-        subprocess.run(["git", "commit", "-m", message], cwd=repo_root, check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "add", relative_path], cwd=repo_root, check=True, capture_output=True, text=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", message],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
 
     def prepare_session(self, repo_root: Path) -> dict[str, str]:
         self.init_git_repo(repo_root)
@@ -112,22 +131,28 @@ class HandoffTests(TestCase):
         )
 
         workspace_log = WorkspaceLog(workspace_log_path(repo_root, session_id))
-        workspace_log.append(LogEntry(
-            timestamp="2026-03-25T18:09:00Z",
-            agent_key="claude",
-            agent_slot=0,
-            entry_type="turn_complete",
-            summary="Reviewed the current relay handoff flow.",
-        ))
-        workspace_log.append(LogEntry(
-            timestamp="2026-03-25T18:10:00Z",
-            agent_key="codex",
-            agent_slot=1,
-            entry_type="turn_complete",
-            summary="Identified that hidden planning state is not captured yet.",
-        ))
+        workspace_log.append(
+            LogEntry(
+                timestamp="2026-03-25T18:09:00Z",
+                agent_key="claude",
+                agent_slot=0,
+                entry_type="turn_complete",
+                summary="Reviewed the current relay handoff flow.",
+            )
+        )
+        workspace_log.append(
+            LogEntry(
+                timestamp="2026-03-25T18:10:00Z",
+                agent_key="codex",
+                agent_slot=1,
+                entry_type="turn_complete",
+                summary="Identified that hidden planning state is not captured yet.",
+            )
+        )
 
-    def test_same_target_repeated_failovers_remain_immutable_and_supersede_old_handoffs(self) -> None:
+    def test_same_target_repeated_failovers_remain_immutable_and_supersede_old_handoffs(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir).resolve()
             fixture = self.prepare_session(repo_root)
@@ -183,18 +208,24 @@ class HandoffTests(TestCase):
             )
 
             packet_text = Path(handoff.resume_path).read_text(encoding="utf-8")
-            handoff_dir = object_dir(repo_root, fixture["session_id"], "handoff", handoff.handoff_id)
+            handoff_dir = object_dir(
+                repo_root, fixture["session_id"], "handoff", handoff.handoff_id
+            )
 
             self.assertIn("## Resumable State", packet_text)
             self.assertIn("Persist resumable state in handoff artifacts.", packet_text)
             self.assertIn("relay/turns/turn-002/state.json", packet_text)
             self.assertIn("## Prior Relay Conversation", packet_text)
             self.assertIn("Turn 1: Reviewed the current relay handoff flow.", packet_text)
-            self.assertIn("Turn 2: Identified that hidden planning state is not captured yet.", packet_text)
+            self.assertIn(
+                "Turn 2: Identified that hidden planning state is not captured yet.", packet_text
+            )
             self.assertIn("relay/turns/turn-001/output.jsonl", packet_text)
             self.assertIn("relay/workspace-log.md", packet_text)
             self.assertTrue((handoff_dir / "relay" / "turns" / "turn-001" / "prompt.md").exists())
-            self.assertTrue((handoff_dir / "relay" / "turns" / "turn-002" / "output.jsonl").exists())
+            self.assertTrue(
+                (handoff_dir / "relay" / "turns" / "turn-002" / "output.jsonl").exists()
+            )
             self.assertTrue((handoff_dir / "relay" / "turns" / "turn-002" / "state.json").exists())
             self.assertTrue((handoff_dir / "relay" / "workspace-log.md").exists())
 
@@ -214,7 +245,9 @@ class HandoffTests(TestCase):
             )
 
             packet_text = Path(handoff.resume_path).read_text(encoding="utf-8")
-            handoff_dir = object_dir(repo_root, fixture["session_id"], "handoff", handoff.handoff_id)
+            handoff_dir = object_dir(
+                repo_root, fixture["session_id"], "handoff", handoff.handoff_id
+            )
 
             self.assertNotIn("## Prior Relay Conversation", packet_text)
             self.assertFalse((handoff_dir / "relay").exists())
@@ -272,7 +305,9 @@ class HandoffTests(TestCase):
                     owner="test:preview:corrupt",
                 )
 
-            self.assertIn("launch is blocked while session health is degraded", str(context.exception))
+            self.assertIn(
+                "launch is blocked while session health is degraded", str(context.exception)
+            )
             self.assertIn("--promote-last-good", str(context.exception))
 
     def test_failed_launch_captures_immutable_stdout_and_stderr_logs(self) -> None:
@@ -351,7 +386,9 @@ class HandoffTests(TestCase):
                 owner="test:launch:recover",
             )
             view = load_session_view(repo_root, fixture["session_id"])
-            stderr_path = object_dir(repo_root, fixture["session_id"], "launch", launch_id) / "stderr.log"
+            stderr_path = (
+                object_dir(repo_root, fixture["session_id"], "launch", launch_id) / "stderr.log"
+            )
 
             self.assertEqual(recovered_launch_id, launch_id)
             self.assertEqual(view.phase, "ready_for_handoff")
@@ -373,13 +410,19 @@ class HandoffTests(TestCase):
 
             def interrupt_on_journal_write(path: Path, payload) -> None:
                 nonlocal interrupted_path
-                if path.parent.name == "journal" and isinstance(payload, dict) and payload.get("kind") == "journal_event":
+                if (
+                    path.parent.name == "journal"
+                    and isinstance(payload, dict)
+                    and payload.get("kind") == "journal_event"
+                ):
                     interrupted_path = path
                     raise KeyboardInterrupt("simulated interruption before handoff journal commit")
                 original_write_json_atomic(path, payload)
 
             with patch("agent_relay.handoffs.handoff_id_now", return_value=handoff_id):
-                with patch("agent_relay.tx.write_json_atomic", side_effect=interrupt_on_journal_write):
+                with patch(
+                    "agent_relay.tx.write_json_atomic", side_effect=interrupt_on_journal_write
+                ):
                     with self.assertRaises(KeyboardInterrupt):
                         create_handoff_for_command(
                             repo_root,
@@ -397,7 +440,12 @@ class HandoffTests(TestCase):
             self.assertFalse(interrupted_path.exists())
             self.assertIsNone(view.prepared_handoff_id)
             self.assertTrue(handoff_dir.exists())
-            self.assertTrue(any(path.is_dir() for path in pending_tx_dir(repo_root, fixture["session_id"]).iterdir()))
+            self.assertTrue(
+                any(
+                    path.is_dir()
+                    for path in pending_tx_dir(repo_root, fixture["session_id"]).iterdir()
+                )
+            )
 
             report = recover_session_transactions(repo_root, fixture["session_id"])
             view = load_session_view(repo_root, fixture["session_id"])
@@ -456,9 +504,7 @@ class HandoffTests(TestCase):
             fixture = self.prepare_session(repo_root)
             env = {
                 "AGENT_RELAY_CLAUDE_LAUNCH_TEMPLATE": (
-                    f"{shlex_quote(sys.executable)} -c "
-                    "\"print('launch once')\" "
-                    "{resume_path}"
+                    f"{shlex_quote(sys.executable)} -c \"print('launch once')\" {{resume_path}}"
                 )
             }
 
@@ -488,7 +534,10 @@ class HandoffTests(TestCase):
                     owner="test:launch:awaiting-resume:preview",
                 )
 
-            self.assertIn("launch is not allowed while session phase is awaiting_resume", str(context.exception))
+            self.assertIn(
+                "launch is not allowed while session phase is awaiting_resume",
+                str(context.exception),
+            )
 
     def test_unsafe_launch_template_is_preview_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -496,8 +545,7 @@ class HandoffTests(TestCase):
             fixture = self.prepare_session(repo_root)
             env = {
                 "AGENT_RELAY_CLAUDE_LAUNCH_TEMPLATE": (
-                    f"{shlex_quote(sys.executable)} -c "
-                    "\"print('unsafe template')\""
+                    f"{shlex_quote(sys.executable)} -c \"print('unsafe template')\""
                 )
             }
 
@@ -538,9 +586,7 @@ class HandoffTests(TestCase):
             before_resume = load_session_view(repo_root, fixture["session_id"])
             env = {
                 "AGENT_RELAY_CLAUDE_LAUNCH_TEMPLATE": (
-                    f"{shlex_quote(sys.executable)} -c "
-                    "\"print('launch once')\" "
-                    "{resume_path}"
+                    f"{shlex_quote(sys.executable)} -c \"print('launch once')\" {{resume_path}}"
                 )
             }
 
@@ -569,7 +615,11 @@ class HandoffTests(TestCase):
 
             def interrupt_on_journal_write(path: Path, payload) -> None:
                 nonlocal interrupted_path
-                if path.parent.name == "journal" and isinstance(payload, dict) and payload.get("kind") == "journal_event":
+                if (
+                    path.parent.name == "journal"
+                    and isinstance(payload, dict)
+                    and payload.get("kind") == "journal_event"
+                ):
                     interrupted_path = path
                     raise KeyboardInterrupt("simulated interruption before resume journal commit")
                 original_write_json_atomic(path, payload)
@@ -590,7 +640,12 @@ class HandoffTests(TestCase):
             self.assertEqual(view.current_agent, "codex")
             self.assertEqual(view.phase, "awaiting_resume")
             self.assertEqual(view.last_resume_handoff_id, before_resume.last_resume_handoff_id)
-            self.assertTrue(any(path.is_dir() for path in pending_tx_dir(repo_root, fixture["session_id"]).iterdir()))
+            self.assertTrue(
+                any(
+                    path.is_dir()
+                    for path in pending_tx_dir(repo_root, fixture["session_id"]).iterdir()
+                )
+            )
 
             report = recover_session_transactions(repo_root, fixture["session_id"])
             view = load_session_view(repo_root, fixture["session_id"])

@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 from agent_relay.agents import get_agent_adapter, get_agent_display_name
-from agent_relay.resume_options import EVIDENCE_DEPTHS, ResumeRenderOptions
 from agent_relay.errors import CorruptionError
 from agent_relay.hashing import sha256_path, sha256_text
 from agent_relay.integrity import require_session_mutable
@@ -24,20 +23,21 @@ from agent_relay.lifecycle import (
 )
 from agent_relay.locks import acquire_session_lock
 from agent_relay.models import (
+    SCHEMA_VERSION,
     CheckpointManifest,
     DerivedHandoffView,
     DerivedSessionView,
     HandoffManifest,
     LaunchManifest,
     ManifestFile,
-    SCHEMA_VERSION,
 )
+from agent_relay.resumable_state import load_resumable_state_text
+from agent_relay.resume_options import EVIDENCE_DEPTHS, ResumeRenderOptions
 from agent_relay.storage import (
     load_latest_journal_event,
     load_referenced_object,
     load_session_view,
 )
-from agent_relay.resumable_state import load_resumable_state_text
 from agent_relay.tx import JournalCommitRequest, SessionTransaction
 from agent_relay.workspace_log import WorkspaceLog
 
@@ -186,7 +186,9 @@ def create_handoff_for_command(
     recover_interrupted_launches(repo_root, session_id, owner=f"{owner}:recover")
     view = load_session_view(repo_root, session_id)
     try:
-        transition = plan_failover_command(LifecycleState(phase=view.phase, task_status=view.task_status))
+        transition = plan_failover_command(
+            LifecycleState(phase=view.phase, task_status=view.task_status)
+        )
     except LifecycleViolation as exc:
         raise SystemExit(str(exc)) from exc
     if not view.latest_checkpoint_id:
@@ -223,21 +225,24 @@ def create_handoff_for_command(
     )
     packet_sha = sha256_text(packet_text)
     packet_sha_text = packet_sha + "\n"
-    launch_spec_text = json.dumps(
-        {
-            "profile": adapter.display_name,
-            "cwd": launch_spec.cwd,
-            "command": launch_spec.command,
-            "template": launch_spec.template,
-            "template_source": launch_spec.template_source,
-            "instructions": launch_spec.instructions,
-            "packet_aware": launch_spec.packet_aware,
-            "execute_policy": launch_spec.execute_policy,
-            "warning": launch_spec.warning,
-        },
-        indent=2,
-        sort_keys=True,
-    ) + "\n"
+    launch_spec_text = (
+        json.dumps(
+            {
+                "profile": adapter.display_name,
+                "cwd": launch_spec.cwd,
+                "command": launch_spec.command,
+                "template": launch_spec.template,
+                "template_source": launch_spec.template_source,
+                "instructions": launch_spec.instructions,
+                "packet_aware": launch_spec.packet_aware,
+                "execute_policy": launch_spec.execute_policy,
+                "warning": launch_spec.warning,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
 
     relay_artifact_files = tuple(
         _manifest_file_for_text(artifact.relative_path, artifact.content)
@@ -248,10 +253,14 @@ def create_handoff_for_command(
         for artifact in supplemental_context.artifacts
     )
     files = (
-        _manifest_file_for_text("packet.md", packet_text),
-        _manifest_file_for_text("packet.sha256", packet_sha_text),
-        _manifest_file_for_text("launch-spec.json", launch_spec_text),
-    ) + relay_artifact_files + supplemental_artifact_files
+        (
+            _manifest_file_for_text("packet.md", packet_text),
+            _manifest_file_for_text("packet.sha256", packet_sha_text),
+            _manifest_file_for_text("launch-spec.json", launch_spec_text),
+        )
+        + relay_artifact_files
+        + supplemental_artifact_files
+    )
     manifest = HandoffManifest(
         schema_version=SCHEMA_VERSION,
         kind="handoff_manifest",
@@ -289,14 +298,15 @@ def create_handoff_for_command(
             "packet.sha256": packet_sha_text,
             "launch-spec.json": launch_spec_text,
         }
-        file_contents.update({
-            artifact.relative_path: artifact.content
-            for artifact in relay_context.artifacts
-        })
-        file_contents.update({
-            artifact.relative_path: artifact.content
-            for artifact in supplemental_context.artifacts
-        })
+        file_contents.update(
+            {artifact.relative_path: artifact.content for artifact in relay_context.artifacts}
+        )
+        file_contents.update(
+            {
+                artifact.relative_path: artifact.content
+                for artifact in supplemental_context.artifacts
+            }
+        )
         tx.stage_manifest_object(
             manifest,
             file_contents=file_contents,
@@ -332,9 +342,13 @@ def preview_launch_for_command(
 ) -> LaunchPreviewResult:
     require_session_mutable(repo_root, session_id, command_name="launch")
     recover_interrupted_launches(repo_root, session_id, owner=f"{owner}:recover")
-    loaded = _load_prepared_handoff(repo_root, session_id, handoff_id=handoff_id, command_name="launch")
+    loaded = _load_prepared_handoff(
+        repo_root, session_id, handoff_id=handoff_id, command_name="launch"
+    )
     try:
-        plan_launch_started(LifecycleState(phase=loaded.view.phase, task_status=loaded.view.task_status))
+        plan_launch_started(
+            LifecycleState(phase=loaded.view.phase, task_status=loaded.view.task_status)
+        )
     except LifecycleViolation as exc:
         raise SystemExit(str(exc)) from exc
     return LaunchPreviewResult(
@@ -358,8 +372,10 @@ def execute_launch_for_command(
 ) -> LaunchExecutionResult:
     require_session_mutable(repo_root, session_id, command_name="launch")
     with acquire_session_lock(repo_root, session_id, owner=owner) as lock:
-        recovered = _recover_interrupted_launch_locked(repo_root, session_id, owner=owner, lock=lock)
-        loaded = _load_prepared_handoff(repo_root, session_id, handoff_id=handoff_id, command_name="launch")
+        _recover_interrupted_launch_locked(repo_root, session_id, owner=owner, lock=lock)
+        loaded = _load_prepared_handoff(
+            repo_root, session_id, handoff_id=handoff_id, command_name="launch"
+        )
         _require_launch_spec_safe(loaded.launch_spec)
         try:
             started_transition = plan_launch_started(
@@ -392,7 +408,9 @@ def execute_launch_for_command(
         stdout_text = ""
         stderr_text = ""
         try:
-            completed = _run_launch_command(loaded.launch_spec.command, cwd=loaded.launch_spec.cwd or str(repo_root))
+            completed = _run_launch_command(
+                loaded.launch_spec.command, cwd=loaded.launch_spec.cwd or str(repo_root)
+            )
             status = "succeeded" if completed.returncode == 0 else "failed"
             exit_code = completed.returncode
             stdout_text = completed.stdout or ""
@@ -463,9 +481,13 @@ def resume_handoff_for_command(
 ) -> ResumeCommandResult:
     require_session_mutable(repo_root, session_id, command_name="resume")
     recover_interrupted_launches(repo_root, session_id, owner=f"{owner}:recover")
-    loaded = _load_prepared_handoff(repo_root, session_id, handoff_id=handoff_id, command_name="resume")
+    loaded = _load_prepared_handoff(
+        repo_root, session_id, handoff_id=handoff_id, command_name="resume"
+    )
     try:
-        transition = plan_resume_command(LifecycleState(phase=loaded.view.phase, task_status=loaded.view.task_status))
+        transition = plan_resume_command(
+            LifecycleState(phase=loaded.view.phase, task_status=loaded.view.task_status)
+        )
     except LifecycleViolation as exc:
         raise SystemExit(str(exc)) from exc
     resumed_at = utc_now()
@@ -500,14 +522,18 @@ def recover_interrupted_launches(repo_root: Path, session_id: str, *, owner: str
         return _recover_interrupted_launch_locked(repo_root, session_id, owner=owner, lock=lock)
 
 
-def _recover_interrupted_launch_locked(repo_root: Path, session_id: str, *, owner: str, lock) -> str | None:
+def _recover_interrupted_launch_locked(
+    repo_root: Path, session_id: str, *, owner: str, lock
+) -> str | None:
     latest_event = load_latest_journal_event(repo_root, session_id)
     if latest_event.type != "launch.started":
         return None
     handoff_id = latest_event.payload.get("handoff_id")
     launch_id = latest_event.payload.get("launch_id")
     if not isinstance(handoff_id, str) or not isinstance(launch_id, str):
-        raise CorruptionError("launch.started payload must include handoff_id and launch_id", session_id=session_id)
+        raise CorruptionError(
+            "launch.started payload must include handoff_id and launch_id", session_id=session_id
+        )
 
     handoff = _load_handoff_manifest(repo_root, session_id, handoff_id)
     finished_at = utc_now()
@@ -532,11 +558,16 @@ def _recover_interrupted_launch_locked(repo_root: Path, session_id: str, *, owne
         lock=lock,
     ) as tx:
         current_latest = load_latest_journal_event(repo_root, session_id)
-        if current_latest.event_id != latest_event.event_id or current_latest.type != "launch.started":
+        if (
+            current_latest.event_id != latest_event.event_id
+            or current_latest.type != "launch.started"
+        ):
             return None
         tx.stage_manifest_object(launch_manifest, file_contents=file_contents)
         finished_transition = plan_launch_finished(
-            LifecycleState(phase="launching", task_status=load_session_view(repo_root, session_id).task_status),
+            LifecycleState(
+                phase="launching", task_status=load_session_view(repo_root, session_id).task_status
+            ),
             launch_status="interrupted",
         )
         tx.commit(
@@ -551,17 +582,23 @@ def _recover_interrupted_launch_locked(repo_root: Path, session_id: str, *, owne
     return launch_id
 
 
-def _load_checkpoint_manifest(repo_root: Path, session_id: str, checkpoint_id: str) -> CheckpointManifest:
+def _load_checkpoint_manifest(
+    repo_root: Path, session_id: str, checkpoint_id: str
+) -> CheckpointManifest:
     manifest = load_referenced_object(repo_root, session_id, "checkpoint", checkpoint_id)
     if not isinstance(manifest, CheckpointManifest):
-        raise CorruptionError("checkpoint id resolved to the wrong manifest type", session_id=session_id)
+        raise CorruptionError(
+            "checkpoint id resolved to the wrong manifest type", session_id=session_id
+        )
     return manifest
 
 
 def _load_handoff_manifest(repo_root: Path, session_id: str, handoff_id: str) -> HandoffManifest:
     manifest = load_referenced_object(repo_root, session_id, "handoff", handoff_id)
     if not isinstance(manifest, HandoffManifest):
-        raise CorruptionError("handoff id resolved to the wrong manifest type", session_id=session_id)
+        raise CorruptionError(
+            "handoff id resolved to the wrong manifest type", session_id=session_id
+        )
     return manifest
 
 
@@ -597,7 +634,11 @@ def _load_prepared_handoff(
     packet_sha_text = packet_sha_path.read_text(encoding="utf-8").strip()
     actual_packet_sha = sha256_path(packet_path)
     if packet_sha_text != actual_packet_sha:
-        raise CorruptionError("handoff packet sha file does not match packet.md", session_id=session_id, path=packet_sha_path)
+        raise CorruptionError(
+            "handoff packet sha file does not match packet.md",
+            session_id=session_id,
+            path=packet_sha_path,
+        )
     launch_spec = _load_launch_spec_file(
         launch_spec_path,
         expected=StoredLaunchSpec(
@@ -631,15 +672,25 @@ def _find_handoff_view(view: DerivedSessionView, handoff_id: str) -> DerivedHand
     raise SystemExit(f"Handoff not found: {handoff_id}")
 
 
-def _load_launch_spec_file(path: Path, *, expected: StoredLaunchSpec, session_id: str) -> StoredLaunchSpec:
+def _load_launch_spec_file(
+    path: Path, *, expected: StoredLaunchSpec, session_id: str
+) -> StoredLaunchSpec:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        raise CorruptionError(f"launch-spec.json is not valid JSON: {exc}", session_id=session_id, path=path) from exc
+        raise CorruptionError(
+            f"launch-spec.json is not valid JSON: {exc}", session_id=session_id, path=path
+        ) from exc
     required = {"profile", "cwd", "command", "template", "template_source", "instructions"}
     optional = {"packet_aware", "execute_policy", "warning"}
-    if not isinstance(data, dict) or not required.issubset(data) or not set(data).issubset(required | optional):
-        raise CorruptionError("launch-spec.json has an unexpected shape", session_id=session_id, path=path)
+    if (
+        not isinstance(data, dict)
+        or not required.issubset(data)
+        or not set(data).issubset(required | optional)
+    ):
+        raise CorruptionError(
+            "launch-spec.json has an unexpected shape", session_id=session_id, path=path
+        )
     packet_aware = data.get("packet_aware")
     if packet_aware is None:
         packet_aware = expected.packet_aware
@@ -652,14 +703,18 @@ def _load_launch_spec_file(path: Path, *, expected: StoredLaunchSpec, session_id
         cwd=_require_non_empty_str(data["cwd"], "launch_spec.cwd"),
         command=_require_non_empty_str(data["command"], "launch_spec.command"),
         template=_require_non_empty_str(data["template"], "launch_spec.template"),
-        template_source=_require_non_empty_str(data["template_source"], "launch_spec.template_source"),
+        template_source=_require_non_empty_str(
+            data["template_source"], "launch_spec.template_source"
+        ),
         instructions=_require_non_empty_str(data["instructions"], "launch_spec.instructions"),
         packet_aware=_require_bool(packet_aware, "launch_spec.packet_aware"),
         execute_policy=_require_execute_policy(execute_policy, "launch_spec.execute_policy"),
         warning=_optional_warning(warning, "launch_spec.warning"),
     )
     if spec != expected:
-        raise CorruptionError("launch-spec.json does not match the handoff manifest", session_id=session_id, path=path)
+        raise CorruptionError(
+            "launch-spec.json does not match the handoff manifest", session_id=session_id, path=path
+        )
     return spec
 
 
@@ -752,27 +807,31 @@ def _render_resume_packet(
         lines.extend(["## Task", "", handoff_reason, ""])
 
     if not has_code_changes:
-        lines.extend([
-            "Note: No code changes in the previous session — the prior agent may have been planning or researching.",
-            "",
-        ])
+        lines.extend(
+            [
+                "Note: No code changes in the previous session — the prior agent may have been planning or researching.",
+                "",
+            ]
+        )
 
     source_name = get_agent_display_name(view.current_agent)
     next_action = checkpoint.next_action or "Not recorded"
     validation_summary = checkpoint.validation.summary or "None recorded"
-    lines.extend([
-        "## Session snapshot",
-        "",
-        f"- Objective: {view.objective}",
-        f"- Repo: {view.repo_root} | Phase: {view.phase} | Source: {source_name} | At: {prepared_at}",
-        "",
-        f"## Checkpoint ({checkpoint.object_id})",
-        "",
-        f"- Created: {checkpoint.created_at} | Status: {checkpoint.task_status} | Phase: {checkpoint.phase_hint}",
-        f"- Next action: {next_action}",
-        f"- Validation: {checkpoint.validation.status} — {validation_summary}",
-        "",
-    ])
+    lines.extend(
+        [
+            "## Session snapshot",
+            "",
+            f"- Objective: {view.objective}",
+            f"- Repo: {view.repo_root} | Phase: {view.phase} | Source: {source_name} | At: {prepared_at}",
+            "",
+            f"## Checkpoint ({checkpoint.object_id})",
+            "",
+            f"- Created: {checkpoint.created_at} | Status: {checkpoint.task_status} | Phase: {checkpoint.phase_hint}",
+            f"- Next action: {next_action}",
+            f"- Validation: {checkpoint.validation.status} — {validation_summary}",
+            "",
+        ]
+    )
     _append_section(lines, "Decisions:", checkpoint.decisions)
     _append_section(lines, "Blockers:", checkpoint.blockers)
     _append_section(lines, "Research notes:", checkpoint.research_notes)
@@ -783,7 +842,9 @@ def _render_resume_packet(
     _append_provider_export_context(lines, supplemental_context, options)
     _append_relay_conversation(lines, relay_context, options)
     _append_recent_handoffs(lines, view)
-    _append_checkpoint_artifacts(lines, checkpoint, options, repo_root=repo_root, session_id=session_id)
+    _append_checkpoint_artifacts(
+        lines, checkpoint, options, repo_root=repo_root, session_id=session_id
+    )
     return "\n".join(lines) + "\n"
 
 
@@ -861,7 +922,9 @@ def _append_resumable_state_context(
 
     lines.append("## Resumable State")
     lines.append("")
-    lines.append("Structured relay-owned state is preferred over weaker transcript-only context when available.")
+    lines.append(
+        "Structured relay-owned state is preferred over weaker transcript-only context when available."
+    )
     lines.append("")
 
     if supplemental_context.provider_resumable_state is not None:
@@ -924,7 +987,9 @@ def _append_supplemental_checkpoint_context(
         lines.append("Captured proposed edits:")
         if context.proposed_edits_path is not None:
             lines.append(f"- Artifact: {context.proposed_edits_path}")
-        lines.append("- These edits were captured outside the working tree and may not be applied yet.")
+        lines.append(
+            "- These edits were captured outside the working tree and may not be applied yet."
+        )
         fence = "diff" if _looks_like_patch(context.proposed_edits) else "text"
         lines.append(f"```{fence}")
         lines.append(_excerpt_relay_text(context.proposed_edits, max_chars=proposed_limit) or "")
@@ -971,7 +1036,9 @@ def _append_provider_export_context(
         if context.provider_resumable_state_path is not None:
             lines.append(f"- Artifact: {context.provider_resumable_state_path}")
         lines.append("```json")
-        lines.append(_excerpt_relay_text(context.provider_resumable_state, max_chars=transcript_limit) or "")
+        lines.append(
+            _excerpt_relay_text(context.provider_resumable_state, max_chars=transcript_limit) or ""
+        )
         lines.append("```")
         lines.append("")
 
@@ -980,7 +1047,9 @@ def _append_provider_export_context(
         if context.provider_transcript_path is not None:
             lines.append(f"- Artifact: {context.provider_transcript_path}")
         lines.append("```text")
-        lines.append(_excerpt_relay_text(context.provider_transcript, max_chars=transcript_limit) or "")
+        lines.append(
+            _excerpt_relay_text(context.provider_transcript, max_chars=transcript_limit) or ""
+        )
         lines.append("```")
         lines.append("")
 
@@ -990,7 +1059,9 @@ def _append_provider_export_context(
             lines.append(f"- Artifact: {context.provider_session_metadata_path}")
         fence = "json" if _looks_like_json(context.provider_session_metadata) else "text"
         lines.append(f"```{fence}")
-        lines.append(_excerpt_relay_text(context.provider_session_metadata, max_chars=metadata_limit) or "")
+        lines.append(
+            _excerpt_relay_text(context.provider_session_metadata, max_chars=metadata_limit) or ""
+        )
         lines.append("```")
         lines.append("")
 
@@ -1028,22 +1099,24 @@ def _collect_relay_conversation_context(
             output_relative = f"relay/turns/{turn_path.name}/output.jsonl"
             state_relative = f"relay/turns/{turn_path.name}/state.json"
             stderr_relative = (
-                f"relay/turns/{turn_path.name}/stderr.log"
-                if stderr_file.exists()
-                else None
+                f"relay/turns/{turn_path.name}/stderr.log" if stderr_file.exists() else None
             )
 
             if prompt_file.exists():
-                artifacts.append(RelayArtifact(
-                    relative_path=prompt_relative,
-                    content=prompt_file.read_text(encoding="utf-8", errors="replace"),
-                ))
+                artifacts.append(
+                    RelayArtifact(
+                        relative_path=prompt_relative,
+                        content=prompt_file.read_text(encoding="utf-8", errors="replace"),
+                    )
+                )
             if output_file.exists():
                 raw_output = output_file.read_text(encoding="utf-8", errors="replace")
-                artifacts.append(RelayArtifact(
-                    relative_path=output_relative,
-                    content=raw_output,
-                ))
+                artifacts.append(
+                    RelayArtifact(
+                        relative_path=output_relative,
+                        content=raw_output,
+                    )
+                )
                 normalized_output = _normalize_relay_output(raw_output)
             else:
                 raw_output = ""
@@ -1052,18 +1125,22 @@ def _collect_relay_conversation_context(
             if stderr_file.exists():
                 stderr_text = stderr_file.read_text(encoding="utf-8", errors="replace")
                 if stderr_relative is not None:
-                    artifacts.append(RelayArtifact(
-                        relative_path=stderr_relative,
-                        content=stderr_text,
-                    ))
+                    artifacts.append(
+                        RelayArtifact(
+                            relative_path=stderr_relative,
+                            content=stderr_text,
+                        )
+                    )
 
             state_file = turn_path / "state.json"
             if state_file.exists():
                 state_text = state_file.read_text(encoding="utf-8", errors="replace")
-                artifacts.append(RelayArtifact(
-                    relative_path=state_relative,
-                    content=state_text,
-                ))
+                artifacts.append(
+                    RelayArtifact(
+                        relative_path=state_relative,
+                        content=state_text,
+                    )
+                )
                 state_summary = _build_resumable_state_summary(
                     state_text,
                     source_label=f"Turn {turn_number} — {_safe_agent_display_name(_resumable_state_agent(state_text) or 'agent')}",
@@ -1089,10 +1166,12 @@ def _collect_relay_conversation_context(
     log_path = workspace_log_path(repo_root, session_id)
     if log_path.exists():
         workspace_relative_path = "relay/workspace-log.md"
-        artifacts.append(RelayArtifact(
-            relative_path=workspace_relative_path,
-            content=log_path.read_text(encoding="utf-8", errors="replace"),
-        ))
+        artifacts.append(
+            RelayArtifact(
+                relative_path=workspace_relative_path,
+                content=log_path.read_text(encoding="utf-8", errors="replace"),
+            )
+        )
         workspace_log = WorkspaceLog(log_path)
         entries = workspace_log.read_all()
         if entries:
@@ -1170,50 +1249,66 @@ def _collect_checkpoint_supplemental_context(
     provider_warnings_path = None
     if planning_snapshot is not None:
         planning_snapshot_path = "relay/inputs/planning-snapshot.md"
-        artifacts.append(RelayArtifact(
-            relative_path=planning_snapshot_path,
-            content=_ensure_trailing_newline(planning_snapshot),
-        ))
+        artifacts.append(
+            RelayArtifact(
+                relative_path=planning_snapshot_path,
+                content=_ensure_trailing_newline(planning_snapshot),
+            )
+        )
     if proposed_edits is not None:
         proposed_ext = ".diff" if _looks_like_patch(proposed_edits) else ".md"
         proposed_edits_path = f"relay/inputs/proposed-edits{proposed_ext}"
-        artifacts.append(RelayArtifact(
-            relative_path=proposed_edits_path,
-            content=_ensure_trailing_newline(proposed_edits),
-        ))
+        artifacts.append(
+            RelayArtifact(
+                relative_path=proposed_edits_path,
+                content=_ensure_trailing_newline(proposed_edits),
+            )
+        )
     if provider_resumable_state is not None:
         provider_source_agent = _capture_manifest_text(manifest_data.get("provider_source_agent"))
         provider_suffix = (provider_source_agent or "provider").replace("/", "-")
         provider_resumable_state_path = f"relay/provider/{provider_suffix}-resumable-state.json"
-        artifacts.append(RelayArtifact(
-            relative_path=provider_resumable_state_path,
-            content=_ensure_trailing_newline(provider_resumable_state),
-        ))
+        artifacts.append(
+            RelayArtifact(
+                relative_path=provider_resumable_state_path,
+                content=_ensure_trailing_newline(provider_resumable_state),
+            )
+        )
     if provider_transcript is not None:
         provider_source_agent = _capture_manifest_text(manifest_data.get("provider_source_agent"))
         provider_suffix = (provider_source_agent or "provider").replace("/", "-")
         provider_transcript_path = f"relay/provider/{provider_suffix}-transcript.md"
-        artifacts.append(RelayArtifact(
-            relative_path=provider_transcript_path,
-            content=_ensure_trailing_newline(provider_transcript),
-        ))
+        artifacts.append(
+            RelayArtifact(
+                relative_path=provider_transcript_path,
+                content=_ensure_trailing_newline(provider_transcript),
+            )
+        )
     if provider_session_metadata is not None:
         provider_source_agent = _capture_manifest_text(manifest_data.get("provider_source_agent"))
         provider_suffix = (provider_source_agent or "provider").replace("/", "-")
         metadata_ext = ".json" if _looks_like_json(provider_session_metadata) else ".md"
-        provider_session_metadata_path = f"relay/provider/{provider_suffix}-session-metadata{metadata_ext}"
-        artifacts.append(RelayArtifact(
-            relative_path=provider_session_metadata_path,
-            content=_ensure_trailing_newline(provider_session_metadata),
-        ))
+        provider_session_metadata_path = (
+            f"relay/provider/{provider_suffix}-session-metadata{metadata_ext}"
+        )
+        artifacts.append(
+            RelayArtifact(
+                relative_path=provider_session_metadata_path,
+                content=_ensure_trailing_newline(provider_session_metadata),
+            )
+        )
     if provider_warnings:
         provider_source_agent = _capture_manifest_text(manifest_data.get("provider_source_agent"))
         provider_suffix = (provider_source_agent or "provider").replace("/", "-")
         provider_warnings_path = f"relay/provider/{provider_suffix}-warnings.md"
-        artifacts.append(RelayArtifact(
-            relative_path=provider_warnings_path,
-            content=_ensure_trailing_newline("\n".join(f"- {warning}" for warning in provider_warnings)),
-        ))
+        artifacts.append(
+            RelayArtifact(
+                relative_path=provider_warnings_path,
+                content=_ensure_trailing_newline(
+                    "\n".join(f"- {warning}" for warning in provider_warnings)
+                ),
+            )
+        )
 
     return SupplementalCheckpointContext(
         artifacts=tuple(artifacts),
@@ -1345,7 +1440,11 @@ def _normalize_relay_output(raw_output: str) -> str:
             continue
 
         item = event.get("item")
-        if event.get("type") == "item.completed" and isinstance(item, dict) and item.get("type") == "agent_message":
+        if (
+            event.get("type") == "item.completed"
+            and isinstance(item, dict)
+            and item.get("type") == "agent_message"
+        ):
             text = item.get("text", "")
             if isinstance(text, str) and text.strip():
                 texts.append(text.strip())
@@ -1371,9 +1470,7 @@ def _normalize_relay_output(raw_output: str) -> str:
 
 def _strip_relay_control_lines(text: str) -> str:
     kept_lines = [
-        line
-        for line in text.splitlines()
-        if not line.strip().startswith("RELAY_STATUS:")
+        line for line in text.splitlines() if not line.strip().startswith("RELAY_STATUS:")
     ]
     return "\n".join(kept_lines).replace("CONVERSATION_COMPLETE", "").strip()
 
@@ -1514,7 +1611,9 @@ def _append_checkpoint_artifacts(
 
 def _manifest_file_for_text(relative_path: str, content: str) -> ManifestFile:
     encoded = content.encode("utf-8")
-    return ManifestFile(relative_path=relative_path, sha256=sha256_text(content), size_bytes=len(encoded))
+    return ManifestFile(
+        relative_path=relative_path, sha256=sha256_text(content), size_bytes=len(encoded)
+    )
 
 
 def _id_now(prefix: str) -> str:

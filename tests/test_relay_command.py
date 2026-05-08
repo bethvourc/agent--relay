@@ -8,7 +8,6 @@ import tempfile
 from pathlib import Path
 from unittest import TestCase
 
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
@@ -16,7 +15,9 @@ from agent_relay.storage import load_session_view
 
 
 class RelayCommandTests(TestCase):
-    def run_cli(self, *args: str, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    def run_cli(
+        self, *args: str, extra_env: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
         env = {"PYTHONPATH": str(ROOT / "src")}
         if extra_env:
             env.update(extra_env)
@@ -31,26 +32,48 @@ class RelayCommandTests(TestCase):
 
     def init_git_repo(self, repo_root: Path) -> None:
         subprocess.run(["git", "init"], cwd=repo_root, check=True, capture_output=True, text=True)
-        subprocess.run(["git", "config", "user.email", "relay@example.com"], cwd=repo_root, check=True, capture_output=True, text=True)
-        subprocess.run(["git", "config", "user.name", "Relay Test"], cwd=repo_root, check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "config", "user.email", "relay@example.com"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Relay Test"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
         (repo_root / "src").mkdir()
         (repo_root / "src" / "app.py").write_text("print('hello')\n", encoding="utf-8")
-        subprocess.run(["git", "add", "."], cwd=repo_root, check=True, capture_output=True, text=True)
-        subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "add", "."], cwd=repo_root, check=True, capture_output=True, text=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "initial"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
 
     def test_one_command_relay_captures_inline_planning_and_proposed_edits(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir).resolve()
             self.init_git_repo(repo_root)
 
-            proposed_patch = "\n".join([
-                "diff --git a/src/app.py b/src/app.py",
-                "--- a/src/app.py",
-                "+++ b/src/app.py",
-                "@@ -1 +1 @@",
-                "-print('hello')",
-                "+print('hello from proposal')",
-            ])
+            proposed_patch = "\n".join(
+                [
+                    "diff --git a/src/app.py b/src/app.py",
+                    "--- a/src/app.py",
+                    "+++ b/src/app.py",
+                    "@@ -1 +1 @@",
+                    "-print('hello')",
+                    "+print('hello from proposal')",
+                ]
+            )
 
             result = self.run_cli(
                 "--json",
@@ -85,8 +108,15 @@ class RelayCommandTests(TestCase):
             self.assertIn("These edits were captured outside the working tree", packet_text)
             self.assertIn("relay/inputs/planning-snapshot.md", packet_text)
             self.assertIn("relay/inputs/proposed-edits.diff", packet_text)
-            self.assertTrue(any(note.startswith("Planning snapshot captured:") for note in view.research_notes))
-            self.assertTrue(any(note.startswith("Captured UI-only proposed edits:") for note in view.implementation_notes))
+            self.assertTrue(
+                any(note.startswith("Planning snapshot captured:") for note in view.research_notes)
+            )
+            self.assertTrue(
+                any(
+                    note.startswith("Captured UI-only proposed edits:")
+                    for note in view.implementation_notes
+                )
+            )
 
     def test_one_command_relay_captures_file_backed_inputs_relative_to_repo(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -99,14 +129,16 @@ class RelayCommandTests(TestCase):
                 encoding="utf-8",
             )
             (notes_dir / "proposed.diff").write_text(
-                "\n".join([
-                    "diff --git a/src/app.py b/src/app.py",
-                    "--- a/src/app.py",
-                    "+++ b/src/app.py",
-                    "@@ -1 +1 @@",
-                    "-print('hello')",
-                    "+print('hello from file proposal')",
-                ])
+                "\n".join(
+                    [
+                        "diff --git a/src/app.py b/src/app.py",
+                        "--- a/src/app.py",
+                        "+++ b/src/app.py",
+                        "@@ -1 +1 @@",
+                        "-print('hello')",
+                        "+print('hello from file proposal')",
+                    ]
+                )
                 + "\n",
                 encoding="utf-8",
             )
@@ -145,14 +177,16 @@ class RelayCommandTests(TestCase):
                         "next_step": "Port the auth guard",
                     },
                     "planning_snapshot": "Provider export says Claude planned the migration order.",
-                    "proposed_edits": "\n".join([
-                        "diff --git a/src/app.py b/src/app.py",
-                        "--- a/src/app.py",
-                        "+++ b/src/app.py",
-                        "@@ -1 +1 @@",
-                        "-print('hello')",
-                        "+print('hello from provider export')",
-                    ]),
+                    "proposed_edits": "\n".join(
+                        [
+                            "diff --git a/src/app.py b/src/app.py",
+                            "--- a/src/app.py",
+                            "+++ b/src/app.py",
+                            "@@ -1 +1 @@",
+                            "-print('hello')",
+                            "+print('hello from provider export')",
+                        ]
+                    ),
                     "transcript": "Hidden provider transcript excerpt.",
                     "session_metadata": {"provider_session_id": "claude-123", "mode": "planning"},
                     "warnings": ["Provider export is partial and omits hidden reasoning."],
@@ -186,15 +220,29 @@ class RelayCommandTests(TestCase):
 
             self.assertTrue((checkpoint_root / "captures" / "planning-snapshot.md").exists())
             self.assertTrue((checkpoint_root / "captures" / "proposed-edits.diff").exists())
-            self.assertTrue((checkpoint_root / "captures" / "provider" / "claude-resumable-state.json").exists())
-            self.assertTrue((checkpoint_root / "captures" / "provider" / "claude-transcript.md").exists())
-            self.assertTrue((checkpoint_root / "captures" / "provider" / "claude-session-metadata.json").exists())
-            self.assertTrue((checkpoint_root / "captures" / "provider" / "claude-warnings.md").exists())
+            self.assertTrue(
+                (checkpoint_root / "captures" / "provider" / "claude-resumable-state.json").exists()
+            )
+            self.assertTrue(
+                (checkpoint_root / "captures" / "provider" / "claude-transcript.md").exists()
+            )
+            self.assertTrue(
+                (
+                    checkpoint_root / "captures" / "provider" / "claude-session-metadata.json"
+                ).exists()
+            )
+            self.assertTrue(
+                (checkpoint_root / "captures" / "provider" / "claude-warnings.md").exists()
+            )
             self.assertTrue((handoff_root / "relay" / "inputs" / "planning-snapshot.md").exists())
             self.assertTrue((handoff_root / "relay" / "inputs" / "proposed-edits.diff").exists())
-            self.assertTrue((handoff_root / "relay" / "provider" / "claude-resumable-state.json").exists())
+            self.assertTrue(
+                (handoff_root / "relay" / "provider" / "claude-resumable-state.json").exists()
+            )
             self.assertTrue((handoff_root / "relay" / "provider" / "claude-transcript.md").exists())
-            self.assertTrue((handoff_root / "relay" / "provider" / "claude-session-metadata.json").exists())
+            self.assertTrue(
+                (handoff_root / "relay" / "provider" / "claude-session-metadata.json").exists()
+            )
             self.assertIn("## Resumable State", packet_text)
             self.assertIn("Claude exported a resumable migration plan.", packet_text)
             self.assertIn("Port the auth guard", packet_text)
@@ -204,7 +252,12 @@ class RelayCommandTests(TestCase):
             self.assertIn("Hidden provider transcript excerpt.", packet_text)
             self.assertIn("claude-123", packet_text)
             self.assertIn("Provider export is partial and omits hidden reasoning.", packet_text)
-            self.assertTrue(any("Provider session transcript captured from Claude Code." == note for note in view.research_notes))
+            self.assertTrue(
+                any(
+                    note == "Provider session transcript captured from Claude Code."
+                    for note in view.research_notes
+                )
+            )
 
     def test_one_command_relay_survives_provider_hook_failure_with_warning(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -212,7 +265,7 @@ class RelayCommandTests(TestCase):
             self.init_git_repo(repo_root)
             command = (
                 f"{shlex.quote(sys.executable)} -c "
-                f"{shlex.quote('import sys; print(\"hook failed\", file=sys.stderr); sys.exit(3)')}"
+                f"{shlex.quote('import sys; print("hook failed", file=sys.stderr); sys.exit(3)')}"
             )
 
             result = self.run_cli(
@@ -234,7 +287,11 @@ class RelayCommandTests(TestCase):
 
             self.assertIn("## Provider Session Export", packet_text)
             self.assertIn("capture hook failed", packet_text)
-            self.assertTrue(any("Provider export warning (Claude Code):" in note for note in view.research_notes))
+            self.assertTrue(
+                any(
+                    "Provider export warning (Claude Code):" in note for note in view.research_notes
+                )
+            )
 
     def test_explicit_inputs_override_provider_exported_planning_and_patch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -243,14 +300,16 @@ class RelayCommandTests(TestCase):
             payload = json.dumps(
                 {
                     "planning_snapshot": "Provider planning snapshot that should be ignored.",
-                    "proposed_edits": "\n".join([
-                        "diff --git a/src/app.py b/src/app.py",
-                        "--- a/src/app.py",
-                        "+++ b/src/app.py",
-                        "@@ -1 +1 @@",
-                        "-print('hello')",
-                        "+print('provider version')",
-                    ]),
+                    "proposed_edits": "\n".join(
+                        [
+                            "diff --git a/src/app.py b/src/app.py",
+                            "--- a/src/app.py",
+                            "+++ b/src/app.py",
+                            "@@ -1 +1 @@",
+                            "-print('hello')",
+                            "+print('provider version')",
+                        ]
+                    ),
                 }
             )
             command = (
@@ -258,14 +317,16 @@ class RelayCommandTests(TestCase):
                 f"{shlex.quote('import sys; print(sys.argv[1])')} "
                 f"{shlex.quote(payload).replace('{', '{{').replace('}', '}}')}"
             )
-            explicit_patch = "\n".join([
-                "diff --git a/src/app.py b/src/app.py",
-                "--- a/src/app.py",
-                "+++ b/src/app.py",
-                "@@ -1 +1 @@",
-                "-print('hello')",
-                "+print('explicit version')",
-            ])
+            explicit_patch = "\n".join(
+                [
+                    "diff --git a/src/app.py b/src/app.py",
+                    "--- a/src/app.py",
+                    "+++ b/src/app.py",
+                    "@@ -1 +1 @@",
+                    "-print('hello')",
+                    "+print('explicit version')",
+                ]
+            )
 
             result = self.run_cli(
                 "--json",

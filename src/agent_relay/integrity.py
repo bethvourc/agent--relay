@@ -8,7 +8,6 @@ from agent_relay.errors import CorruptionError, ValidationError
 from agent_relay.layout import (
     journal_dir,
     pending_tx_dir,
-    session_manifest_path,
     session_root,
 )
 from agent_relay.models import JournalEvent, SessionManifest, build_session_manifest_hash
@@ -101,7 +100,9 @@ class SessionIntegrityReport:
             "launch_ids": list(self.launch_ids),
             "health": self.health,
             "error": self.error,
-            "last_valid_event": self.last_valid_event.to_dict() if self.last_valid_event is not None else None,
+            "last_valid_event": self.last_valid_event.to_dict()
+            if self.last_valid_event is not None
+            else None,
             "broken_paths": list(self.broken_paths),
             "suggested_repair": list(self.suggested_repair),
             "alerts": list(self.alerts),
@@ -131,7 +132,6 @@ class IntegrityScan:
 
 
 def inspect_session_integrity(repo_root: Path, session_id: str) -> IntegrityScan:
-    manifest_path = session_manifest_path(repo_root, session_id)
     pending_paths = _pending_transaction_paths(repo_root, session_id)
 
     try:
@@ -192,7 +192,9 @@ def inspect_session_integrity(repo_root: Path, session_id: str) -> IntegrityScan
             error=message,
             last_valid_event=None,
             broken_paths=(str(journal_path),),
-            suggested_repair=("restore the journal directory from backup before mutating this session",),
+            suggested_repair=(
+                "restore the journal directory from backup before mutating this session",
+            ),
             alerts=(message,),
         )
         return IntegrityScan(
@@ -213,7 +215,9 @@ def inspect_session_integrity(repo_root: Path, session_id: str) -> IntegrityScan
             error=message,
             last_valid_event=None,
             broken_paths=(str(journal_path),),
-            suggested_repair=("restore the journal directory from backup before mutating this session",),
+            suggested_repair=(
+                "restore the journal directory from backup before mutating this session",
+            ),
             alerts=(message,),
         )
         return IntegrityScan(
@@ -324,12 +328,18 @@ def inspect_session_integrity(repo_root: Path, session_id: str) -> IntegrityScan
     )
 
 
-def require_session_mutable(repo_root: Path, session_id: str, *, command_name: str) -> SessionIntegrityReport:
+def require_session_mutable(
+    repo_root: Path, session_id: str, *, command_name: str
+) -> SessionIntegrityReport:
     scan = inspect_session_integrity(repo_root, session_id)
     report = scan.report
     if report.health == "healthy":
         return report
-    suggestions = ", ".join(report.suggested_repair) if report.suggested_repair else "repair the session first"
+    suggestions = (
+        ", ".join(report.suggested_repair)
+        if report.suggested_repair
+        else "repair the session first"
+    )
     raise SystemExit(
         f"{command_name} is blocked while session health is {report.health}; "
         f"last valid event: {report.last_valid_event.event_id if report.last_valid_event else 'none'}; "
@@ -466,7 +476,9 @@ def _suggested_repair_commands(
     if has_failure and health == "degraded" and has_last_good:
         suggestions.append(f"agent-relay repair {session_id} --promote-last-good")
     if has_failure and health == "corrupt" and not has_last_good:
-        suggestions.append("restore the session manifest/journal from backup before mutating this session")
+        suggestions.append(
+            "restore the session manifest/journal from backup before mutating this session"
+        )
     return tuple(suggestions)
 
 

@@ -6,7 +6,6 @@ import tempfile
 from pathlib import Path
 from unittest import TestCase
 
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
@@ -33,12 +32,32 @@ from tests.session_fixtures import build_sample_session
 class LifecycleTests(TestCase):
     def init_git_repo(self, repo_root: Path) -> None:
         subprocess.run(["git", "init"], cwd=repo_root, check=True, capture_output=True, text=True)
-        subprocess.run(["git", "config", "user.email", "relay@example.com"], cwd=repo_root, check=True, capture_output=True, text=True)
-        subprocess.run(["git", "config", "user.name", "Relay Test"], cwd=repo_root, check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "config", "user.email", "relay@example.com"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Relay Test"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
         (repo_root / "src").mkdir()
         (repo_root / "src" / "demo.py").write_text("print('demo')\n", encoding="utf-8")
-        subprocess.run(["git", "add", "src/demo.py"], cwd=repo_root, check=True, capture_output=True, text=True)
-        subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "add", "src/demo.py"], cwd=repo_root, check=True, capture_output=True, text=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "initial"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
 
     def test_session_started_transition_is_canonical(self) -> None:
         transition = plan_session_started()
@@ -172,5 +191,11 @@ class LifecycleTests(TestCase):
                     owner="test:lifecycle:failover",
                 )
 
-            self.assertIn("prepare is not allowed while session phase is completed", str(prepare_error.exception))
-            self.assertIn("failover is not allowed while session phase is completed", str(failover_error.exception))
+            self.assertIn(
+                "prepare is not allowed while session phase is completed",
+                str(prepare_error.exception),
+            )
+            self.assertIn(
+                "failover is not allowed while session phase is completed",
+                str(failover_error.exception),
+            )
