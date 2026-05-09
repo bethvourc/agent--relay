@@ -118,7 +118,7 @@ class HelpStructureGuardrail(TestCase):
 
     def test_wide_help_has_man_shaped_sections(self) -> None:
         out = self._render(width=120)
-        for section in ("synopsis", "commands", "options", "aliases"):
+        for section in ("synopsis", "commands", "workflows", "options", "aliases"):
             self.assertIn(section, out, f"help missing section: {section}")
         # No marketing prose: the deprecated tagline should be gone.
         self.assertNotIn("Capture context, hand off cleanly", out)
@@ -127,6 +127,93 @@ class HelpStructureGuardrail(TestCase):
         out = self._render(width=120)
         for cmd in ("watch", "metrics", "metrics-tail", "metrics-serve"):
             self.assertIn(cmd, out, f"help missing command: {cmd}")
+
+    def test_help_is_derived_from_argparse_tree(self) -> None:
+        """Every subparser must appear in the live --help output."""
+        from agent_relay.cli import build_parser, iter_commands
+        from agent_relay.ui import render_help
+
+        parser = build_parser()
+        rows = iter_commands(parser)
+        usages = {usage for usage, _ in rows}
+        self.assertIn("agent-relay <agent>", usages)
+        for cmd in (
+            "status",
+            "deactivate",
+            "watch",
+            "metrics",
+            "metrics-tail",
+            "metrics-serve",
+            "run",
+            "chat",
+            "race",
+            "resolve",
+            "inspect-conflicts",
+            "discover",
+            "clean",
+        ):
+            self.assertIn(f"agent-relay {cmd}", usages, f"iter_commands missing {cmd}")
+
+        # And confirm the rendered help reflects them.
+        console = Console(theme=RELAY_THEME, width=120, file=StringIO(), record=True)
+        render_help(console, commands=rows)
+        out = console.export_text()
+        for usage, _ in rows:
+            self.assertIn(usage, out)
+
+    def test_help_explains_continue_and_end_session_workflows(self) -> None:
+        out = self._render(width=120)
+        self.assertIn("run --continue", out)
+        self.assertIn("chat --continue", out)
+        self.assertIn("deactivate <session-id>", out)
+        self.assertIn("Ask another question", out)
+        self.assertIn("completed/inactive", out)
+
+
+class StatusBadgeRoutingGuardrail(TestCase):
+    """Cross-session metrics renders status through `status_badge()` so the
+    DS status vocabulary stays consistent with the dashboard / inspect view."""
+
+    def test_cross_session_metrics_renders_status_badge(self) -> None:
+        from agent_relay.metrics import (
+            CrossSessionMetrics,
+            SessionMetrics,
+            TokenUsage,
+        )
+        from agent_relay.metrics_ui import render_cross_session_metrics
+        from agent_relay.ui import STATUS_SYMBOLS
+
+        sm = SessionMetrics(
+            session_id="s-active",
+            current_agent="claude",
+            current_status="active",
+            objective="o",
+            started_at=None,
+            updated_at=None,
+            turn_count=1,
+            successful_turns=1,
+            total_tokens=TokenUsage(input=1, output=1),
+            total_cost_usd=0.0,
+            total_duration_ms=1,
+            by_agent={},
+            cost_by_agent={},
+            turns=(),
+        )
+        cs = CrossSessionMetrics(
+            sessions=(sm,),
+            by_agent={},
+            cost_by_agent={},
+            by_day={},
+            total_tokens=TokenUsage(input=1, output=1),
+            total_cost_usd=0.0,
+            total_duration_ms=1,
+            session_count=1,
+        )
+        console = Console(theme=RELAY_THEME, width=120, file=StringIO(), record=True)
+        render_cross_session_metrics(console, cs)
+        out = console.export_text()
+        # status_badge('active') prepends the canonical glyph from STATUS_SYMBOLS
+        self.assertIn(STATUS_SYMBOLS["active"], out)
 
 
 class WatchKindStyleUsesTokens(TestCase):

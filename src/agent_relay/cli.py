@@ -9,25 +9,34 @@ from datetime import UTC
 from pathlib import Path
 
 from agent_relay.agents import AGENT_NAMES, AGENT_REGISTRY, resolve_agent_key
+from agent_relay.alerts import alerts_config_path, load_alert_config
+from agent_relay.dashboard_alerts import evaluate_alerts_for_view
 from agent_relay.errors import RelayError
 from agent_relay.exporters.jsonl import parse_header_pairs, tail_jsonl
 from agent_relay.exporters.otlp import serve_otlp
-from agent_relay.exporters.prometheus import serve_prometheus
+from agent_relay.exporters.prometheus import is_loopback_bind, serve_prometheus
+from agent_relay.integrity import require_session_mutable
+from agent_relay.lifecycle import LifecycleState, LifecycleViolation, plan_complete_command
+from agent_relay.locks import utc_now
 from agent_relay.metrics import (
+    MetricsFilter,
     extract_cross_session_metrics,
     extract_session_metrics,
 )
 from agent_relay.metrics_ui import (
+    emit_alerts_quiet,
     emit_cross_session_metrics_json,
     emit_cross_session_metrics_quiet,
     emit_session_metrics_json,
     emit_session_metrics_quiet,
+    render_alerts_terminal,
     render_cross_session_metrics,
     render_session_metrics,
 )
 from agent_relay.read_views import list_sessions_for_dashboard
 from agent_relay.relay import relay as do_relay
-from agent_relay.storage import is_session
+from agent_relay.storage import is_session, load_session_view
+from agent_relay.tx import JournalCommitRequest, SessionTransaction
 from agent_relay.ui import (
     create_console,
     emit_json,
@@ -45,6 +54,7 @@ from agent_relay.ui import (
     render_help,
     render_relay_launch_result,
     render_relay_success,
+    render_session_deactivated,
 )
 from agent_relay.watch import (
     WatchSource,
@@ -463,6 +473,58 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_deactivate(args: argparse.Namespace) -> int:
+    """Mark an existing relay session completed/inactive without deleting it."""
+    repo_root = _resolve_repo(args.repo)
+    session_id = args.session_id
+
+    if not is_session(repo_root, session_id):
+        render_error(args.console, f"Session not found: {session_id}")
+        return 2
+
+    require_session_mutable(repo_root, session_id, command_name="deactivate")
+    view = load_session_view(repo_root, session_id)
+    try:
+        transition = plan_complete_command(
+            LifecycleState(phase=view.phase, task_status=view.task_status)
+        )
+    except LifecycleViolation as exc:
+        render_error(args.console, str(exc))
+        return 2
+
+    timestamp = utc_now()
+    with SessionTransaction.begin(
+        repo_root,
+        session_id,
+        operation="session.completed",
+        owner="cli:deactivate",
+    ) as tx:
+        tx.commit(
+            JournalCommitRequest(
+                event_type="session.completed",
+                phase_before=transition.phase_before,
+                phase_after=transition.phase_after,
+                payload={"completed_by_agent": view.current_agent},
+                timestamp=timestamp,
+            )
+        )
+
+    if args.json:
+        emit_json(
+            {
+                "command": "deactivate",
+                "session_id": session_id,
+                "current_status": transition.phase_after,
+                "completed_by_agent": view.current_agent,
+            }
+        )
+    elif args.quiet:
+        emit_quiet(session_id)
+    else:
+        render_session_deactivated(args.console, session_id, view.current_agent)
+    return 0
+
+
 def cmd_watch(args: argparse.Namespace) -> int:
     """Live view of an in-progress session.
 
@@ -539,10 +601,13 @@ def cmd_metrics(args: argparse.Namespace) -> int:
             render_error(args.console, str(exc))
             return 2
 
-    agents_filter = getattr(args, "agent", None) or None
+    metrics_filter = MetricsFilter(
+        since=since_dt,
+        agents=tuple(getattr(args, "agent", None) or ()),
+    )
 
     if args.all:
-        cross = extract_cross_session_metrics(repo_root, since=since_dt, agents=agents_filter)
+        cross = extract_cross_session_metrics(repo_root, filter=metrics_filter)
         if args.json:
             emit_cross_session_metrics_json(cross)
         elif args.quiet:
@@ -575,6 +640,42 @@ def cmd_metrics(args: argparse.Namespace) -> int:
         emit_session_metrics_quiet(metrics)
     else:
         render_session_metrics(args.console, metrics)
+    return 0
+
+
+def cmd_alerts(args: argparse.Namespace) -> int:
+    """Show active alert firings for the current metrics view."""
+    repo_root = _resolve_repo(args.repo)
+    cfg = load_alert_config(repo_root)
+
+    since_dt = None
+    if getattr(args, "since", None):
+        try:
+            since_dt = _parse_since(args.since)
+        except ValueError as exc:
+            render_error(args.console, str(exc))
+            return 2
+
+    metrics_filter = MetricsFilter(
+        since=since_dt,
+        agents=tuple(getattr(args, "agent", None) or ()),
+    )
+    metrics = extract_cross_session_metrics(repo_root, filter=metrics_filter)
+    alerts = evaluate_alerts_for_view(metrics, cfg)
+    config_path = alerts_config_path(repo_root)
+
+    if args.json:
+        emit_json(
+            {
+                "command": "alerts",
+                "alerts": [alert.to_dict() for alert in alerts],
+                "config_path": str(config_path),
+            }
+        )
+    elif args.quiet:
+        emit_alerts_quiet(alerts)
+    else:
+        render_alerts_terminal(args.console, alerts, cfg, config_path)
     return 0
 
 
@@ -630,9 +731,28 @@ def cmd_metrics_serve(args: argparse.Namespace) -> int:
     try:
         if args.prometheus:
             assert host is not None
+            allow_remote = bool(getattr(args, "allow_remote", False))
+            dashboard_enabled = not bool(getattr(args, "no_dashboard", False))
+            access_log_stream = sys.stderr if getattr(args, "access_log", False) else None
+
+            if not is_loopback_bind(host) and not allow_remote:
+                render_error(
+                    args.console,
+                    f"refusing to bind {host}: dashboard exposes session content. "
+                    "Pass --allow-remote to override (and accept the risk).",
+                )
+                return 2
+            if not is_loopback_bind(host):
+                sys.stderr.write(
+                    f"WARNING: binding {host} exposes session content (objectives, "
+                    "prompts, file paths) on the network. Dashboard has no auth.\n"
+                )
+
+            dashboard_msg = f"Dashboard at http://{host}:{port}/\n" if dashboard_enabled else ""
             sys.stderr.write(
-                f"Prometheus exporter listening on http://{host}:{port}/metrics "
+                f"Prometheus exporter listening on http://{host}:{port}/metrics  "
                 f"(refresh: {args.prometheus_refresh:.1f}s)\n"
+                f"{dashboard_msg}"
             )
             try:
                 rc = serve_prometheus(
@@ -640,9 +760,16 @@ def cmd_metrics_serve(args: argparse.Namespace) -> int:
                     host,
                     port,
                     refresh_interval=args.prometheus_refresh,
+                    dashboard_refresh_interval=getattr(args, "dashboard_refresh", 1.0),
+                    dashboard_enabled=dashboard_enabled,
+                    allow_remote=allow_remote,
+                    access_log=access_log_stream,
                 )
             except OSError as exc:
                 render_error(args.console, f"failed to bind {host}:{port}: {exc}")
+                return 2
+            except RuntimeError as exc:
+                render_error(args.console, str(exc))
                 return 2
         else:
             # OTLP-only — block on the OTLP thread.
@@ -1239,6 +1366,16 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--repo")
     status.set_defaults(func=cmd_status)
 
+    # agent-relay deactivate — mark a session completed/inactive
+    deactivate = subparsers.add_parser(
+        "deactivate",
+        aliases=["complete"],
+        help="Mark a relay session completed/inactive",
+    )
+    deactivate.add_argument("session_id", help="Relay session id")
+    deactivate.add_argument("--repo")
+    deactivate.set_defaults(func=cmd_deactivate)
+
     # agent-relay watch — live view of an in-progress session
     watch = subparsers.add_parser(
         "watch",
@@ -1296,6 +1433,41 @@ def build_parser() -> argparse.ArgumentParser:
     )
     metrics.add_argument("--repo")
     metrics.set_defaults(func=cmd_metrics)
+
+    # agent-relay alerts — active threshold firings for the metrics view
+    alerts = subparsers.add_parser(
+        "alerts",
+        help="Active alert firings against alerts.toml thresholds",
+    )
+    alerts.add_argument(
+        "--all",
+        action="store_true",
+        help="Evaluate all sessions (default; kept for metrics command symmetry)",
+    )
+    alerts.add_argument(
+        "--since",
+        help="Lower bound on session start (YYYY-MM-DD or ISO-8601)",
+    )
+    alerts.add_argument(
+        "--agent",
+        action="append",
+        help="Filter to one or more agent keys (repeatable)",
+    )
+    alerts.add_argument(
+        "--json",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="Machine-readable JSON output",
+    )
+    alerts.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="Minimal output",
+    )
+    alerts.add_argument("--repo")
+    alerts.set_defaults(func=cmd_alerts)
 
     # agent-relay metrics-tail — JSONL stream of metric events
     metrics_tail = subparsers.add_parser(
@@ -1355,6 +1527,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Seconds to cache scraped metrics (default: 5.0)",
     )
     metrics_serve.add_argument(
+        "--dashboard-refresh",
+        type=float,
+        default=1.0,
+        help="Seconds between live dashboard SSE checks (default: 1.0)",
+    )
+    metrics_serve.add_argument(
         "--otlp",
         metavar="URL",
         help="OTLP HTTP/JSON metrics endpoint (e.g. http://localhost:4318/v1/metrics)",
@@ -1370,6 +1548,21 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=30.0,
         help="Seconds between OTLP pushes (default: 30.0)",
+    )
+    metrics_serve.add_argument(
+        "--allow-remote",
+        action="store_true",
+        help="Bind a non-loopback address (exposes session content; no auth)",
+    )
+    metrics_serve.add_argument(
+        "--no-dashboard",
+        action="store_true",
+        help="Disable the HTML dashboard; serve only /metrics",
+    )
+    metrics_serve.add_argument(
+        "--access-log",
+        action="store_true",
+        help="Write JSONL access log entries to stderr",
     )
     metrics_serve.add_argument("--repo")
     metrics_serve.set_defaults(func=cmd_metrics_serve)
@@ -1508,13 +1701,55 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def iter_commands(parser: argparse.ArgumentParser) -> list[tuple[str, str]]:
+    """Return ``(usage, help_text)`` for every subcommand in declaration order.
+
+    Source of truth for `agent-relay --help` so a new subparser cannot drift
+    out of the help output. Agent-named subparsers (`claude`, `codex`,
+    `gemini`) collapse into a single ``agent-relay <agent>`` row to keep the
+    list terse — their per-agent flags live on each subparser's own --help.
+    """
+    subparsers_action = next(
+        (a for a in parser._actions if isinstance(a, argparse._SubParsersAction)),
+        None,
+    )
+    if subparsers_action is None:
+        return []
+
+    help_by_name = {
+        action.dest: (action.help or "") for action in subparsers_action._choices_actions
+    }
+
+    rows: list[tuple[str, str]] = []
+    seen_agents = False
+    seen_parsers: set[int] = set()
+    for name, choice_parser in subparsers_action.choices.items():
+        parser_id = id(choice_parser)
+        if parser_id in seen_parsers:
+            continue
+        seen_parsers.add(parser_id)
+        if name in AGENT_NAMES:
+            if seen_agents:
+                continue
+            seen_agents = True
+            rows.append(
+                (
+                    "agent-relay <agent>",
+                    "Relay to a target agent (claude, codex, gemini)",
+                )
+            )
+            continue
+        rows.append((f"agent-relay {name}", help_by_name.get(name, "")))
+    return rows
+
+
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     args.console = create_console(json_mode=args.json, quiet=args.quiet)
 
     if args.help or args.command is None:
-        render_help(args.console)
+        render_help(args.console, commands=iter_commands(parser))
         return 0
 
     try:

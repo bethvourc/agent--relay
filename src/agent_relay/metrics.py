@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -139,6 +139,46 @@ class SessionMetrics:
 
 
 @dataclass(frozen=True, slots=True)
+class MetricsFilter:
+    """Single source of truth for metric scoping.
+
+    Built from CLI flags (``cmd_metrics``) or query strings (dashboard
+    handler) and consumed by :func:`extract_cross_session_metrics`. Empty
+    fields mean "no constraint"; ``is_identity`` returns True when the
+    filter is fully empty (the extractor can skip filtering work).
+
+    Future fields (``until``, ``q``, ``session_ids``) will plug in here
+    without touching every call site.
+    """
+
+    since: datetime | None = None
+    until: datetime | None = None
+    agents: tuple[str, ...] = ()
+    session_ids: tuple[str, ...] = ()
+    q: str | None = None  # free-text substring match (objective + session id)
+
+    @property
+    def is_identity(self) -> bool:
+        return (
+            self.since is None
+            and self.until is None
+            and not self.agents
+            and not self.session_ids
+            and not self.q
+        )
+
+    def matches_session(self, sm: SessionMetrics) -> bool:
+        """True if this session passes the non-turn-level filters."""
+        if self.session_ids and sm.session_id not in self.session_ids:
+            return False
+        if self.q:
+            haystack = (sm.session_id + " " + (sm.objective or "")).lower()
+            if self.q.lower() not in haystack:
+                return False
+        return True
+
+
+@dataclass(frozen=True, slots=True)
 class CrossSessionMetrics:
     sessions: tuple[SessionMetrics, ...]
     by_agent: dict[str, TokenUsage] = field(default_factory=dict)
@@ -255,11 +295,32 @@ def extract_session_metrics(repo_root: Path, session_id: str) -> SessionMetrics:
 def extract_cross_session_metrics(
     repo_root: Path,
     *,
+    filter: MetricsFilter | None = None,
     since: datetime | None = None,
     agents: Iterable[str] | None = None,
 ) -> CrossSessionMetrics:
-    """Aggregate metrics across all sessions in the repo."""
-    agents_filter = set(agents) if agents else None
+    """Aggregate metrics across all sessions in the repo.
+
+    Pass a ``MetricsFilter`` to scope the result. The legacy ``since`` /
+    ``agents`` kwargs still work and compose with the filter (filter wins
+    on conflict).
+    """
+    if filter is None:
+        filter = MetricsFilter(
+            since=since,
+            agents=tuple(agents) if agents else (),
+        )
+    elif since is not None or agents is not None:
+        # Caller passed both — merge: filter takes precedence, kwargs fill gaps.
+        filter = MetricsFilter(
+            since=filter.since or since,
+            until=filter.until,
+            agents=filter.agents or (tuple(agents) if agents else ()),
+            session_ids=filter.session_ids,
+            q=filter.q,
+        )
+
+    agents_filter = set(filter.agents) if filter.agents else None
     by_agent: dict[str, TokenUsage] = {}
     cost_by_agent: dict[str, float] = {}
     by_day: dict[str, TokenUsage] = {}
@@ -283,7 +344,11 @@ def extract_cross_session_metrics(
         except Exception:
             continue
 
-        if since is not None and not _session_after(sm, since):
+        if filter.since is not None and not _session_after(sm, filter.since):
+            continue
+        if filter.until is not None and not _session_before(sm, filter.until):
+            continue
+        if not filter.matches_session(sm):
             continue
 
         keep_turns = sm.turns
@@ -677,6 +742,21 @@ def _session_after(session: SessionMetrics, since: datetime) -> bool:
     return False
 
 
+def _session_before(session: SessionMetrics, until: datetime) -> bool:
+    """True if the session has at least one parseable timestamp <= ``until``."""
+    candidates = [session.started_at, session.updated_at]
+    for ts in candidates:
+        if not ts:
+            continue
+        try:
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if dt <= until:
+            return True
+    return False
+
+
 def _rebuild_session_with_turns(
     base: SessionMetrics, turns: tuple[TurnMetrics, ...]
 ) -> SessionMetrics:
@@ -714,12 +794,95 @@ def _rebuild_session_with_turns(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class DailyBucket:
+    """One day's worth of aggregated metrics. Produced by :func:`bucketize`.
+
+    ``label`` is an ISO date (``YYYY-MM-DD``); zero-fill days for missing
+    data. ``cost`` is None when no turn in the bucket had a cost (preserves
+    the "unknown vs $0" distinction).
+    """
+
+    label: str
+    tokens: int
+    cost: float | None
+    turns: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "label": self.label,
+            "tokens": self.tokens,
+            "cost": self.cost,
+            "turns": self.turns,
+        }
+
+
+def bucketize(
+    metrics: CrossSessionMetrics,
+    *,
+    by: str = "day",
+    limit: int = 30,
+) -> tuple[DailyBucket, ...]:
+    """Aggregate per-turn data into time buckets for charting.
+
+    Currently only ``by="day"`` is supported; the parameter exists so future
+    "week" / "hour" variants can plug in without touching call sites.
+
+    Returns an ordered tuple of :class:`DailyBucket`, oldest first, with
+    ``limit`` controlling the trailing window in days. Gap days are
+    zero-filled so charts produce a continuous timeline.
+    """
+    if by != "day":
+        raise ValueError(f"unsupported bucket: {by!r}")
+
+    tokens_by_day: dict[str, int] = {}
+    cost_by_day: dict[str, float | None] = {}
+    turns_by_day: dict[str, int] = {}
+
+    for session in metrics.sessions:
+        fallback_day = _iso_day(session.started_at) or _iso_day(session.updated_at)
+        for turn in session.turns:
+            day = _iso_day(turn.started_at) or _iso_day(turn.finished_at) or fallback_day
+            if day is None:
+                continue
+            tokens_by_day[day] = tokens_by_day.get(day, 0) + (turn.tokens.total or 0)
+            turns_by_day[day] = turns_by_day.get(day, 0) + 1
+            if turn.cost_usd is not None:
+                cost_by_day[day] = (cost_by_day.get(day) or 0.0) + turn.cost_usd
+
+    if not tokens_by_day and not turns_by_day:
+        return ()
+
+    days_with_data = sorted(set(tokens_by_day) | set(turns_by_day) | set(cost_by_day))
+    last_day = date.fromisoformat(days_with_data[-1])
+    span = max(1, min(limit, (last_day - date.fromisoformat(days_with_data[0])).days + 1))
+    first_day = last_day - timedelta(days=span - 1)
+
+    buckets: list[DailyBucket] = []
+    cursor = first_day
+    while cursor <= last_day:
+        key = cursor.isoformat()
+        buckets.append(
+            DailyBucket(
+                label=key,
+                tokens=tokens_by_day.get(key, 0),
+                cost=cost_by_day.get(key),
+                turns=turns_by_day.get(key, 0),
+            )
+        )
+        cursor += timedelta(days=1)
+    return tuple(buckets)
+
+
 __all__ = [
     "TokenUsage",
     "TurnMetrics",
     "SessionMetrics",
     "CrossSessionMetrics",
+    "DailyBucket",
+    "MetricsFilter",
     "extract_turn_metrics",
     "extract_session_metrics",
     "extract_cross_session_metrics",
+    "bucketize",
 ]

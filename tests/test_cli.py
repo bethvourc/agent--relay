@@ -15,7 +15,9 @@ from agent_relay.cli import (
     build_parser,
 )
 from agent_relay.concurrent import AgentOutcome, ConcurrentResult
+from agent_relay.storage import load_session_view
 from agent_relay.ui import create_console
+from tests.session_fixtures import build_sample_session
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -112,6 +114,20 @@ class AgentRelayCliTests(TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             data = self.run_cli_json("status", "--repo", tmpdir)
             self.assertEqual(data["sessions"], [])
+
+    def test_deactivate_marks_session_completed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir).resolve()
+            fixture = build_sample_session(repo_root)
+            sid = fixture["session_id"]
+
+            data = self.run_cli_json("deactivate", sid, "--repo", tmpdir)
+
+            self.assertEqual(data["command"], "deactivate")
+            self.assertEqual(data["session_id"], sid)
+            self.assertEqual(data["current_status"], "completed")
+            view = load_session_view(repo_root, sid)
+            self.assertEqual(view.current_status, "completed")
 
 
 class RaceCliHelpersTests(TestCase):
