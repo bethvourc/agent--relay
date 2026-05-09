@@ -177,6 +177,21 @@ class FilterRenderingTests(TestCase):
         html = render_dashboard_html(_cross(), filter=MetricsFilter())
         self.assertNotIn("filter input ignored", html)
 
+    def test_auto_refresh_is_opt_in(self) -> None:
+        """The page must NOT reload on its own — auto-refresh is gated on the
+        ``live`` toggle. No <meta refresh>, no setInterval firing at load."""
+        html = render_dashboard_html(_cross(), filter=MetricsFilter())
+        # The naive meta-refresh is gone — too disruptive for filter forms,
+        # scroll position, and expanded sections.
+        self.assertNotIn('http-equiv="refresh"', html)
+        # The header exposes manual + opt-in live controls.
+        self.assertIn("data-refresh-now", html)
+        self.assertIn('name="live"', html)
+        self.assertIn("data-stale", html)
+        # The polling logic still defers reloads while the filter has focus.
+        self.assertIn("inFilter", html)
+        self.assertIn(".filter-bar", html)
+
 
 # ---------------------------------------------------------------------------
 # End-to-end routing

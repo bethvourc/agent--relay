@@ -192,7 +192,17 @@ def _render_header(generated_at: str) -> str:
     <span class="brand-name">Agent Relay</span>
     <span class="muted">metrics</span>
   </div>
-  <div class="muted small">refreshed {escape(generated_at)} · auto-refresh {DASHBOARD_REFRESH_SECONDS}s</div>
+  <div class="header-controls">
+    <span class="muted small">
+      rendered {escape(generated_at)} ·
+      <span data-stale>just now</span>
+    </span>
+    <button type="button" class="btn-secondary btn-icon" data-refresh-now title="reload now">↻ refresh</button>
+    <label class="toggle" title="auto-reload every {DASHBOARD_REFRESH_SECONDS}s">
+      <input type="checkbox" name="live">
+      <span>live</span>
+    </label>
+  </div>
 </header>"""
 
 
@@ -358,16 +368,19 @@ def filter_to_query_string(filter: MetricsFilter) -> str:
 
 def _html_head(*, title: str = "agent-relay · metrics", auto_refresh: bool = True) -> str:
     """Compose the <html><head> block. Public-ish so other dashboard pages
-    (Phase B session detail) can reuse the exact same chrome."""
-    refresh_meta = (
-        f'<meta http-equiv="refresh" content="{DASHBOARD_REFRESH_SECONDS}">' if auto_refresh else ""
-    )
+    (Phase B session detail) can reuse the exact same chrome.
+
+    ``auto_refresh`` enables the *opt-in* live-update controls (the
+    ``live`` checkbox + ``↻ refresh`` button). The page never reloads on
+    its own — the user has to flip the toggle. Setting this to False
+    suppresses the controls entirely (e.g. for the session-detail page
+    in Phase B if we want it static).
+    """
     return f"""\
 <html lang=en data-theme=dark>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-{refresh_meta}
 <title>{escape(title)}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -375,7 +388,96 @@ def _html_head(*, title: str = "agent-relay · metrics", auto_refresh: bool = Tr
 <style>
 {dashboard_css()}
 </style>
+{_refresh_script() if auto_refresh else ""}
 </head>"""
+
+
+def _refresh_script() -> str:
+    """Opt-in auto-refresh + manual refresh + 'stale Ns ago' indicator.
+
+    Auto-refresh is *off by default* — the page is stable until the user
+    ticks the ``live`` checkbox. State persists in ``localStorage`` so a
+    flipped toggle survives across reloads.
+
+    Behaviour:
+      * ``↻ refresh`` button reloads now.
+      * ``live`` checkbox toggles a polling timer at
+        DASHBOARD_REFRESH_SECONDS intervals; persisted in localStorage.
+      * While the live timer is on, reloads are *paused* whenever focus
+        is inside ``.filter-bar`` so the user can finish picking dates /
+        agents without being clobbered.
+      * The header's ``stale`` indicator updates client-side every second
+        based on the data-loaded-at attribute set at render time, so the
+        user always sees how old the page is even when not auto-polling.
+    """
+    return f"""\
+<script>
+(function() {{
+  var REFRESH_MS = {DASHBOARD_REFRESH_SECONDS * 1000};
+  var STORAGE_KEY = 'agent-relay-dashboard-live';
+
+  function inFilter() {{
+    var el = document.activeElement;
+    return !!(el && el.closest && el.closest('.filter-bar'));
+  }}
+
+  var pollTimer = null;
+  function startPolling() {{
+    stopPolling();
+    pollTimer = setInterval(function() {{
+      if (inFilter()) return;       // don't clobber form input
+      if (document.hidden) return;  // don't reload hidden tabs
+      window.location.reload();
+    }}, REFRESH_MS);
+  }}
+  function stopPolling() {{
+    if (pollTimer) {{ clearInterval(pollTimer); pollTimer = null; }}
+  }}
+
+  function fmtAge(seconds) {{
+    if (seconds < 1) return 'just now';
+    if (seconds < 60) return seconds + 's ago';
+    if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
+    return Math.floor(seconds / 3600) + 'h ago';
+  }}
+
+  document.addEventListener('DOMContentLoaded', function() {{
+    var loadedAt = Date.now();
+    var staleEl = document.querySelector('[data-stale]');
+    if (staleEl) {{
+      setInterval(function() {{
+        var age = Math.floor((Date.now() - loadedAt) / 1000);
+        staleEl.textContent = fmtAge(age);
+      }}, 1000);
+    }}
+
+    var liveToggle = document.querySelector('input[name="live"]');
+    var refreshBtn = document.querySelector('[data-refresh-now]');
+
+    if (refreshBtn) {{
+      refreshBtn.addEventListener('click', function(e) {{
+        e.preventDefault();
+        window.location.reload();
+      }});
+    }}
+
+    if (liveToggle) {{
+      var saved = (function() {{
+        try {{ return localStorage.getItem(STORAGE_KEY) === '1'; }}
+        catch (_) {{ return false; }}
+      }})();
+      liveToggle.checked = saved;
+      if (saved) startPolling();
+
+      liveToggle.addEventListener('change', function() {{
+        try {{ localStorage.setItem(STORAGE_KEY, liveToggle.checked ? '1' : '0'); }}
+        catch (_) {{}}
+        if (liveToggle.checked) startPolling(); else stopPolling();
+      }});
+    }}
+  }});
+}})();
+</script>"""
 
 
 def dashboard_css() -> str:
@@ -621,4 +723,33 @@ p {{ margin: 0; }}
 .banner ul {{ margin: 0; padding-left: 20px; }}
 .banner-warning {{ border-color: var(--warning); }}
 .banner-warning strong {{ color: var(--warning); text-transform: lowercase; letter-spacing: 0.04em; }}
+
+/* Header live-update controls */
+.header-controls {{
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}}
+.btn-icon {{
+  font-size: 11px;
+  padding: 4px 10px;
+}}
+.toggle {{
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--fg-2);
+  cursor: pointer;
+  user-select: none;
+}}
+.toggle input[type="checkbox"] {{
+  margin: 0;
+  accent-color: var(--brand);
+  cursor: pointer;
+}}
+[data-stale] {{
+  color: var(--fg-3);
+  font-variant-numeric: tabular-nums;
+}}
 """

@@ -83,9 +83,16 @@ class DashboardRendererTests(TestCase):
         # Document is still a complete page.
         self.assertIn("</html>", html)
 
-    def test_auto_refresh_meta_tag_present(self) -> None:
+    def test_live_controls_are_opt_in(self) -> None:
+        """Auto-refresh is off by default — no meta-refresh, no setInterval
+        running until the user ticks the live toggle. Manual reload + live
+        checkbox + stale-age indicator are present in the header."""
         html = render_dashboard_html(_build_sample_metrics())
-        self.assertIn('http-equiv="refresh"', html)
+        self.assertNotIn('http-equiv="refresh"', html)
+        self.assertIn("data-refresh-now", html)
+        self.assertIn('name="live"', html)
+        self.assertIn("data-stale", html)
+        self.assertIn("localStorage", html)
 
 
 class DashboardRoutingTests(TestCase):
