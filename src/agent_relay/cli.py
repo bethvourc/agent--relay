@@ -631,8 +631,9 @@ def cmd_metrics_serve(args: argparse.Namespace) -> int:
         if args.prometheus:
             assert host is not None
             sys.stderr.write(
-                f"Prometheus exporter listening on http://{host}:{port}/metrics "
+                f"Prometheus exporter listening on http://{host}:{port}/metrics  "
                 f"(refresh: {args.prometheus_refresh:.1f}s)\n"
+                f"Dashboard at http://{host}:{port}/\n"
             )
             try:
                 rc = serve_prometheus(

@@ -1,4 +1,4 @@
-"""Prometheus exporter — pull-based scrape endpoint.
+"""Prometheus exporter — pull-based scrape endpoint + HTML dashboard.
 
 Renders cross-session metrics in the Prometheus text exposition format
 (version 0.0.4). Stdlib only — no ``prometheus_client`` dependency.
@@ -7,9 +7,12 @@ Server lifecycle:
 
 * :func:`serve_prometheus` runs a :class:`ThreadingHTTPServer` until
   Ctrl-C, returning exit code 0 (clean shutdown) or 130 (KeyboardInterrupt).
-* GET /metrics → Prometheus text exposition. Other paths → 404.
+* ``GET /metrics`` → Prometheus text exposition.
+* ``GET /`` and ``GET /dashboard`` → HTML dashboard (see
+  :mod:`agent_relay.dashboard`).
+* Other paths → 404.
 * A small in-process cache (default 5s TTL) avoids re-extracting on every
-  scrape when Prometheus polls aggressively.
+  scrape or dashboard refresh.
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from agent_relay.dashboard import render_dashboard_html
 from agent_relay.metrics import (
     CrossSessionMetrics,
     TokenUsage,
@@ -108,17 +112,25 @@ def serve_prometheus(
     extractor: Callable[[Path], CrossSessionMetrics] | None = None,
     server_factory: Callable[..., ThreadingHTTPServer] | None = None,
 ) -> int:
-    """Run the Prometheus scrape endpoint until Ctrl-C.
+    """Run the Prometheus scrape endpoint and HTML dashboard until Ctrl-C.
 
     ``extractor`` and ``server_factory`` exist so tests can swap them out.
     """
     extract = extractor or extract_cross_session_metrics
-    cache = _MetricsCache(
-        loader=lambda: render_prometheus_text(extract(repo_root)),
-        ttl_seconds=max(0.0, float(refresh_interval)),
+    ttl = max(0.0, float(refresh_interval))
+    snapshot_cache: _Cache[CrossSessionMetrics] = _Cache(
+        loader=lambda: extract(repo_root), ttl_seconds=ttl
+    )
+    prom_cache: _Cache[str] = _Cache(
+        loader=lambda: render_prometheus_text(snapshot_cache.get()),
+        ttl_seconds=ttl,
+    )
+    html_cache: _Cache[str] = _Cache(
+        loader=lambda: render_dashboard_html(snapshot_cache.get()),
+        ttl_seconds=ttl,
     )
 
-    Handler = _make_handler(cache)
+    Handler = _make_handler(prom_cache, html_cache)
     factory = server_factory or ThreadingHTTPServer
     server = factory((host, port), Handler)
 
@@ -137,15 +149,18 @@ def serve_prometheus(
 # ---------------------------------------------------------------------------
 
 
-class _MetricsCache:
-    def __init__(self, *, loader: Callable[[], str], ttl_seconds: float) -> None:
+class _Cache[T]:
+    """Tiny TTL cache, threadsafe. Used for both the Prom text body, the
+    rendered HTML dashboard, and the underlying metrics snapshot they share."""
+
+    def __init__(self, *, loader: Callable[[], T], ttl_seconds: float) -> None:
         self._loader = loader
         self._ttl = ttl_seconds
         self._lock = threading.Lock()
-        self._value: str | None = None
+        self._value: T | None = None
         self._expires_at = 0.0
 
-    def get(self) -> str:
+    def get(self) -> T:
         with self._lock:
             now = time.monotonic()
             if self._value is None or now >= self._expires_at:
@@ -154,19 +169,33 @@ class _MetricsCache:
             return self._value
 
 
-def _make_handler(cache: _MetricsCache) -> type[BaseHTTPRequestHandler]:
+# Backwards-compatible alias for any external callers.
+_MetricsCache = _Cache
+
+
+def _make_handler(
+    prom_cache: _Cache[str],
+    html_cache: _Cache[str],
+) -> type[BaseHTTPRequestHandler]:
     class _Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
-            if self.path.split("?", 1)[0] != "/metrics":
-                self.send_error(HTTPStatus.NOT_FOUND, "use /metrics")
+            path = self.path.split("?", 1)[0]
+            if path == "/metrics":
+                self._send(prom_cache.get(), _CONTENT_TYPE)
                 return
+            if path in ("/", "/dashboard"):
+                self._send(html_cache.get(), "text/html; charset=utf-8")
+                return
+            self.send_error(HTTPStatus.NOT_FOUND, "use / or /metrics")
+
+        def _send(self, payload: str, content_type: str) -> None:
             try:
-                body = cache.get().encode("utf-8")
+                body = payload.encode("utf-8")
             except Exception as exc:  # noqa: BLE001
                 self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
                 return
             self.send_response(HTTPStatus.OK)
-            self.send_header("Content-Type", _CONTENT_TYPE)
+            self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
