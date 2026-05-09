@@ -58,6 +58,7 @@ from agent_relay.metrics import (
     extract_session_metrics,
     extract_turn_metrics,
 )
+from agent_relay.sse import DEFAULT_HEARTBEAT_SECONDS, DEFAULT_TICK_SECONDS, stream_updates
 from agent_relay.storage import is_session
 from agent_relay.turn_artifacts import load_turn_artifacts
 from agent_relay.watch import WatchSource
@@ -65,9 +66,15 @@ from agent_relay.watch import WatchSource
 _CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
 _HTML_TYPE = "text/html; charset=utf-8"
 _JSON_TYPE = "application/json; charset=utf-8"
+_SSE_TYPE = "text/event-stream"
 _SESSION_PATH = re.compile(r"^/session/([A-Za-z0-9-]+)(?:/(data))?$")
 _TURN_PATH = re.compile(r"^/session/([A-Za-z0-9-]+)/turn/(\d+)(?:/(data))?$")
 _ALERTS_PATH = re.compile(r"^/alerts(?:/(data))?$")
+_DASHBOARD_EVENTS_PATHS = frozenset({"/events", "/dashboard/events"})
+_ALERTS_EVENTS_PATH = "/alerts/events"
+_SESSION_EVENTS_PATH = re.compile(r"^/session/([A-Za-z0-9-]+)/events$")
+_TURN_EVENTS_PATH = re.compile(r"^/session/([A-Za-z0-9-]+)/turn/(\d+)/events$")
+_DEFAULT_SSE_CONNECTION_CAP = 8
 
 # Tightened to what the dashboard actually loads: self-hosted markup,
 # inline styles (one <style> block), Google Fonts CSS + woff2 files.
@@ -167,6 +174,9 @@ def serve_prometheus(
     port: int,
     *,
     refresh_interval: float = 5.0,
+    dashboard_refresh_interval: float = DEFAULT_TICK_SECONDS,
+    sse_heartbeat_interval: float = DEFAULT_HEARTBEAT_SECONDS,
+    sse_connection_cap: int = _DEFAULT_SSE_CONNECTION_CAP,
     extractor: Callable[[Path], CrossSessionMetrics] | None = None,
     server_factory: Callable[..., ThreadingHTTPServer] | None = None,
     dashboard_enabled: bool = True,
@@ -208,6 +218,7 @@ def serve_prometheus(
     )
 
     alert_config = AlertConfigCache(repo_root)
+    sse_stop_event = threading.Event()
 
     def load_dashboard_metrics(filter: MetricsFilter) -> tuple[CrossSessionMetrics, datetime]:
         # Filter is applied at extraction time when non-identity. The cached
@@ -230,17 +241,18 @@ def serve_prometheus(
             generated_at=generated_at,
         )
 
-    def render_dashboard_data(filter: MetricsFilter, errors: tuple[str, ...]) -> str:
+    def render_dashboard_payload(
+        filter: MetricsFilter, errors: tuple[str, ...]
+    ) -> dict[str, object]:
         metrics, generated_at = load_dashboard_metrics(filter)
         alerts = evaluate_active_alerts(metrics)
-        payload = render_dashboard_update_payload(
+        return render_dashboard_update_payload(
             metrics,
             filter=filter,
             filter_errors=errors,
             alerts_banner_html=render_alert_banner_html(alerts, filtered=not filter.is_identity),
             generated_at=generated_at,
         )
-        return json.dumps(payload, separators=(",", ":"))
 
     def render_alerts_html_page(query: str) -> str:
         filter, _errors = parse_filter_from_query(query)
@@ -254,12 +266,11 @@ def serve_prometheus(
             config_path=alerts_config_path(repo_root),
         )
 
-    def render_alerts_data(query: str) -> str:
+    def render_alerts_data_payload(query: str) -> dict[str, object]:
         filter, _errors = parse_filter_from_query(query)
         metrics, generated_at = load_dashboard_metrics(filter)
         alerts = evaluate_active_alerts(metrics)
-        payload = render_alerts_payload(alerts, cfg=alert_config.get(), generated_at=generated_at)
-        return json.dumps(payload, separators=(",", ":"))
+        return render_alerts_payload(alerts, cfg=alert_config.get(), generated_at=generated_at)
 
     def load_session_view_parts(
         session_id: str,
@@ -289,18 +300,20 @@ def serve_prometheus(
             generated_at=generated_at,
         )
 
-    def render_session_data_page(session_id: str, _query: str) -> tuple[HTTPStatus, str]:
+    def render_session_data_page(
+        session_id: str, query: str
+    ) -> tuple[HTTPStatus, dict[str, object] | str]:
+        _ = query
         if not is_session(repo_root, session_id):
             return HTTPStatus.NOT_FOUND, render_session_not_found_html(session_id)
         metrics, integrity, objective, generated_at = load_session_view_parts(session_id)
-        payload = render_session_detail_payload(
+        return HTTPStatus.OK, render_session_detail_payload(
             session_id=session_id,
             metrics=metrics,
             integrity=integrity,
             objective=objective,
             generated_at=generated_at,
         )
-        return HTTPStatus.OK, json.dumps(payload, separators=(",", ":"))
 
     def render_turn_page(session_id: str, turn_number: int, query: str) -> tuple[HTTPStatus, str]:
         if (
@@ -319,8 +332,9 @@ def serve_prometheus(
         )
 
     def render_turn_data_page(
-        session_id: str, turn_number: int, _query: str
-    ) -> tuple[HTTPStatus, str]:
+        session_id: str, turn_number: int, query: str
+    ) -> tuple[HTTPStatus, dict[str, object] | str]:
+        _ = query
         if (
             not is_session(repo_root, session_id)
             or not turn_dir(repo_root, session_id, turn_number).exists()
@@ -328,27 +342,30 @@ def serve_prometheus(
             return HTTPStatus.NOT_FOUND, render_turn_not_found_html(session_id, turn_number)
         metrics = extract_turn_metrics(repo_root, session_id, turn_number)
         artifacts = load_turn_artifacts(repo_root, session_id, turn_number)
-        payload = render_turn_detail_payload(
+        return HTTPStatus.OK, render_turn_detail_payload(
             artifacts=artifacts,
             metrics=metrics,
             session_id=session_id,
             generated_at=datetime.now(UTC),
         )
-        return HTTPStatus.OK, json.dumps(payload, separators=(",", ":"))
 
     Handler = _make_handler(
         prom_cache,
         render_html,
-        render_dashboard_data,
+        render_dashboard_payload,
         render_session_page,
         render_session_data_page,
         render_turn_page,
         render_turn_data_page,
         render_alerts_html_page,
-        render_alerts_data,
+        render_alerts_data_payload,
         dashboard_enabled=dashboard_enabled,
         access_log=access_log,
         telemetry=metrics_telemetry,
+        sse_stop_event=sse_stop_event,
+        sse_tick_seconds=dashboard_refresh_interval,
+        sse_heartbeat_seconds=sse_heartbeat_interval,
+        sse_connection_cap=sse_connection_cap,
     )
     factory = server_factory or ThreadingHTTPServer
     server = factory((host, port), Handler)
@@ -356,9 +373,11 @@ def serve_prometheus(
     try:
         server.serve_forever()
     except KeyboardInterrupt:
+        sse_stop_event.set()
         server.shutdown()
         server.server_close()
         return 130
+    sse_stop_event.set()
     server.server_close()
     return 0
 
@@ -434,13 +453,25 @@ class DashboardTelemetry:
 
 
 _PATH_TEMPLATES: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"^/session/[A-Za-z0-9-]+/turn/\d+/events$"), "/session/{id}/turn/{n}/events"),
     (re.compile(r"^/session/[A-Za-z0-9-]+/turn/\d+/data$"), "/session/{id}/turn/{n}/data"),
     (re.compile(r"^/session/[A-Za-z0-9-]+/turn/\d+$"), "/session/{id}/turn/{n}"),
+    (re.compile(r"^/session/[A-Za-z0-9-]+/events$"), "/session/{id}/events"),
     (re.compile(r"^/session/[A-Za-z0-9-]+/data$"), "/session/{id}/data"),
     (re.compile(r"^/session/[A-Za-z0-9-]+$"), "/session/{id}"),
 )
 _KNOWN_PATHS = frozenset(
-    {"/", "/dashboard", "/dashboard/data", "/alerts", "/alerts/data", "/metrics"}
+    {
+        "/",
+        "/dashboard",
+        "/dashboard/data",
+        "/dashboard/events",
+        "/events",
+        "/alerts",
+        "/alerts/data",
+        "/alerts/events",
+        "/metrics",
+    }
 )
 
 
@@ -548,22 +579,54 @@ def _integrity_error_report(
 def _make_handler(
     prom_cache: _Cache[str],
     render_html: Callable[[MetricsFilter, tuple[str, ...]], str],
-    render_dashboard_data: Callable[[MetricsFilter, tuple[str, ...]], str],
+    render_dashboard_payload: Callable[[MetricsFilter, tuple[str, ...]], dict[str, object]],
     render_session_page: Callable[[str, str], tuple[HTTPStatus, str]],
-    render_session_data_page: Callable[[str, str], tuple[HTTPStatus, str]],
+    render_session_data_page: Callable[[str, str], tuple[HTTPStatus, dict[str, object] | str]],
     render_turn_page: Callable[[str, int, str], tuple[HTTPStatus, str]],
-    render_turn_data_page: Callable[[str, int, str], tuple[HTTPStatus, str]],
+    render_turn_data_page: Callable[[str, int, str], tuple[HTTPStatus, dict[str, object] | str]],
     render_alerts_html_page: Callable[[str], str],
-    render_alerts_data: Callable[[str], str],
+    render_alerts_payload: Callable[[str], dict[str, object]],
     *,
     dashboard_enabled: bool = True,
     access_log: IO[str] | None = None,
     telemetry: DashboardTelemetry | None = None,
+    sse_stop_event: threading.Event | None = None,
+    sse_tick_seconds: float = DEFAULT_TICK_SECONDS,
+    sse_heartbeat_seconds: float = DEFAULT_HEARTBEAT_SECONDS,
+    sse_connection_cap: int = _DEFAULT_SSE_CONNECTION_CAP,
 ) -> type[BaseHTTPRequestHandler]:
     metrics_telemetry = telemetry or DashboardTelemetry()
+    stop_event = sse_stop_event or threading.Event()
+    sse_lock = threading.Lock()
+    sse_active_connections = 0
+    sse_cap = max(1, int(sse_connection_cap))
 
     def _dashboard_404() -> tuple[HTTPStatus, str, str]:
         return HTTPStatus.NOT_FOUND, "dashboard disabled\n", _CONTENT_TYPE
+
+    def _try_acquire_sse() -> bool:
+        nonlocal sse_active_connections
+        with sse_lock:
+            if sse_active_connections >= sse_cap:
+                return False
+            sse_active_connections += 1
+        metrics_telemetry.sse_connected()
+        return True
+
+    def _release_sse() -> None:
+        nonlocal sse_active_connections
+        with sse_lock:
+            sse_active_connections = max(0, sse_active_connections - 1)
+        metrics_telemetry.sse_disconnected()
+
+    def _json_payload(payload: dict[str, object]) -> str:
+        return json.dumps(payload, separators=(",", ":"))
+
+    def _expect_payload(result: tuple[HTTPStatus, dict[str, object] | str]) -> dict[str, object]:
+        status, payload = result
+        if status != HTTPStatus.OK or not isinstance(payload, dict):
+            raise RuntimeError(f"event payload unavailable: {int(status)}")
+        return payload
 
     class _Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
@@ -597,6 +660,18 @@ def _make_handler(
                 status, payload, content_type = _dashboard_404()
                 return self._send(payload, content_type, status=status)
 
+            turn_events_match = _TURN_EVENTS_PATH.match(raw_path)
+            if turn_events_match:
+                session_id, turn_text = turn_events_match.groups()
+                turn_number = int(turn_text)
+                status, payload = render_turn_data_page(session_id, turn_number, query)
+                if status != HTTPStatus.OK:
+                    return self._send(str(payload), _HTML_TYPE, status=status)
+                assert isinstance(payload, dict)
+                return self._send_events(
+                    lambda: _expect_payload(render_turn_data_page(session_id, turn_number, query))
+                )
+
             turn_match = _TURN_PATH.match(raw_path)
             if turn_match:
                 session_id, turn_text, data_suffix = turn_match.groups()
@@ -609,32 +684,51 @@ def _make_handler(
                     )
                 if data_suffix:
                     status, payload = render_turn_data_page(session_id, turn_number, query)
-                    content_type = _JSON_TYPE if status == HTTPStatus.OK else _HTML_TYPE
+                    if status == HTTPStatus.OK:
+                        return self._send_json(payload)
+                    content_type = _HTML_TYPE
                 else:
                     status, payload = render_turn_page(session_id, turn_number, query)
                     content_type = _HTML_TYPE
-                return self._send(payload, content_type, status=status)
+                return self._send(str(payload), content_type, status=status)
+            session_events_match = _SESSION_EVENTS_PATH.match(raw_path)
+            if session_events_match:
+                session_id = session_events_match.group(1)
+                status, payload = render_session_data_page(session_id, query)
+                if status != HTTPStatus.OK:
+                    return self._send(str(payload), _HTML_TYPE, status=status)
+                assert isinstance(payload, dict)
+                return self._send_events(
+                    lambda: _expect_payload(render_session_data_page(session_id, query))
+                )
             session_match = _SESSION_PATH.match(raw_path)
             if session_match:
                 session_id, data_suffix = session_match.groups()
                 if data_suffix:
                     status, payload = render_session_data_page(session_id, query)
-                    content_type = _JSON_TYPE if status == HTTPStatus.OK else _HTML_TYPE
+                    if status == HTTPStatus.OK:
+                        return self._send_json(payload)
+                    content_type = _HTML_TYPE
                 else:
                     status, payload = render_session_page(session_id, query)
                     content_type = _HTML_TYPE
-                return self._send(payload, content_type, status=status)
+                return self._send(str(payload), content_type, status=status)
             if raw_path in ("/", "/dashboard"):
                 filter, errors = parse_filter_from_query(query)
                 return self._send(render_html(filter, errors), _HTML_TYPE)
             if raw_path == "/dashboard/data":
                 filter, errors = parse_filter_from_query(query)
-                return self._send(render_dashboard_data(filter, errors), _JSON_TYPE)
+                return self._send_json(render_dashboard_payload(filter, errors))
+            if raw_path in _DASHBOARD_EVENTS_PATHS:
+                filter, errors = parse_filter_from_query(query)
+                return self._send_events(lambda: render_dashboard_payload(filter, errors))
             alerts_match = _ALERTS_PATH.match(raw_path)
             if alerts_match:
                 if alerts_match.group(1):
-                    return self._send(render_alerts_data(query), _JSON_TYPE)
+                    return self._send_json(render_alerts_payload(query))
                 return self._send(render_alerts_html_page(query), _HTML_TYPE)
+            if raw_path == _ALERTS_EVENTS_PATH:
+                return self._send_events(lambda: render_alerts_payload(query))
             if raw_path.startswith("/session/"):
                 label = raw_path.removeprefix("/session/") or "unknown"
                 return self._send(
@@ -677,6 +771,53 @@ def _make_handler(
             self.end_headers()
             self.wfile.write(body)
             return status, len(body)
+
+        def _send_json(
+            self,
+            payload: dict[str, object] | str,
+            *,
+            status: HTTPStatus = HTTPStatus.OK,
+        ) -> tuple[HTTPStatus, int]:
+            text = _json_payload(payload) if isinstance(payload, dict) else payload
+            return self._send(text, _JSON_TYPE, status=status)
+
+        def _send_events(
+            self,
+            build_payload: Callable[[], dict[str, object]],
+        ) -> tuple[HTTPStatus, int]:
+            if not _try_acquire_sse():
+                return self._send_json(
+                    {"error": "too many connections"},
+                    status=HTTPStatus.SERVICE_UNAVAILABLE,
+                )
+
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", _SSE_TYPE)
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("X-Accel-Buffering", "no")
+            self.send_header("Connection", "keep-alive")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.end_headers()
+
+            body_len = 0
+            try:
+                for chunk in stream_updates(
+                    build_payload=build_payload,
+                    stop_event=stop_event,
+                    tick_seconds=sse_tick_seconds,
+                    heartbeat_seconds=sse_heartbeat_seconds,
+                ):
+                    try:
+                        self.wfile.write(chunk)
+                        self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                        break
+                    body_len += len(chunk)
+            finally:
+                _release_sse()
+                self.close_connection = True
+            return HTTPStatus.OK, body_len
 
         def log_message(self, format: str, *args: object) -> None:  # noqa: A002
             return  # silence default access log; we have our own opt-in JSONL log

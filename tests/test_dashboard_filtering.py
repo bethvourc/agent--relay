@@ -190,6 +190,10 @@ class FilterRenderingTests(TestCase):
         self.assertIn("data-stale", html)
         self.assertIn("fetch(refreshEndpoint()", html)
         self.assertIn("patchRegions", html)
+        self.assertIn("new EventSource(", html)
+        self.assertIn("addEventListener('update'", html)
+        self.assertIn("addEventListener('shutdown'", html)
+        self.assertIn("if (window.EventSource)", html)
         # The polling logic still defers reloads while the filter has focus.
         self.assertIn("inFilter", html)
         self.assertIn(".filter-bar", html)

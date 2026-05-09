@@ -12,7 +12,6 @@ from agent_relay.charts import empty_chart, sparkline, stacked_bar_chart
 from agent_relay.dashboard import (
     _STATUS_COLOR,
     _STATUS_GLYPH,
-    DASHBOARD_REFRESH_SECONDS,
     _html_head,
     _normalize_generated_at,
     _render_footer,
@@ -668,7 +667,7 @@ def _refresh_controls(generated_at: dict[str, str]) -> str:
   </span>
   <span class="refresh-state small" data-refresh-state aria-live="polite"></span>
   <button type="button" class="btn-secondary btn-icon" data-refresh-now title="refresh data">↻ refresh</button>
-  <label class="toggle" title="refresh data every {DASHBOARD_REFRESH_SECONDS}s">
+  <label class="toggle" title="live refresh data">
     <input type="checkbox" name="live">
     <span>live</span>
   </label>

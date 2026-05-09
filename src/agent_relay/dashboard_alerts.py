@@ -210,8 +210,12 @@ def render_alerts_page_html(
         generated_at=generated,
         config_path=config_path,
     )
-    head = _html_head(title="agent-relay · alerts", auto_refresh=False)
-    return f"<!doctype html>\n{head}\n<body>\n{body}\n</body>\n</html>\n"
+    head = _html_head(title="agent-relay · alerts")
+    return (
+        f"<!doctype html>\n{head}\n"
+        '<body data-refresh-endpoint="/alerts/data">\n'
+        f"{body}\n</body>\n</html>\n"
+    )
 
 
 def _render_alerts_body(
@@ -232,7 +236,7 @@ def _render_alerts_body(
     return "\n".join(
         [
             '<main class="page">',
-            _render_alerts_header(alerts, generated_at),
+            _render_region("header", _render_alerts_header(alerts, generated_at)),
             breadcrumb,
             _render_region("tuning-hint", _render_tuning_hint(alerts, cfg)),
             _render_region("alerts-list", _render_alerts_list(alerts)),
@@ -248,6 +252,9 @@ def _render_alerts_header(alerts: tuple[Alert, ...], generated_at: dict[str, str
     sev = highest_severity(alerts)
     count = len(alerts)
     badge = ""
+    data_attr = (
+        f' data-generated-at="{escape(generated_at["iso"])}"' if generated_at.get("iso") else ""
+    )
     if sev:
         color = _SEVERITY_COLOR.get(sev, "var(--warning)")
         badge = (
@@ -264,8 +271,15 @@ def _render_alerts_header(alerts: tuple[Alert, ...], generated_at: dict[str, str
   <div class="header-controls">
     <span class="muted small">
       {count} active · {badge}
-      · rendered {escape(generated_at["label"])}
+      · rendered <span data-rendered-at{data_attr}>{escape(generated_at["label"])}</span> ·
+      <span data-stale>just now</span>
     </span>
+    <span class="refresh-state small" data-refresh-state aria-live="polite"></span>
+    <button type="button" class="btn-secondary btn-icon" data-refresh-now title="refresh data">↻ refresh</button>
+    <label class="toggle" title="live refresh data">
+      <input type="checkbox" name="live">
+      <span>live</span>
+    </label>
   </div>
 </header>"""
 
@@ -438,6 +452,7 @@ def render_alerts_payload(
         "generatedAt": generated["iso"],
         "renderedAt": generated["label"],
         "regions": {
+            "header": _render_alerts_header(alerts, generated),
             "tuning-hint": _render_tuning_hint(alerts, cfg),
             "alerts-list": _render_alerts_list(alerts),
         },

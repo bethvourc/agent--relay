@@ -31,8 +31,6 @@ from agent_relay.metrics import (
     bucketize,
 )
 
-DASHBOARD_REFRESH_SECONDS = 5
-
 # Status verbs → color role. Mirrors the Rich ``status.*`` theme entries
 # but expressed in CSS variables so the HTML stays self-contained.
 _STATUS_COLOR = {
@@ -292,7 +290,7 @@ def _render_header(generated_at: dict[str, str]) -> str:
     </span>
     <span class="refresh-state small" data-refresh-state aria-live="polite"></span>
     <button type="button" class="btn-secondary btn-icon" data-refresh-now title="refresh data">↻ refresh</button>
-    <label class="toggle" title="refresh data every {DASHBOARD_REFRESH_SECONDS}s">
+    <label class="toggle" title="live refresh data">
       <input type="checkbox" name="live">
       <span>live</span>
     </label>
@@ -572,8 +570,8 @@ def _refresh_script() -> str:
     Behaviour:
       * ``↻ refresh`` button fetches fresh dashboard data and patches the
         metric regions in place.
-      * ``live`` checkbox toggles the same soft refresh at
-        DASHBOARD_REFRESH_SECONDS intervals; persisted in localStorage.
+      * ``live`` checkbox opens an SSE stream, falling back to soft
+        fetch refreshes if streaming is unavailable.
       * While the live timer is on, refreshes are deferred whenever focus
         is inside ``.filter-bar`` or text is selected.
       * The header's ``stale`` indicator updates client-side every second
@@ -583,13 +581,24 @@ def _refresh_script() -> str:
     return f"""\
 <script>
 (function() {{
-  var REFRESH_MS = {DASHBOARD_REFRESH_SECONDS * 1000};
+  var FALLBACK_POLL_MS = {10 * 1000};
+  var SSE_ERROR_WINDOW_MS = 30000;
+  var SSE_RETRY_AFTER_FALLBACK_MS = 60000;
   var STORAGE_KEY = 'agent-relay-dashboard-live';
   var DATA_PATH = '/dashboard/data';
   var refreshTimer = null;
   var staleTimer = null;
+  var sseRetryTimer = null;
+  var eventSource = null;
   var refreshing = false;
   var pendingRefresh = false;
+  var pendingPayload = null;
+  var liveEnabled = false;
+  var pollingActive = false;
+  var sseRetryAt = 0;
+  var sseErrorTimes = [];
+  var boundRefreshBtn = null;
+  var boundLiveToggle = null;
 
   function inFilter() {{
     var el = document.activeElement;
@@ -609,6 +618,18 @@ def _refresh_script() -> str:
     var endpoint = (document.body && document.body.getAttribute('data-refresh-endpoint')) || DATA_PATH;
     var url = new URL(endpoint, window.location.href);
     if (!url.search) url.search = window.location.search;
+    return url.toString();
+  }}
+
+  function eventsEndpoint() {{
+    var url = new URL(refreshEndpoint());
+    if (url.pathname.slice(-5) === '/data') {{
+      url.pathname = url.pathname.slice(0, -5) + '/events';
+    }} else if (url.pathname.charAt(url.pathname.length - 1) === '/') {{
+      url.pathname = url.pathname + 'events';
+    }} else {{
+      url.pathname = url.pathname + '/events';
+    }}
     return url.toString();
   }}
 
@@ -641,6 +662,23 @@ def _refresh_script() -> str:
     else el.removeAttribute('data-state');
   }}
 
+  function setSteadyRefreshState() {{
+    if (!liveEnabled) {{
+      setRefreshState('', '');
+    }} else if (eventSource) {{
+      setRefreshState('live', 'live');
+    }} else if (pollingActive) {{
+      setRefreshState('polling', 'polling');
+    }}
+  }}
+
+  function flashRefreshState(text, state) {{
+    setRefreshState(text, state);
+    window.setTimeout(function() {{
+      if (!pendingRefresh) setSteadyRefreshState();
+    }}, 1500);
+  }}
+
   function snapshotDetails() {{
     var state = {{}};
     document.querySelectorAll('details[id], details[data-detail-id]').forEach(function(el) {{
@@ -666,6 +704,7 @@ def _refresh_script() -> str:
       if (region) region.innerHTML = regions[name];
     }});
     restoreDetails(detailsState);
+    bindRefreshControls();
     window.scrollTo(scrollX, scrollY);
   }}
 
@@ -675,6 +714,23 @@ def _refresh_script() -> str:
     if (payload.renderedAt) renderedAt.textContent = payload.renderedAt;
     if (payload.generatedAt) renderedAt.setAttribute('data-generated-at', payload.generatedAt);
     updateStaleAge();
+  }}
+
+  function applyPayload(payload, options) {{
+    options = options || {{}};
+    if (!payload) return;
+    if (!options.force && shouldDeferRefresh()) {{
+      pendingPayload = payload;
+      pendingRefresh = true;
+      setRefreshState('update ready', 'pending');
+      return;
+    }}
+    patchRegions(payload.regions || {{}});
+    setGeneratedAt(payload);
+    pendingPayload = null;
+    pendingRefresh = false;
+    if (options.quiet) setSteadyRefreshState();
+    else flashRefreshState('updated', 'ok');
   }}
 
   function refreshDashboard(options) {{
@@ -701,13 +757,7 @@ def _refresh_script() -> str:
         return response.json();
       }})
       .then(function(payload) {{
-        patchRegions(payload.regions || {{}});
-        setGeneratedAt(payload);
-        pendingRefresh = false;
-        setRefreshState('updated', 'ok');
-        window.setTimeout(function() {{
-          if (!pendingRefresh) setRefreshState('', '');
-        }}, 1500);
+        applyPayload(payload, {{force: true}});
       }})
       .catch(function() {{
         setRefreshState('refresh failed', 'error');
@@ -718,51 +768,178 @@ def _refresh_script() -> str:
   }}
 
   function flushPendingRefresh() {{
-    if (pendingRefresh && !shouldDeferRefresh() && !document.hidden) {{
-      refreshDashboard({{force: true}});
+    if (!pendingRefresh || shouldDeferRefresh() || document.hidden) return;
+    if (pendingPayload) applyPayload(pendingPayload, {{force: true}});
+    else refreshDashboard({{force: true}});
+  }}
+
+  function closeEventStream() {{
+    if (eventSource) {{
+      eventSource.close();
+      eventSource = null;
     }}
   }}
 
+  function stopPolling() {{
+    if (refreshTimer) {{
+      clearInterval(refreshTimer);
+      refreshTimer = null;
+    }}
+    pollingActive = false;
+  }}
+
+  function clearSseRetryTimer() {{
+    if (sseRetryTimer) {{
+      clearTimeout(sseRetryTimer);
+      sseRetryTimer = null;
+    }}
+  }}
+
+  function scheduleSseRetry() {{
+    clearSseRetryTimer();
+    if (!liveEnabled || !window.EventSource || !sseRetryAt) return;
+    sseRetryTimer = window.setTimeout(function() {{
+      if (!liveEnabled || !window.EventSource) return;
+      sseRetryAt = 0;
+      stopPolling();
+      openEventStream();
+    }}, Math.max(1000, sseRetryAt - Date.now()));
+  }}
+
   function startPolling() {{
+    closeEventStream();
     stopPolling();
+    pollingActive = true;
+    setRefreshState('polling', 'polling');
     refreshTimer = setInterval(function() {{
       if (document.hidden) return;
+      if (window.EventSource && sseRetryAt && Date.now() >= sseRetryAt) {{
+        sseRetryAt = 0;
+        stopPolling();
+        openEventStream();
+        return;
+      }}
       refreshDashboard();
-    }}, REFRESH_MS);
+    }}, FALLBACK_POLL_MS);
   }}
 
-  function stopPolling() {{
-    if (refreshTimer) {{ clearInterval(refreshTimer); refreshTimer = null; }}
+  function recordSseError() {{
+    var now = Date.now();
+    sseErrorTimes = sseErrorTimes.filter(function(ts) {{
+      return now - ts <= SSE_ERROR_WINDOW_MS;
+    }});
+    sseErrorTimes.push(now);
+    return sseErrorTimes.length;
   }}
 
-  document.addEventListener('DOMContentLoaded', function() {{
-    updateStaleAge();
-    staleTimer = setInterval(updateStaleAge, 1000);
+  function fallbackToPolling() {{
+    closeEventStream();
+    sseRetryAt = Date.now() + SSE_RETRY_AFTER_FALLBACK_MS;
+    startPolling();
+    scheduleSseRetry();
+  }}
 
-    var liveToggle = document.querySelector('input[name="live"]');
+  function openEventStream() {{
+    if (!liveEnabled) return;
+    if (!window.EventSource) {{
+      startPolling();
+      return;
+    }}
+    if (sseRetryAt && Date.now() < sseRetryAt) {{
+      startPolling();
+      scheduleSseRetry();
+      return;
+    }}
+
+    stopPolling();
+    closeEventStream();
+    sseErrorTimes = [];
+    setRefreshState('connecting', 'loading');
+    try {{
+      eventSource = new EventSource(eventsEndpoint());
+    }} catch (_) {{
+      fallbackToPolling();
+      return;
+    }}
+
+    eventSource.onopen = function() {{
+      sseErrorTimes = [];
+      setRefreshState('live', 'live');
+    }};
+    eventSource.addEventListener('update', function(event) {{
+      var payload = null;
+      try {{
+        payload = JSON.parse(event.data || '{{}}');
+      }} catch (_) {{
+        setRefreshState('live data failed', 'error');
+        return;
+      }}
+      applyPayload(payload, {{quiet: true}});
+    }});
+    eventSource.addEventListener('shutdown', function() {{
+      closeEventStream();
+      setRefreshState('shutdown', 'shutdown');
+      sseRetryAt = Date.now() + 3000;
+      scheduleSseRetry();
+    }});
+    eventSource.onerror = function() {{
+      if (!eventSource) return;
+      if (recordSseError() >= 3) {{
+        fallbackToPolling();
+      }} else {{
+        setRefreshState('reconnecting', 'pending');
+      }}
+    }};
+  }}
+
+  function startLive() {{
+    if (window.EventSource) openEventStream();
+    else startPolling();
+  }}
+
+  function stopLive() {{
+    closeEventStream();
+    stopPolling();
+    clearSseRetryTimer();
+    sseRetryAt = 0;
+    pendingPayload = null;
+    pendingRefresh = false;
+    setRefreshState('', '');
+  }}
+
+  function bindRefreshControls() {{
     var refreshBtn = document.querySelector('[data-refresh-now]');
-
-    if (refreshBtn) {{
+    if (refreshBtn && refreshBtn !== boundRefreshBtn) {{
+      boundRefreshBtn = refreshBtn;
       refreshBtn.addEventListener('click', function(e) {{
         e.preventDefault();
         refreshDashboard({{force: true}});
       }});
     }}
 
-    if (liveToggle) {{
-      var saved = (function() {{
-        try {{ return localStorage.getItem(STORAGE_KEY) === '1'; }}
-        catch (_) {{ return false; }}
-      }})();
-      liveToggle.checked = saved;
-      if (saved) startPolling();
+    var liveToggle = document.querySelector('input[name="live"]');
+    if (!liveToggle) return;
+    liveToggle.checked = liveEnabled;
+    if (liveToggle === boundLiveToggle) return;
+    boundLiveToggle = liveToggle;
+    liveToggle.addEventListener('change', function() {{
+      liveEnabled = !!liveToggle.checked;
+      try {{ localStorage.setItem(STORAGE_KEY, liveEnabled ? '1' : '0'); }}
+      catch (_) {{}}
+      if (liveEnabled) startLive(); else stopLive();
+    }});
+  }}
 
-      liveToggle.addEventListener('change', function() {{
-        try {{ localStorage.setItem(STORAGE_KEY, liveToggle.checked ? '1' : '0'); }}
-        catch (_) {{}}
-        if (liveToggle.checked) startPolling(); else stopPolling();
-      }});
-    }}
+  document.addEventListener('DOMContentLoaded', function() {{
+    updateStaleAge();
+    staleTimer = setInterval(updateStaleAge, 1000);
+
+    liveEnabled = (function() {{
+      try {{ return localStorage.getItem(STORAGE_KEY) === '1'; }}
+      catch (_) {{ return false; }}
+    }})();
+    bindRefreshControls();
+    if (liveEnabled) startLive();
 
     document.addEventListener('focusout', function() {{
       window.setTimeout(flushPendingRefresh, 0);
@@ -771,11 +948,12 @@ def _refresh_script() -> str:
     document.addEventListener('visibilitychange', function() {{
       if (document.hidden) return;
       if (pendingRefresh) flushPendingRefresh();
-      else if (liveToggle && liveToggle.checked) refreshDashboard();
+      else if (liveEnabled && pollingActive) refreshDashboard();
+      else setSteadyRefreshState();
     }});
 
     window.addEventListener('beforeunload', function() {{
-      stopPolling();
+      stopLive();
       if (staleTimer) clearInterval(staleTimer);
     }});
   }});
@@ -1278,7 +1456,10 @@ p {{ margin: 0; }}
 }}
 .refresh-state[data-state="loading"] {{ color: var(--fg-2); }}
 .refresh-state[data-state="ok"] {{ color: var(--signal); }}
+.refresh-state[data-state="live"] {{ color: var(--signal); }}
+.refresh-state[data-state="polling"] {{ color: var(--warning); }}
 .refresh-state[data-state="pending"] {{ color: var(--warning); }}
+.refresh-state[data-state="shutdown"] {{ color: var(--warning); }}
 .refresh-state[data-state="error"] {{ color: var(--error); }}
 [data-stale] {{
   color: var(--fg-3);

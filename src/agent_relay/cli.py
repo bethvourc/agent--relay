@@ -760,6 +760,7 @@ def cmd_metrics_serve(args: argparse.Namespace) -> int:
                     host,
                     port,
                     refresh_interval=args.prometheus_refresh,
+                    dashboard_refresh_interval=getattr(args, "dashboard_refresh", 1.0),
                     dashboard_enabled=dashboard_enabled,
                     allow_remote=allow_remote,
                     access_log=access_log_stream,
@@ -1524,6 +1525,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=5.0,
         help="Seconds to cache scraped metrics (default: 5.0)",
+    )
+    metrics_serve.add_argument(
+        "--dashboard-refresh",
+        type=float,
+        default=1.0,
+        help="Seconds between live dashboard SSE checks (default: 1.0)",
     )
     metrics_serve.add_argument(
         "--otlp",
