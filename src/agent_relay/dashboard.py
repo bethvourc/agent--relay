@@ -18,10 +18,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from html import escape
+from urllib.parse import urlencode
 
 from agent_relay import tokens as T
 from agent_relay.formatting import fmt_cost, fmt_duration_ms, fmt_int
-from agent_relay.metrics import CrossSessionMetrics, SessionMetrics, TokenUsage
+from agent_relay.metrics import CrossSessionMetrics, MetricsFilter, SessionMetrics, TokenUsage
 
 DASHBOARD_REFRESH_SECONDS = 5
 
@@ -68,11 +69,35 @@ _STATUS_GLYPH = {
 }
 
 
-def render_dashboard_html(metrics: CrossSessionMetrics, *, generated_at: str | None = None) -> str:
-    """Return a complete HTML document for the metrics dashboard."""
+def render_dashboard_html(
+    metrics: CrossSessionMetrics,
+    *,
+    filter: MetricsFilter | None = None,
+    available_agents: tuple[str, ...] | None = None,
+    filter_errors: tuple[str, ...] = (),
+    generated_at: str | None = None,
+) -> str:
+    """Return a complete HTML document for the metrics dashboard.
+
+    ``filter`` echoes the current scope into the filter bar so refresh /
+    share-link works. ``available_agents`` populates the agent multi-select;
+    if None we derive it from ``metrics.by_agent``. ``filter_errors`` are
+    user-friendly messages about query-string values that were ignored.
+    """
+    if filter is None:
+        filter = MetricsFilter()
+    if available_agents is None:
+        available_agents = tuple(sorted(metrics.by_agent)) or ("claude", "codex", "gemini")
+
     ts = generated_at or datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
-    body = _render_body(metrics, generated_at=ts)
-    return f"<!doctype html>\n{_HTML_HEAD}\n<body>\n{body}\n</body>\n</html>\n"
+    body = _render_body(
+        metrics,
+        filter=filter,
+        available_agents=available_agents,
+        filter_errors=filter_errors,
+        generated_at=ts,
+    )
+    return f"<!doctype html>\n{_html_head()}\n<body>\n{body}\n</body>\n</html>\n"
 
 
 # ---------------------------------------------------------------------------
@@ -80,11 +105,20 @@ def render_dashboard_html(metrics: CrossSessionMetrics, *, generated_at: str | N
 # ---------------------------------------------------------------------------
 
 
-def _render_body(metrics: CrossSessionMetrics, *, generated_at: str) -> str:
+def _render_body(
+    metrics: CrossSessionMetrics,
+    *,
+    filter: MetricsFilter,
+    available_agents: tuple[str, ...],
+    filter_errors: tuple[str, ...],
+    generated_at: str,
+) -> str:
     return "\n".join(
         [
             '<main class="page">',
             _render_header(generated_at),
+            _render_filter_errors(filter_errors),
+            _render_filter_bar(filter, available_agents),
             _render_totals(metrics),
             _render_by_agent(metrics),
             _render_sessions(metrics),
@@ -93,6 +127,61 @@ def _render_body(metrics: CrossSessionMetrics, *, generated_at: str) -> str:
             "</main>",
         ]
     )
+
+
+def _render_filter_errors(errors: tuple[str, ...]) -> str:
+    if not errors:
+        return ""
+    items = "\n      ".join(f"<li>{escape(e)}</li>" for e in errors)
+    return f"""\
+<div class="banner banner-warning">
+  <strong>filter input ignored</strong>
+  <ul>
+      {items}
+  </ul>
+</div>"""
+
+
+def _render_filter_bar(filter: MetricsFilter, available_agents: tuple[str, ...]) -> str:
+    since = filter.since.date().isoformat() if filter.since else ""
+    until = filter.until.date().isoformat() if filter.until else ""
+    selected_agents = set(filter.agents)
+    q = filter.q or ""
+
+    agent_options = "\n        ".join(
+        f'<label class="checkbox"><input type="checkbox" name="agent" value="{escape(a)}"'
+        f"{' checked' if a in selected_agents else ''}>{escape(a)}</label>"
+        for a in available_agents
+    )
+
+    return f"""\
+<section class="card filter-bar">
+  <h4>filter</h4>
+  <form method="get" action="/">
+    <div class="filter-row">
+      <label class="field">
+        <span class="label">since</span>
+        <input type="date" name="since" value="{escape(since)}">
+      </label>
+      <label class="field">
+        <span class="label">until</span>
+        <input type="date" name="until" value="{escape(until)}">
+      </label>
+      <fieldset class="field">
+        <legend class="label">agent</legend>
+        {agent_options}
+      </fieldset>
+      <label class="field grow">
+        <span class="label">search</span>
+        <input type="text" name="q" value="{escape(q)}" placeholder="session id or objective">
+      </label>
+      <div class="filter-actions">
+        <button type="submit" class="btn-primary">apply</button>
+        <a class="btn-secondary" href="/">clear</a>
+      </div>
+    </div>
+  </form>
+</section>"""
 
 
 def _render_header(generated_at: str) -> str:
@@ -247,22 +336,51 @@ def _format_total_tokens(tokens: TokenUsage) -> str:
     return fmt_int(tokens.total or 0)
 
 
+def filter_to_query_string(filter: MetricsFilter) -> str:
+    """Serialize a MetricsFilter back into a URL query string. Round-trips
+    with :func:`parse_filter_from_query`."""
+    pairs: list[tuple[str, str]] = []
+    if filter.since:
+        pairs.append(("since", filter.since.date().isoformat()))
+    if filter.until:
+        pairs.append(("until", filter.until.date().isoformat()))
+    for agent in filter.agents:
+        pairs.append(("agent", agent))
+    if filter.q:
+        pairs.append(("q", filter.q))
+    return urlencode(pairs)
+
+
 # ---------------------------------------------------------------------------
 # Static head — tokens inlined so the page is self-contained
 # ---------------------------------------------------------------------------
 
 
-_HTML_HEAD = f"""\
+def _html_head(*, title: str = "agent-relay · metrics", auto_refresh: bool = True) -> str:
+    """Compose the <html><head> block. Public-ish so other dashboard pages
+    (Phase B session detail) can reuse the exact same chrome."""
+    refresh_meta = (
+        f'<meta http-equiv="refresh" content="{DASHBOARD_REFRESH_SECONDS}">' if auto_refresh else ""
+    )
+    return f"""\
 <html lang=en data-theme=dark>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="{DASHBOARD_REFRESH_SECONDS}">
-<title>agent-relay · metrics</title>
+{refresh_meta}
+<title>{escape(title)}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap">
 <style>
+{dashboard_css()}
+</style>
+</head>"""
+
+
+def dashboard_css() -> str:
+    """The full stylesheet body. Exposed so Phase B / E pages compose it once."""
+    return f"""\
 :root {{
   --surface-0: {T.SURFACE_0};
   --surface-1: {T.SURFACE_1};
@@ -421,5 +539,86 @@ footer {{
 }}
 
 p {{ margin: 0; }}
-</style>
-</head>"""
+
+/* Filter bar */
+.filter-bar form {{ width: 100%; }}
+.filter-row {{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  align-items: flex-end;
+}}
+.filter-row .field {{ display: flex; flex-direction: column; gap: 4px; }}
+.filter-row .field.grow {{ flex: 1 1 220px; }}
+.filter-row .label {{
+  font-size: 11px;
+  color: var(--fg-3);
+  text-transform: lowercase;
+  letter-spacing: 0.04em;
+}}
+.filter-row input[type="date"],
+.filter-row input[type="text"] {{
+  background: var(--surface-1);
+  border: 1px solid var(--surface-rule);
+  color: var(--fg-1);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  padding: 6px 8px;
+  border-radius: 2px;
+  min-width: 140px;
+}}
+.filter-row input:focus {{ outline: 1px solid var(--brand-dim); }}
+.filter-row fieldset {{
+  border: 1px solid var(--surface-rule);
+  border-radius: 2px;
+  padding: 4px 8px;
+  margin: 0;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}}
+.filter-row fieldset legend {{ padding: 0 4px; }}
+.filter-row .checkbox {{
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12.5px;
+  cursor: pointer;
+}}
+.filter-actions {{ display: flex; gap: 8px; align-items: center; }}
+.btn-primary, .btn-secondary {{
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  padding: 6px 14px;
+  border-radius: 2px;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+}}
+.btn-primary {{
+  background: var(--brand);
+  color: var(--surface-0);
+  border: 1px solid var(--brand-dim);
+  font-weight: 600;
+}}
+.btn-secondary {{
+  background: transparent;
+  color: var(--fg-2);
+  border: 1px solid var(--surface-rule);
+}}
+.btn-secondary:hover {{ color: var(--fg-1); border-color: var(--fg-3); }}
+
+/* Banners */
+.banner {{
+  border: 1px solid var(--surface-rule);
+  background: var(--surface-1);
+  padding: 8px 16px;
+  border-radius: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}}
+.banner ul {{ margin: 0; padding-left: 20px; }}
+.banner-warning {{ border-color: var(--warning); }}
+.banner-warning strong {{ color: var(--warning); text-transform: lowercase; letter-spacing: 0.04em; }}
+"""

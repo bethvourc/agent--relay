@@ -139,6 +139,46 @@ class SessionMetrics:
 
 
 @dataclass(frozen=True, slots=True)
+class MetricsFilter:
+    """Single source of truth for metric scoping.
+
+    Built from CLI flags (``cmd_metrics``) or query strings (dashboard
+    handler) and consumed by :func:`extract_cross_session_metrics`. Empty
+    fields mean "no constraint"; ``is_identity`` returns True when the
+    filter is fully empty (the extractor can skip filtering work).
+
+    Future fields (``until``, ``q``, ``session_ids``) will plug in here
+    without touching every call site.
+    """
+
+    since: datetime | None = None
+    until: datetime | None = None
+    agents: tuple[str, ...] = ()
+    session_ids: tuple[str, ...] = ()
+    q: str | None = None  # free-text substring match (objective + session id)
+
+    @property
+    def is_identity(self) -> bool:
+        return (
+            self.since is None
+            and self.until is None
+            and not self.agents
+            and not self.session_ids
+            and not self.q
+        )
+
+    def matches_session(self, sm: SessionMetrics) -> bool:
+        """True if this session passes the non-turn-level filters."""
+        if self.session_ids and sm.session_id not in self.session_ids:
+            return False
+        if self.q:
+            haystack = (sm.session_id + " " + (sm.objective or "")).lower()
+            if self.q.lower() not in haystack:
+                return False
+        return True
+
+
+@dataclass(frozen=True, slots=True)
 class CrossSessionMetrics:
     sessions: tuple[SessionMetrics, ...]
     by_agent: dict[str, TokenUsage] = field(default_factory=dict)
@@ -255,11 +295,32 @@ def extract_session_metrics(repo_root: Path, session_id: str) -> SessionMetrics:
 def extract_cross_session_metrics(
     repo_root: Path,
     *,
+    filter: MetricsFilter | None = None,
     since: datetime | None = None,
     agents: Iterable[str] | None = None,
 ) -> CrossSessionMetrics:
-    """Aggregate metrics across all sessions in the repo."""
-    agents_filter = set(agents) if agents else None
+    """Aggregate metrics across all sessions in the repo.
+
+    Pass a ``MetricsFilter`` to scope the result. The legacy ``since`` /
+    ``agents`` kwargs still work and compose with the filter (filter wins
+    on conflict).
+    """
+    if filter is None:
+        filter = MetricsFilter(
+            since=since,
+            agents=tuple(agents) if agents else (),
+        )
+    elif since is not None or agents is not None:
+        # Caller passed both — merge: filter takes precedence, kwargs fill gaps.
+        filter = MetricsFilter(
+            since=filter.since or since,
+            until=filter.until,
+            agents=filter.agents or (tuple(agents) if agents else ()),
+            session_ids=filter.session_ids,
+            q=filter.q,
+        )
+
+    agents_filter = set(filter.agents) if filter.agents else None
     by_agent: dict[str, TokenUsage] = {}
     cost_by_agent: dict[str, float] = {}
     by_day: dict[str, TokenUsage] = {}
@@ -283,7 +344,11 @@ def extract_cross_session_metrics(
         except Exception:
             continue
 
-        if since is not None and not _session_after(sm, since):
+        if filter.since is not None and not _session_after(sm, filter.since):
+            continue
+        if filter.until is not None and not _session_before(sm, filter.until):
+            continue
+        if not filter.matches_session(sm):
             continue
 
         keep_turns = sm.turns
@@ -674,6 +739,21 @@ def _session_after(session: SessionMetrics, since: datetime) -> bool:
         if dt >= since:
             return True
     # If no parseable timestamp, exclude when filter is active.
+    return False
+
+
+def _session_before(session: SessionMetrics, until: datetime) -> bool:
+    """True if the session has at least one parseable timestamp <= ``until``."""
+    candidates = [session.started_at, session.updated_at]
+    for ts in candidates:
+        if not ts:
+            continue
+        try:
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if dt <= until:
+            return True
     return False
 
 

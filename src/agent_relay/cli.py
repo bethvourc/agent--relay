@@ -14,6 +14,7 @@ from agent_relay.exporters.jsonl import parse_header_pairs, tail_jsonl
 from agent_relay.exporters.otlp import serve_otlp
 from agent_relay.exporters.prometheus import serve_prometheus
 from agent_relay.metrics import (
+    MetricsFilter,
     extract_cross_session_metrics,
     extract_session_metrics,
 )
@@ -539,10 +540,13 @@ def cmd_metrics(args: argparse.Namespace) -> int:
             render_error(args.console, str(exc))
             return 2
 
-    agents_filter = getattr(args, "agent", None) or None
+    metrics_filter = MetricsFilter(
+        since=since_dt,
+        agents=tuple(getattr(args, "agent", None) or ()),
+    )
 
     if args.all:
-        cross = extract_cross_session_metrics(repo_root, since=since_dt, agents=agents_filter)
+        cross = extract_cross_session_metrics(repo_root, filter=metrics_filter)
         if args.json:
             emit_cross_session_metrics_json(cross)
         elif args.quiet:

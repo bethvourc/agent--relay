@@ -25,8 +25,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from agent_relay.dashboard import render_dashboard_html
+from agent_relay.dashboard_query import parse_filter_from_query
 from agent_relay.metrics import (
     CrossSessionMetrics,
+    MetricsFilter,
     TokenUsage,
     extract_cross_session_metrics,
 )
@@ -125,12 +127,17 @@ def serve_prometheus(
         loader=lambda: render_prometheus_text(snapshot_cache.get()),
         ttl_seconds=ttl,
     )
-    html_cache: _Cache[str] = _Cache(
-        loader=lambda: render_dashboard_html(snapshot_cache.get()),
-        ttl_seconds=ttl,
-    )
 
-    Handler = _make_handler(prom_cache, html_cache)
+    def render_html(filter: MetricsFilter, errors: tuple[str, ...]) -> str:
+        # Filter is applied at extraction time when non-identity. The cached
+        # unfiltered snapshot stays warm for the common case ("/").
+        if filter.is_identity:
+            metrics = snapshot_cache.get()
+        else:
+            metrics = extract(repo_root, filter=filter)
+        return render_dashboard_html(metrics, filter=filter, filter_errors=errors)
+
+    Handler = _make_handler(prom_cache, render_html)
     factory = server_factory or ThreadingHTTPServer
     server = factory((host, port), Handler)
 
@@ -175,16 +182,17 @@ _MetricsCache = _Cache
 
 def _make_handler(
     prom_cache: _Cache[str],
-    html_cache: _Cache[str],
+    render_html: Callable[[MetricsFilter, tuple[str, ...]], str],
 ) -> type[BaseHTTPRequestHandler]:
     class _Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
-            path = self.path.split("?", 1)[0]
-            if path == "/metrics":
+            raw_path, _, query = self.path.partition("?")
+            if raw_path == "/metrics":
                 self._send(prom_cache.get(), _CONTENT_TYPE)
                 return
-            if path in ("/", "/dashboard"):
-                self._send(html_cache.get(), "text/html; charset=utf-8")
+            if raw_path in ("/", "/dashboard"):
+                filter, errors = parse_filter_from_query(query)
+                self._send(render_html(filter, errors), "text/html; charset=utf-8")
                 return
             self.send_error(HTTPStatus.NOT_FOUND, "use / or /metrics")
 
