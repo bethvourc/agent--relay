@@ -118,7 +118,7 @@ class HelpStructureGuardrail(TestCase):
 
     def test_wide_help_has_man_shaped_sections(self) -> None:
         out = self._render(width=120)
-        for section in ("synopsis", "commands", "options", "aliases"):
+        for section in ("synopsis", "commands", "workflows", "options", "aliases"):
             self.assertIn(section, out, f"help missing section: {section}")
         # No marketing prose: the deprecated tagline should be gone.
         self.assertNotIn("Capture context, hand off cleanly", out)
@@ -139,6 +139,7 @@ class HelpStructureGuardrail(TestCase):
         self.assertIn("agent-relay <agent>", usages)
         for cmd in (
             "status",
+            "deactivate",
             "watch",
             "metrics",
             "metrics-tail",
@@ -159,6 +160,14 @@ class HelpStructureGuardrail(TestCase):
         out = console.export_text()
         for usage, _ in rows:
             self.assertIn(usage, out)
+
+    def test_help_explains_continue_and_end_session_workflows(self) -> None:
+        out = self._render(width=120)
+        self.assertIn("run --continue", out)
+        self.assertIn("chat --continue", out)
+        self.assertIn("deactivate <session-id>", out)
+        self.assertIn("Ask another question", out)
+        self.assertIn("completed/inactive", out)
 
 
 class StatusBadgeRoutingGuardrail(TestCase):

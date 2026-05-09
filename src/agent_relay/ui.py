@@ -391,6 +391,34 @@ def render_pause_success(
     )
 
 
+def render_session_deactivated(console: Console, session_id: str, agent: str) -> None:
+    if is_compact(console):
+        console.print(f"[success]Session deactivated[/]  [brand]{session_id}[/]", highlight=False)
+        return
+
+    content = Text()
+    content.append("Session deactivated\n\n", style="success")
+    content.append("  Session  ", style="label")
+    content.append(session_id, style="brand")
+    content.append("\n")
+    content.append("  Agent    ", style="label")
+    content.append(agent, style="value")
+    content.append("\n")
+    content.append("  Status   ", style="label")
+    content.append_text(status_badge("completed"))
+
+    console.print(
+        Panel(
+            content,
+            border_style="brand.dim",
+            title="[brand.dim]deactivate[/]",
+            title_align="left",
+            padding=(0, 2),
+            expand=False,
+        )
+    )
+
+
 def render_prepare_success(
     console: Console,
     session_id: str,
@@ -786,6 +814,7 @@ _FALLBACK_COMMANDS: tuple[tuple[str, str], ...] = (
     ("agent-relay resolve", "Resume an unresolved race conflict"),
     ("agent-relay inspect-conflicts", "Inspect saved conflict artifacts"),
     ("agent-relay status", "Show relay sessions"),
+    ("agent-relay deactivate", "Mark a relay session completed/inactive"),
     ("agent-relay watch", "Live view of an in-progress session"),
     ("agent-relay metrics", "Token / cost / latency metrics for sessions"),
     ("agent-relay alerts", "Active alert firings against alerts.toml thresholds"),
@@ -793,6 +822,21 @@ _FALLBACK_COMMANDS: tuple[tuple[str, str], ...] = (
     ("agent-relay metrics-serve", "Run a metrics exporter (Prometheus / OTLP)"),
     ("agent-relay discover", "Detect available agent CLIs"),
     ("agent-relay clean", "Remove all relay sessions"),
+)
+
+_HELP_WORKFLOWS: tuple[tuple[str, str], ...] = (
+    (
+        'agent-relay run --continue <session-id> "<task>"',
+        "Ask another question or continue a single-agent session",
+    ),
+    (
+        'agent-relay chat --continue <session-id> <agents...> "<task>"',
+        "Ask another question in a turn-based session",
+    ),
+    (
+        "agent-relay deactivate <session-id>",
+        "Mark an existing session completed/inactive without deleting history",
+    ),
 )
 
 
@@ -824,6 +868,11 @@ def render_help(
         for usage, desc in rows:
             console.print(f"  [brand]{usage:<{usage_width}}[/]  {desc}")
         console.print()
+        console.print("[heading]workflows[/]")
+        workflow_width = max((len(usage) for usage, _ in _HELP_WORKFLOWS), default=0)
+        for usage, desc in _HELP_WORKFLOWS:
+            console.print(f"  [brand]{usage:<{workflow_width}}[/]  {desc}")
+        console.print()
         console.print(
             "[heading]aliases[/]  [muted]c = claude, x = codex (see: agent-relay discover)[/]"
         )
@@ -854,6 +903,25 @@ def render_help(
             title="[heading]commands[/]",
             title_align="left",
             padding=(1, 2),
+            expand=False,
+        )
+    )
+
+    console.print()
+
+    workflows = Table(show_header=False, box=None, padding=(0, 2), pad_edge=True)
+    workflows.add_column("workflow", style="brand", no_wrap=True)
+    workflows.add_column("description", style="muted")
+    for usage, desc in _HELP_WORKFLOWS:
+        workflows.add_row(usage, desc)
+
+    console.print(
+        Panel(
+            workflows,
+            border_style="brand.dim",
+            title="[heading]workflows[/]",
+            title_align="left",
+            padding=(0, 2),
             expand=False,
         )
     )

@@ -380,7 +380,7 @@ def _render_session_charts(metrics: SessionMetrics) -> str:
                 series_labels=("in", "out"),
                 width=220,
                 height=64,
-                fills=("var(--brand-dim)", "var(--brand)"),
+                fills=("var(--agent-codex)", "var(--brand)"),
                 title="tokens per turn",
             ),
             range_label=f"{len(turns)} turn{'s' if len(turns) != 1 else ''}",

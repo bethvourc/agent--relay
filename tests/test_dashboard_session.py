@@ -274,6 +274,9 @@ class DashboardSessionRenderTests(TestCase):
         self.assertIn("per-turn trends", html)
         self.assertIn("chart-stack", html)
         self.assertIn("chart-sparkline", html)
+        self.assertIn('fill="var(--agent-codex)"', html)
+        self.assertIn('fill="var(--brand)"', html)
+        self.assertNotIn('fill="var(--brand-dim)"', html)
         self.assertNotIn("duration / turn", html)
         self.assertNotIn("duration per turn", html)
 

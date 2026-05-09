@@ -15,6 +15,9 @@ from agent_relay.errors import RelayError
 from agent_relay.exporters.jsonl import parse_header_pairs, tail_jsonl
 from agent_relay.exporters.otlp import serve_otlp
 from agent_relay.exporters.prometheus import serve_prometheus
+from agent_relay.integrity import require_session_mutable
+from agent_relay.lifecycle import LifecycleState, LifecycleViolation, plan_complete_command
+from agent_relay.locks import utc_now
 from agent_relay.metrics import (
     MetricsFilter,
     extract_cross_session_metrics,
@@ -32,7 +35,8 @@ from agent_relay.metrics_ui import (
 )
 from agent_relay.read_views import list_sessions_for_dashboard
 from agent_relay.relay import relay as do_relay
-from agent_relay.storage import is_session
+from agent_relay.storage import is_session, load_session_view
+from agent_relay.tx import JournalCommitRequest, SessionTransaction
 from agent_relay.ui import (
     create_console,
     emit_json,
@@ -50,6 +54,7 @@ from agent_relay.ui import (
     render_help,
     render_relay_launch_result,
     render_relay_success,
+    render_session_deactivated,
 )
 from agent_relay.watch import (
     WatchSource,
@@ -465,6 +470,58 @@ def cmd_status(args: argparse.Namespace) -> int:
             emit_quiet(str(s["session_id"]))
     else:
         render_dashboard(args.console, sessions)
+    return 0
+
+
+def cmd_deactivate(args: argparse.Namespace) -> int:
+    """Mark an existing relay session completed/inactive without deleting it."""
+    repo_root = _resolve_repo(args.repo)
+    session_id = args.session_id
+
+    if not is_session(repo_root, session_id):
+        render_error(args.console, f"Session not found: {session_id}")
+        return 2
+
+    require_session_mutable(repo_root, session_id, command_name="deactivate")
+    view = load_session_view(repo_root, session_id)
+    try:
+        transition = plan_complete_command(
+            LifecycleState(phase=view.phase, task_status=view.task_status)
+        )
+    except LifecycleViolation as exc:
+        render_error(args.console, str(exc))
+        return 2
+
+    timestamp = utc_now()
+    with SessionTransaction.begin(
+        repo_root,
+        session_id,
+        operation="session.completed",
+        owner="cli:deactivate",
+    ) as tx:
+        tx.commit(
+            JournalCommitRequest(
+                event_type="session.completed",
+                phase_before=transition.phase_before,
+                phase_after=transition.phase_after,
+                payload={"completed_by_agent": view.current_agent},
+                timestamp=timestamp,
+            )
+        )
+
+    if args.json:
+        emit_json(
+            {
+                "command": "deactivate",
+                "session_id": session_id,
+                "current_status": transition.phase_after,
+                "completed_by_agent": view.current_agent,
+            }
+        )
+    elif args.quiet:
+        emit_quiet(session_id)
+    else:
+        render_session_deactivated(args.console, session_id, view.current_agent)
     return 0
 
 
@@ -1284,6 +1341,16 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--repo")
     status.set_defaults(func=cmd_status)
 
+    # agent-relay deactivate — mark a session completed/inactive
+    deactivate = subparsers.add_parser(
+        "deactivate",
+        aliases=["complete"],
+        help="Mark a relay session completed/inactive",
+    )
+    deactivate.add_argument("session_id", help="Relay session id")
+    deactivate.add_argument("--repo")
+    deactivate.set_defaults(func=cmd_deactivate)
+
     # agent-relay watch — live view of an in-progress session
     watch = subparsers.add_parser(
         "watch",
@@ -1609,7 +1676,12 @@ def iter_commands(parser: argparse.ArgumentParser) -> list[tuple[str, str]]:
 
     rows: list[tuple[str, str]] = []
     seen_agents = False
-    for name in subparsers_action.choices:
+    seen_parsers: set[int] = set()
+    for name, choice_parser in subparsers_action.choices.items():
+        parser_id = id(choice_parser)
+        if parser_id in seen_parsers:
+            continue
+        seen_parsers.add(parser_id)
         if name in AGENT_NAMES:
             if seen_agents:
                 continue
