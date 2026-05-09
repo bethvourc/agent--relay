@@ -2,24 +2,23 @@
 
 from __future__ import annotations
 
-import http.client
 import json
-import threading
-import time
-from contextlib import closing
 from datetime import UTC, datetime
-from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest import TestCase
 
 from agent_relay.dashboard import filter_to_query_string, render_dashboard_html
 from agent_relay.dashboard_query import parse_filter_from_query
-from agent_relay.exporters.prometheus import serve_prometheus
 from agent_relay.metrics import (
     CrossSessionMetrics,
     MetricsFilter,
     SessionMetrics,
     TokenUsage,
+)
+from tests._dashboard_test_helpers import (
+    get_dashboard,
+    start_dashboard_server,
+    stop_dashboard_server,
 )
 
 
@@ -212,44 +211,18 @@ class FilterRoutingTests(TestCase):
             self._captured_filters.append(filter or MetricsFilter())
             return _cross(_make_session("s1"))
 
-        captured: dict[str, ThreadingHTTPServer] = {}
-
-        def factory(addr, handler):
-            server = ThreadingHTTPServer(addr, handler)
-            captured["server"] = server
-            return server
-
-        self._thread = threading.Thread(
-            target=serve_prometheus,
-            kwargs={
-                "repo_root": Path("."),
-                "host": "127.0.0.1",
-                "port": 0,
-                "refresh_interval": 0.1,
-                "extractor": fake_extractor,
-                "server_factory": factory,
-            },
-            daemon=True,
+        self._server, self._thread, self._port = start_dashboard_server(
+            self,
+            repo_root=Path("."),
+            extractor=fake_extractor,
         )
-        self._thread.start()
-
-        for _ in range(50):
-            if "server" in captured:
-                break
-            time.sleep(0.01)
-        self.assertIn("server", captured)
-        self._server = captured["server"]
-        self._port = self._server.server_address[1]
 
     def tearDown(self) -> None:
-        self._server.shutdown()
-        self._thread.join(timeout=2.0)
+        stop_dashboard_server(self._server, self._thread)
 
     def _get(self, path: str) -> tuple[int, str]:
-        with closing(http.client.HTTPConnection("127.0.0.1", self._port, timeout=2)) as conn:
-            conn.request("GET", path)
-            resp = conn.getresponse()
-            return resp.status, resp.read().decode("utf-8")
+        status, _content_type, body = get_dashboard(self._port, path)
+        return status, body
 
     def test_query_string_is_parsed_and_forwarded_to_extractor(self) -> None:
         status, body = self._get("/?since=2026-05-01&agent=claude&q=auth")

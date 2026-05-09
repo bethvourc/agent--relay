@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from html import escape
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from agent_relay import tokens as T
 from agent_relay.formatting import fmt_cost, fmt_duration_ms, fmt_int
@@ -75,6 +75,7 @@ def render_dashboard_html(
     filter: MetricsFilter | None = None,
     available_agents: tuple[str, ...] | None = None,
     filter_errors: tuple[str, ...] = (),
+    alerts_banner_html: str = "",
     generated_at: datetime | str | None = None,
 ) -> str:
     """Return a complete HTML document for the metrics dashboard.
@@ -83,6 +84,9 @@ def render_dashboard_html(
     share-link works. ``available_agents`` populates the agent multi-select;
     if None we derive it from ``metrics.by_agent``. ``filter_errors`` are
     user-friendly messages about query-string values that were ignored.
+    ``alerts_banner_html`` is a pre-rendered HTML fragment from
+    :func:`dashboard_alerts.render_alert_banner_html`; passed in this way
+    so this module stays free of an alerts-evaluation dependency.
     """
     if filter is None:
         filter = MetricsFilter()
@@ -95,23 +99,37 @@ def render_dashboard_html(
         filter=filter,
         available_agents=available_agents,
         filter_errors=filter_errors,
+        alerts_banner_html=alerts_banner_html,
         generated_at=generated,
     )
-    return f"<!doctype html>\n{_html_head()}\n<body>\n{body}\n</body>\n</html>\n"
+    return (
+        f"<!doctype html>\n{_html_head()}\n"
+        '<body data-refresh-endpoint="/dashboard/data">\n'
+        f"{body}\n</body>\n</html>\n"
+    )
 
 
 def render_dashboard_update_payload(
     metrics: CrossSessionMetrics,
     *,
+    filter: MetricsFilter | None = None,
     filter_errors: tuple[str, ...] = (),
+    alerts_banner_html: str = "",
     generated_at: datetime | str | None = None,
 ) -> dict[str, object]:
     """Return the JSON-serializable dashboard soft-refresh payload."""
     generated = _normalize_generated_at(generated_at)
+    if filter is None:
+        filter = MetricsFilter()
     return {
         "generatedAt": generated["iso"],
         "renderedAt": generated["label"],
-        "regions": _render_dashboard_regions(metrics, filter_errors=filter_errors),
+        "regions": _render_dashboard_regions(
+            metrics,
+            filter=filter,
+            filter_errors=filter_errors,
+            alerts_banner_html=alerts_banner_html,
+        ),
     }
 
 
@@ -126,14 +144,21 @@ def _render_body(
     filter: MetricsFilter,
     available_agents: tuple[str, ...],
     filter_errors: tuple[str, ...],
+    alerts_banner_html: str,
     generated_at: dict[str, str],
 ) -> str:
-    regions = _render_dashboard_regions(metrics, filter_errors=filter_errors)
+    regions = _render_dashboard_regions(
+        metrics,
+        filter=filter,
+        filter_errors=filter_errors,
+        alerts_banner_html=alerts_banner_html,
+    )
     return "\n".join(
         [
             '<main class="page">',
             _render_header(generated_at),
             _render_region("filter-errors", regions["filter-errors"]),
+            _render_region("alerts", regions["alerts"]),
             _render_filter_bar(filter, available_agents),
             _render_region("totals", regions["totals"]),
             _render_region("by-agent", regions["by-agent"]),
@@ -163,13 +188,20 @@ def _format_generated_at(dt: datetime) -> dict[str, str]:
 
 
 def _render_dashboard_regions(
-    metrics: CrossSessionMetrics, *, filter_errors: tuple[str, ...]
+    metrics: CrossSessionMetrics,
+    *,
+    filter: MetricsFilter,
+    filter_errors: tuple[str, ...],
+    alerts_banner_html: str = "",
 ) -> dict[str, str]:
+    query = filter_to_query_string(filter)
+    filter_query = f"?{query}" if query else ""
     return {
         "filter-errors": _render_filter_errors(filter_errors),
+        "alerts": alerts_banner_html,
         "totals": _render_totals(metrics),
         "by-agent": _render_by_agent(metrics),
-        "sessions": _render_sessions(metrics),
+        "sessions": _render_sessions(metrics, filter_query=filter_query),
         "by-day": _render_by_day(metrics),
     }
 
@@ -307,14 +339,14 @@ def _render_by_agent(metrics: CrossSessionMetrics) -> str:
 </section>"""
 
 
-def _render_sessions(metrics: CrossSessionMetrics) -> str:
+def _render_sessions(metrics: CrossSessionMetrics, *, filter_query: str = "") -> str:
     if not metrics.sessions:
         return """\
 <section class="card">
   <h4>sessions</h4>
   <p class="muted">no sessions found.</p>
 </section>"""
-    rows = [_render_session_row(s) for s in metrics.sessions]
+    rows = [_render_session_row(s, filter_query=filter_query) for s in metrics.sessions]
     body = "\n      ".join(rows)
     return f"""\
 <section class="card">
@@ -339,15 +371,17 @@ def _render_sessions(metrics: CrossSessionMetrics) -> str:
 </section>"""
 
 
-def _render_session_row(s: SessionMetrics) -> str:
+def _render_session_row(s: SessionMetrics, *, filter_query: str = "") -> str:
     status_color = _STATUS_COLOR.get(s.current_status, "var(--fg-2)")
     glyph = _STATUS_GLYPH.get(s.current_status, "·")
     updated = s.updated_at or "-"
     if updated and len(updated) >= 16:
         updated = updated[5:16].replace("T", " ")
+    safe_id = escape(s.session_id)
+    href = f"/session/{quote(s.session_id)}{filter_query}"
     return (
         "<tr>"
-        f'<td class="brand mono">{escape(s.session_id)}</td>'
+        f'<td class="brand mono"><a class="session-link" href="{escape(href)}">{safe_id}</a></td>'
         f"<td>{escape(s.current_agent)}</td>"
         f'<td><span class="status" style="color: {status_color}">{glyph} '
         f"{escape(s.current_status)}</span></td>"
@@ -487,8 +521,9 @@ def _refresh_script() -> str:
   }}
 
   function refreshEndpoint() {{
-    var url = new URL(window.location.href);
-    url.pathname = DATA_PATH;
+    var endpoint = (document.body && document.body.getAttribute('data-refresh-endpoint')) || DATA_PATH;
+    var url = new URL(endpoint, window.location.href);
+    if (!url.search) url.search = window.location.search;
     return url.toString();
   }}
 
@@ -806,6 +841,92 @@ table.data .mono {{ font-family: var(--font-mono); }}
 table.data tbody tr:hover {{ background: var(--surface-3); }}
 
 .status {{ font-weight: 600; }}
+.session-link {{ color: var(--brand); text-decoration: none; }}
+.session-link:hover {{ text-decoration: underline; }}
+.breadcrumb {{
+  max-width: 1200px;
+  margin: 8px auto 16px;
+  padding: 0 20px;
+  font-size: 12px;
+  color: var(--fg-3);
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}}
+.breadcrumb a {{ color: var(--fg-2); text-decoration: none; }}
+.breadcrumb a:hover {{ color: var(--fg-1); }}
+.breadcrumb .sep {{ color: var(--fg-4); }}
+.detail-header {{
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}}
+.detail-title {{
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}}
+.detail-title .title-line {{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}}
+.detail-id {{
+  color: var(--brand);
+  font-weight: 700;
+  word-break: break-word;
+}}
+.badge {{
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--surface-rule);
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: var(--surface-1);
+  white-space: nowrap;
+}}
+.meta-line {{
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--fg-3);
+  font-size: 12px;
+}}
+.bulleted {{ list-style: none; padding: 0; margin: 0; }}
+.bulleted li {{ display: flex; gap: 8px; padding: 4px 0; }}
+.bulleted .brand {{ color: var(--brand); flex-shrink: 0; }}
+.path {{ color: var(--agent-codex); font-family: var(--font-mono); }}
+.prompt-block, .output-block, .raw-block {{
+  background: var(--surface-1);
+  border: 1px solid var(--surface-rule);
+  padding: 12px;
+  border-radius: 2px;
+  max-height: 480px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12.5px;
+  color: var(--fg-1);
+}}
+details summary {{
+  cursor: pointer;
+  color: var(--fg-2);
+  font-weight: 600;
+  margin-bottom: 8px;
+}}
+.not-found-card {{
+  background: var(--surface-2);
+  border: 1px solid var(--error);
+  padding: 24px;
+  border-radius: 4px;
+  text-align: center;
+}}
 
 table.bars td.bar {{
   width: 60%;
@@ -1031,4 +1152,42 @@ p {{ margin: 0; }}
   color: var(--fg-3);
   font-variant-numeric: tabular-nums;
 }}
+
+/* Alerts banner — single line, semantic color, links to /alerts */
+.alert-banner {{
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  background: var(--surface-1);
+  border: 1px solid var(--alert-color, var(--surface-rule));
+  border-radius: 2px;
+  text-decoration: none;
+  color: var(--fg-1);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  transition: background 80ms ease, border-color 80ms ease;
+}}
+.alert-banner:hover {{ background: var(--surface-2); }}
+.alert-banner .alert-glyph {{ color: var(--alert-color, var(--warning)); font-weight: 700; }}
+.alert-banner .alert-count {{ color: var(--alert-color, var(--warning)); font-weight: 600; }}
+.alert-banner .alert-arrow {{ margin-left: auto; color: var(--fg-3); }}
+.alert-banner.alert-critical {{ --alert-color: var(--error); }}
+.alert-banner.alert-warning {{ --alert-color: var(--warning); }}
+
+/* Alerts page */
+table.alerts-table tbody tr td {{ vertical-align: top; }}
+table.thresholds td {{ font-size: 12.5px; }}
+table.thresholds td:first-child {{ width: 200px; }}
+.breadcrumb {{
+  font-size: 12px;
+  color: var(--fg-3);
+  margin: 8px 0 16px;
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}}
+.breadcrumb a {{ color: var(--fg-2); text-decoration: none; }}
+.breadcrumb a:hover {{ color: var(--fg-1); }}
+.breadcrumb .sep {{ color: var(--fg-4); }}
 """

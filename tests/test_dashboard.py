@@ -2,21 +2,21 @@
 
 from __future__ import annotations
 
-import http.client
 import json
-import threading
-import time
-from contextlib import closing
 from datetime import UTC, datetime
-from http.server import ThreadingHTTPServer
+from pathlib import Path
 from unittest import TestCase
 
 from agent_relay.dashboard import render_dashboard_html, render_dashboard_update_payload
-from agent_relay.exporters.prometheus import serve_prometheus
 from agent_relay.metrics import (
     CrossSessionMetrics,
     SessionMetrics,
     TokenUsage,
+)
+from tests._dashboard_test_helpers import (
+    get_dashboard,
+    start_dashboard_server,
+    stop_dashboard_server,
 )
 
 
@@ -121,73 +121,38 @@ class DashboardRendererTests(TestCase):
 class DashboardRoutingTests(TestCase):
     """End-to-end: serve_prometheus mounts /, /dashboard, and /metrics."""
 
-    def _start_server(self) -> tuple[ThreadingHTTPServer, threading.Thread, int]:
-        captured: dict[str, ThreadingHTTPServer] = {}
-
-        def factory(addr, handler):
-            server = ThreadingHTTPServer(addr, handler)
-            captured["server"] = server
-            return server
-
-        thread = threading.Thread(
-            target=serve_prometheus,
-            kwargs={
-                "repo_root": __import__("pathlib").Path("."),
-                "host": "127.0.0.1",
-                "port": 0,
-                "refresh_interval": 0.1,
-                "extractor": lambda _: _build_sample_metrics(),
-                "server_factory": factory,
-            },
-            daemon=True,
+    def _start_server(self):
+        return start_dashboard_server(
+            self,
+            repo_root=Path("."),
+            extractor=lambda _: _build_sample_metrics(),
         )
-        thread.start()
-
-        # Wait for server to come up (factory called synchronously inside serve_prometheus)
-        for _ in range(50):
-            if "server" in captured:
-                break
-            time.sleep(0.01)
-        self.assertIn("server", captured, "server never started")
-        port = captured["server"].server_address[1]
-        return captured["server"], thread, port
-
-    def _stop(self, server, thread) -> None:
-        server.shutdown()
-        thread.join(timeout=2.0)
-
-    def _get(self, port: int, path: str) -> tuple[int, str, str]:
-        with closing(http.client.HTTPConnection("127.0.0.1", port, timeout=2)) as conn:
-            conn.request("GET", path)
-            resp = conn.getresponse()
-            body = resp.read().decode("utf-8")
-            return resp.status, resp.getheader("Content-Type", ""), body
 
     def test_metrics_path_serves_prometheus_text(self) -> None:
         server, thread, port = self._start_server()
         try:
-            status, content_type, body = self._get(port, "/metrics")
+            status, content_type, body = get_dashboard(port, "/metrics")
             self.assertEqual(status, 200)
             self.assertIn("text/plain", content_type)
             self.assertIn("agent_relay_tokens_total", body)
         finally:
-            self._stop(server, thread)
+            stop_dashboard_server(server, thread)
 
     def test_root_serves_html_dashboard(self) -> None:
         server, thread, port = self._start_server()
         try:
-            status, content_type, body = self._get(port, "/")
+            status, content_type, body = get_dashboard(port, "/")
             self.assertEqual(status, 200)
             self.assertIn("text/html", content_type)
             self.assertIn("<!doctype html>", body)
             self.assertIn("Agent Relay", body)
         finally:
-            self._stop(server, thread)
+            stop_dashboard_server(server, thread)
 
     def test_dashboard_data_serves_json_refresh_payload(self) -> None:
         server, thread, port = self._start_server()
         try:
-            status, content_type, body = self._get(port, "/dashboard/data")
+            status, content_type, body = get_dashboard(port, "/dashboard/data")
             self.assertEqual(status, 200)
             self.assertIn("application/json", content_type)
             payload = json.loads(body)
@@ -195,21 +160,21 @@ class DashboardRoutingTests(TestCase):
             self.assertIn("regions", payload)
             self.assertIn("20260507-101010-aae0fb", payload["regions"]["sessions"])
         finally:
-            self._stop(server, thread)
+            stop_dashboard_server(server, thread)
 
     def test_dashboard_alias_is_equivalent_to_root(self) -> None:
         server, thread, port = self._start_server()
         try:
-            _, _, body_root = self._get(port, "/")
-            _, _, body_dash = self._get(port, "/dashboard")
+            _, _, body_root = get_dashboard(port, "/")
+            _, _, body_dash = get_dashboard(port, "/dashboard")
             self.assertEqual(body_root, body_dash)
         finally:
-            self._stop(server, thread)
+            stop_dashboard_server(server, thread)
 
     def test_unknown_path_returns_404(self) -> None:
         server, thread, port = self._start_server()
         try:
-            status, _, _ = self._get(port, "/nope")
+            status, _, _ = get_dashboard(port, "/nope")
             self.assertEqual(status, 404)
         finally:
-            self._stop(server, thread)
+            stop_dashboard_server(server, thread)
