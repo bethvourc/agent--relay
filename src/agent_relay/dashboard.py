@@ -866,6 +866,15 @@ p {{ margin: 0; }}
   border-radius: 2px;
   min-width: 150px;
 }}
+.filter-row input[type="date"] {{
+  color-scheme: dark;
+  position: relative;
+  padding-right: 38px;
+  background-image: url("data:image/svg+xml,%3Csvg width='18' height='18' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M8 2v4M16 2v4M3 10h18M5 5h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z' stroke='%23F4F4F0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-position: right 10px center;
+  background-repeat: no-repeat;
+  background-size: 18px 18px;
+}}
 .filter-row input::placeholder {{
   color: var(--fg-3);
   opacity: 1;  /* Firefox dims placeholders by default; override. */
@@ -877,14 +886,19 @@ p {{ margin: 0; }}
   box-shadow: 0 0 0 2px var(--brand-glow);
 }}
 
-/* Native date-picker calendar icon — render white on the dark theme */
+/* Native date-picker popup: request dark chrome and keep the hidden
+   indicator over the same right-side slot as our white SVG icon. */
 .filter-row input[type="date"]::-webkit-calendar-picker-indicator {{
-  filter: invert(1);
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  opacity: 0;
+  width: 38px;
+  height: 100%;
+  margin: 0;
+  padding: 0;
   cursor: pointer;
-  opacity: 0.85;
-}}
-.filter-row input[type="date"]::-webkit-calendar-picker-indicator:hover {{
-  opacity: 1;
 }}
 
 /* Agent fieldset — flush with inputs */
