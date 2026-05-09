@@ -1,5 +1,7 @@
 # Agent Relay
 
+[![PyPI Downloads](https://static.pepy.tech/personalized-badge/agent-relay-tool?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/agent-relay-tool)
+
 Agent Relay is a local-first CLI for handing work from one coding agent to another without losing context, decisions, or validation state.
 
 It is built for the moment when one agent needs to stop because of rate limits, tool limits, or a manual handoff. Agent Relay captures a structured checkpoint, renders an immutable resume packet, and records the launch/resume flow in a repo-local session journal.
