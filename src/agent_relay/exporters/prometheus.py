@@ -10,6 +10,7 @@ Server lifecycle:
 * ``GET /metrics`` → Prometheus text exposition.
 * ``GET /`` and ``GET /dashboard`` → HTML dashboard (see
   :mod:`agent_relay.dashboard`).
+* ``GET /dashboard/data`` → JSON payload for in-place dashboard refreshes.
 * Other paths → 404.
 * A small in-process cache (default 5s TTL) avoids re-extracting on every
   scrape or dashboard refresh.
@@ -17,14 +18,16 @@ Server lifecycle:
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from agent_relay.dashboard import render_dashboard_html
+from agent_relay.dashboard import render_dashboard_html, render_dashboard_update_payload
 from agent_relay.dashboard_query import parse_filter_from_query
 from agent_relay.metrics import (
     CrossSessionMetrics,
@@ -128,16 +131,32 @@ def serve_prometheus(
         ttl_seconds=ttl,
     )
 
-    def render_html(filter: MetricsFilter, errors: tuple[str, ...]) -> str:
+    def load_dashboard_metrics(filter: MetricsFilter) -> tuple[CrossSessionMetrics, datetime]:
         # Filter is applied at extraction time when non-identity. The cached
         # unfiltered snapshot stays warm for the common case ("/").
         if filter.is_identity:
-            metrics = snapshot_cache.get()
-        else:
-            metrics = extract(repo_root, filter=filter)
-        return render_dashboard_html(metrics, filter=filter, filter_errors=errors)
+            return snapshot_cache.get_with_loaded_at()
+        return extract(repo_root, filter=filter), datetime.now(UTC)
 
-    Handler = _make_handler(prom_cache, render_html)
+    def render_html(filter: MetricsFilter, errors: tuple[str, ...]) -> str:
+        metrics, generated_at = load_dashboard_metrics(filter)
+        return render_dashboard_html(
+            metrics,
+            filter=filter,
+            filter_errors=errors,
+            generated_at=generated_at,
+        )
+
+    def render_dashboard_data(filter: MetricsFilter, errors: tuple[str, ...]) -> str:
+        metrics, generated_at = load_dashboard_metrics(filter)
+        payload = render_dashboard_update_payload(
+            metrics,
+            filter_errors=errors,
+            generated_at=generated_at,
+        )
+        return json.dumps(payload, separators=(",", ":"))
+
+    Handler = _make_handler(prom_cache, render_html, render_dashboard_data)
     factory = server_factory or ThreadingHTTPServer
     server = factory((host, port), Handler)
 
@@ -157,8 +176,8 @@ def serve_prometheus(
 
 
 class _Cache[T]:
-    """Tiny TTL cache, threadsafe. Used for both the Prom text body, the
-    rendered HTML dashboard, and the underlying metrics snapshot they share."""
+    """Tiny TTL cache, threadsafe. Used for both the Prom text body and the
+    underlying metrics snapshot the dashboard shares."""
 
     def __init__(self, *, loader: Callable[[], T], ttl_seconds: float) -> None:
         self._loader = loader
@@ -166,14 +185,20 @@ class _Cache[T]:
         self._lock = threading.Lock()
         self._value: T | None = None
         self._expires_at = 0.0
+        self._loaded_at: datetime | None = None
 
     def get(self) -> T:
+        return self.get_with_loaded_at()[0]
+
+    def get_with_loaded_at(self) -> tuple[T, datetime]:
         with self._lock:
             now = time.monotonic()
             if self._value is None or now >= self._expires_at:
                 self._value = self._loader()
                 self._expires_at = now + self._ttl
-            return self._value
+                self._loaded_at = datetime.now(UTC)
+            assert self._loaded_at is not None
+            return self._value, self._loaded_at
 
 
 # Backwards-compatible alias for any external callers.
@@ -183,6 +208,7 @@ _MetricsCache = _Cache
 def _make_handler(
     prom_cache: _Cache[str],
     render_html: Callable[[MetricsFilter, tuple[str, ...]], str],
+    render_dashboard_data: Callable[[MetricsFilter, tuple[str, ...]], str],
 ) -> type[BaseHTTPRequestHandler]:
     class _Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
@@ -194,7 +220,11 @@ def _make_handler(
                 filter, errors = parse_filter_from_query(query)
                 self._send(render_html(filter, errors), "text/html; charset=utf-8")
                 return
-            self.send_error(HTTPStatus.NOT_FOUND, "use / or /metrics")
+            if raw_path == "/dashboard/data":
+                filter, errors = parse_filter_from_query(query)
+                self._send(render_dashboard_data(filter, errors), "application/json; charset=utf-8")
+                return
+            self.send_error(HTTPStatus.NOT_FOUND, "use /, /dashboard, /dashboard/data, or /metrics")
 
         def _send(self, payload: str, content_type: str) -> None:
             try:

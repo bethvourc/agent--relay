@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import http.client
+import json
 import threading
 import time
 from contextlib import closing
+from datetime import UTC, datetime
 from http.server import ThreadingHTTPServer
 from unittest import TestCase
 
-from agent_relay.dashboard import render_dashboard_html
+from agent_relay.dashboard import render_dashboard_html, render_dashboard_update_payload
 from agent_relay.exporters.prometheus import serve_prometheus
 from agent_relay.metrics import (
     CrossSessionMetrics,
@@ -84,15 +86,36 @@ class DashboardRendererTests(TestCase):
         self.assertIn("</html>", html)
 
     def test_live_controls_are_opt_in(self) -> None:
-        """Auto-refresh is off by default — no meta-refresh, no setInterval
-        running until the user ticks the live toggle. Manual reload + live
-        checkbox + stale-age indicator are present in the header."""
+        """Auto-refresh is off by default and uses soft refresh when enabled."""
         html = render_dashboard_html(_build_sample_metrics())
         self.assertNotIn('http-equiv="refresh"', html)
+        self.assertNotIn("window.location.reload", html)
+        self.assertIn("fetch(refreshEndpoint()", html)
         self.assertIn("data-refresh-now", html)
         self.assertIn('name="live"', html)
         self.assertIn("data-stale", html)
+        self.assertIn("data-dashboard-region", html)
         self.assertIn("localStorage", html)
+
+    def test_generated_at_is_emitted_for_real_stale_age(self) -> None:
+        html = render_dashboard_html(
+            _build_sample_metrics(),
+            generated_at=datetime(2026, 5, 7, 10, 11, 0, tzinfo=UTC),
+        )
+        self.assertIn("2026-05-07 10:11:00 UTC", html)
+        self.assertIn('data-generated-at="2026-05-07T10:11:00Z"', html)
+
+    def test_update_payload_contains_patchable_regions(self) -> None:
+        payload = render_dashboard_update_payload(
+            _build_sample_metrics(),
+            generated_at=datetime(2026, 5, 7, 10, 11, 0, tzinfo=UTC),
+        )
+        self.assertEqual(payload["generatedAt"], "2026-05-07T10:11:00Z")
+        regions = payload["regions"]
+        assert isinstance(regions, dict)
+        self.assertIn("totals", regions)
+        self.assertIn("sessions", regions)
+        self.assertIn("20260507-101010-aae0fb", regions["sessions"])
 
 
 class DashboardRoutingTests(TestCase):
@@ -158,6 +181,19 @@ class DashboardRoutingTests(TestCase):
             self.assertIn("text/html", content_type)
             self.assertIn("<!doctype html>", body)
             self.assertIn("Agent Relay", body)
+        finally:
+            self._stop(server, thread)
+
+    def test_dashboard_data_serves_json_refresh_payload(self) -> None:
+        server, thread, port = self._start_server()
+        try:
+            status, content_type, body = self._get(port, "/dashboard/data")
+            self.assertEqual(status, 200)
+            self.assertIn("application/json", content_type)
+            payload = json.loads(body)
+            self.assertIn("generatedAt", payload)
+            self.assertIn("regions", payload)
+            self.assertIn("20260507-101010-aae0fb", payload["regions"]["sessions"])
         finally:
             self._stop(server, thread)
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import http.client
+import json
 import threading
 import time
 from contextlib import closing
@@ -178,16 +179,18 @@ class FilterRenderingTests(TestCase):
         self.assertNotIn("filter input ignored", html)
 
     def test_auto_refresh_is_opt_in(self) -> None:
-        """The page must NOT reload on its own — auto-refresh is gated on the
-        ``live`` toggle. No <meta refresh>, no setInterval firing at load."""
+        """The page must NOT reload on its own; live uses soft refresh."""
         html = render_dashboard_html(_cross(), filter=MetricsFilter())
         # The naive meta-refresh is gone — too disruptive for filter forms,
         # scroll position, and expanded sections.
         self.assertNotIn('http-equiv="refresh"', html)
+        self.assertNotIn("window.location.reload", html)
         # The header exposes manual + opt-in live controls.
         self.assertIn("data-refresh-now", html)
         self.assertIn('name="live"', html)
         self.assertIn("data-stale", html)
+        self.assertIn("fetch(refreshEndpoint()", html)
+        self.assertIn("patchRegions", html)
         # The polling logic still defers reloads while the filter has focus.
         self.assertIn("inFilter", html)
         self.assertIn(".filter-bar", html)
@@ -265,11 +268,32 @@ class FilterRoutingTests(TestCase):
         self.assertIn('value="2026-05-01"', body)
         self.assertIn('value="auth"', body)
 
+    def test_dashboard_data_uses_same_filter_query(self) -> None:
+        status, body = self._get("/dashboard/data?since=2026-05-01&agent=claude&q=auth")
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertIn("regions", payload)
+
+        forwarded = [f for f in self._captured_filters if not f.is_identity]
+        self.assertTrue(forwarded, "extractor never received a non-identity filter")
+        f = forwarded[-1]
+        assert f.since
+        self.assertEqual(f.since.date().isoformat(), "2026-05-01")
+        self.assertEqual(f.agents, ("claude",))
+        self.assertEqual(f.q, "auth")
+
     def test_invalid_date_renders_warning_banner_not_500(self) -> None:
         status, body = self._get("/?since=garbage")
         self.assertEqual(status, 200)
         self.assertIn("filter input ignored", body)
         self.assertIn("banner-warning", body)
+
+    def test_invalid_date_dashboard_data_includes_warning_region(self) -> None:
+        status, body = self._get("/dashboard/data?since=garbage")
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertIn("filter input ignored", payload["regions"]["filter-errors"])
+        self.assertIn("banner-warning", payload["regions"]["filter-errors"])
 
     def test_unfiltered_request_uses_cached_snapshot_path(self) -> None:
         # First request seeds the cache; second hits it.

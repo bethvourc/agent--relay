@@ -6,7 +6,7 @@ that mirrors the design system (``Agent Relay Design System/``):
 * JetBrains Mono everywhere, Inter only for page chrome.
 * Two-accent palette: amber ``--brand`` and green ``--signal``.
 * Hairline borders, no gradients, no shadows except a faint focus ring.
-* Auto-refreshes every 5s via ``<meta http-equiv="refresh">``.
+* Manual and opt-in live refresh patch metric regions in place.
 
 The renderer is intentionally I/O free — it takes a metrics snapshot and
 returns a string. The Prometheus HTTP server in
@@ -75,7 +75,7 @@ def render_dashboard_html(
     filter: MetricsFilter | None = None,
     available_agents: tuple[str, ...] | None = None,
     filter_errors: tuple[str, ...] = (),
-    generated_at: str | None = None,
+    generated_at: datetime | str | None = None,
 ) -> str:
     """Return a complete HTML document for the metrics dashboard.
 
@@ -89,15 +89,30 @@ def render_dashboard_html(
     if available_agents is None:
         available_agents = tuple(sorted(metrics.by_agent)) or ("claude", "codex", "gemini")
 
-    ts = generated_at or datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+    generated = _normalize_generated_at(generated_at)
     body = _render_body(
         metrics,
         filter=filter,
         available_agents=available_agents,
         filter_errors=filter_errors,
-        generated_at=ts,
+        generated_at=generated,
     )
     return f"<!doctype html>\n{_html_head()}\n<body>\n{body}\n</body>\n</html>\n"
+
+
+def render_dashboard_update_payload(
+    metrics: CrossSessionMetrics,
+    *,
+    filter_errors: tuple[str, ...] = (),
+    generated_at: datetime | str | None = None,
+) -> dict[str, object]:
+    """Return the JSON-serializable dashboard soft-refresh payload."""
+    generated = _normalize_generated_at(generated_at)
+    return {
+        "generatedAt": generated["iso"],
+        "renderedAt": generated["label"],
+        "regions": _render_dashboard_regions(metrics, filter_errors=filter_errors),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -111,22 +126,56 @@ def _render_body(
     filter: MetricsFilter,
     available_agents: tuple[str, ...],
     filter_errors: tuple[str, ...],
-    generated_at: str,
+    generated_at: dict[str, str],
 ) -> str:
+    regions = _render_dashboard_regions(metrics, filter_errors=filter_errors)
     return "\n".join(
         [
             '<main class="page">',
             _render_header(generated_at),
-            _render_filter_errors(filter_errors),
+            _render_region("filter-errors", regions["filter-errors"]),
             _render_filter_bar(filter, available_agents),
-            _render_totals(metrics),
-            _render_by_agent(metrics),
-            _render_sessions(metrics),
-            _render_by_day(metrics),
+            _render_region("totals", regions["totals"]),
+            _render_region("by-agent", regions["by-agent"]),
+            _render_region("sessions", regions["sessions"]),
+            _render_region("by-day", regions["by-day"]),
             _render_footer(),
             "</main>",
         ]
     )
+
+
+def _normalize_generated_at(generated_at: datetime | str | None) -> dict[str, str]:
+    if generated_at is None:
+        dt = datetime.now(UTC)
+        return _format_generated_at(dt)
+    if isinstance(generated_at, datetime):
+        dt = generated_at if generated_at.tzinfo else generated_at.replace(tzinfo=UTC)
+        return _format_generated_at(dt.astimezone(UTC))
+    return {"label": generated_at, "iso": ""}
+
+
+def _format_generated_at(dt: datetime) -> dict[str, str]:
+    return {
+        "label": dt.strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "iso": dt.isoformat(timespec="seconds").replace("+00:00", "Z"),
+    }
+
+
+def _render_dashboard_regions(
+    metrics: CrossSessionMetrics, *, filter_errors: tuple[str, ...]
+) -> dict[str, str]:
+    return {
+        "filter-errors": _render_filter_errors(filter_errors),
+        "totals": _render_totals(metrics),
+        "by-agent": _render_by_agent(metrics),
+        "sessions": _render_sessions(metrics),
+        "by-day": _render_by_day(metrics),
+    }
+
+
+def _render_region(name: str, html: str) -> str:
+    return f'<div data-dashboard-region="{escape(name)}">\n{html}\n</div>'
 
 
 def _render_filter_errors(errors: tuple[str, ...]) -> str:
@@ -184,7 +233,10 @@ def _render_filter_bar(filter: MetricsFilter, available_agents: tuple[str, ...])
 </section>"""
 
 
-def _render_header(generated_at: str) -> str:
+def _render_header(generated_at: dict[str, str]) -> str:
+    data_attr = (
+        f' data-generated-at="{escape(generated_at["iso"])}"' if generated_at.get("iso") else ""
+    )
     return f"""\
 <header class="topbar">
   <div class="brand-mark">
@@ -194,11 +246,12 @@ def _render_header(generated_at: str) -> str:
   </div>
   <div class="header-controls">
     <span class="muted small">
-      rendered {escape(generated_at)} ·
+      rendered <span data-rendered-at{data_attr}>{escape(generated_at["label"])}</span> ·
       <span data-stale>just now</span>
     </span>
-    <button type="button" class="btn-secondary btn-icon" data-refresh-now title="reload now">↻ refresh</button>
-    <label class="toggle" title="auto-reload every {DASHBOARD_REFRESH_SECONDS}s">
+    <span class="refresh-state small" data-refresh-state aria-live="polite"></span>
+    <button type="button" class="btn-secondary btn-icon" data-refresh-now title="refresh data">↻ refresh</button>
+    <label class="toggle" title="refresh data every {DASHBOARD_REFRESH_SECONDS}s">
       <input type="checkbox" name="live">
       <span>live</span>
     </label>
@@ -370,11 +423,9 @@ def _html_head(*, title: str = "agent-relay · metrics", auto_refresh: bool = Tr
     """Compose the <html><head> block. Public-ish so other dashboard pages
     (Phase B session detail) can reuse the exact same chrome.
 
-    ``auto_refresh`` enables the *opt-in* live-update controls (the
-    ``live`` checkbox + ``↻ refresh`` button). The page never reloads on
-    its own — the user has to flip the toggle. Setting this to False
-    suppresses the controls entirely (e.g. for the session-detail page
-    in Phase B if we want it static).
+    ``auto_refresh`` enables the soft-refresh script for the ``live``
+    checkbox + ``↻ refresh`` button. The page never refreshes on its own
+    unless the user has flipped the live toggle.
     """
     return f"""\
 <html lang=en data-theme=dark>
@@ -400,38 +451,45 @@ def _refresh_script() -> str:
     flipped toggle survives across reloads.
 
     Behaviour:
-      * ``↻ refresh`` button reloads now.
-      * ``live`` checkbox toggles a polling timer at
+      * ``↻ refresh`` button fetches fresh dashboard data and patches the
+        metric regions in place.
+      * ``live`` checkbox toggles the same soft refresh at
         DASHBOARD_REFRESH_SECONDS intervals; persisted in localStorage.
-      * While the live timer is on, reloads are *paused* whenever focus
-        is inside ``.filter-bar`` so the user can finish picking dates /
-        agents without being clobbered.
+      * While the live timer is on, refreshes are deferred whenever focus
+        is inside ``.filter-bar`` or text is selected.
       * The header's ``stale`` indicator updates client-side every second
-        based on the data-loaded-at attribute set at render time, so the
-        user always sees how old the page is even when not auto-polling.
+        based on the server snapshot timestamp, so the user always sees
+        how old the data is even when not auto-polling.
     """
     return f"""\
 <script>
 (function() {{
   var REFRESH_MS = {DASHBOARD_REFRESH_SECONDS * 1000};
   var STORAGE_KEY = 'agent-relay-dashboard-live';
+  var DATA_PATH = '/dashboard/data';
+  var refreshTimer = null;
+  var staleTimer = null;
+  var refreshing = false;
+  var pendingRefresh = false;
 
   function inFilter() {{
     var el = document.activeElement;
     return !!(el && el.closest && el.closest('.filter-bar'));
   }}
 
-  var pollTimer = null;
-  function startPolling() {{
-    stopPolling();
-    pollTimer = setInterval(function() {{
-      if (inFilter()) return;       // don't clobber form input
-      if (document.hidden) return;  // don't reload hidden tabs
-      window.location.reload();
-    }}, REFRESH_MS);
+  function hasSelection() {{
+    var selection = window.getSelection ? window.getSelection() : null;
+    return !!(selection && !selection.isCollapsed && String(selection).length > 0);
   }}
-  function stopPolling() {{
-    if (pollTimer) {{ clearInterval(pollTimer); pollTimer = null; }}
+
+  function shouldDeferRefresh() {{
+    return inFilter() || hasSelection();
+  }}
+
+  function refreshEndpoint() {{
+    var url = new URL(window.location.href);
+    url.pathname = DATA_PATH;
+    return url.toString();
   }}
 
   function fmtAge(seconds) {{
@@ -441,15 +499,125 @@ def _refresh_script() -> str:
     return Math.floor(seconds / 3600) + 'h ago';
   }}
 
-  document.addEventListener('DOMContentLoaded', function() {{
-    var loadedAt = Date.now();
+  function generatedAtMs() {{
+    var renderedAt = document.querySelector('[data-rendered-at]');
+    var raw = renderedAt ? renderedAt.getAttribute('data-generated-at') : '';
+    var parsed = raw ? Date.parse(raw) : NaN;
+    return isNaN(parsed) ? Date.now() : parsed;
+  }}
+
+  function updateStaleAge() {{
     var staleEl = document.querySelector('[data-stale]');
-    if (staleEl) {{
-      setInterval(function() {{
-        var age = Math.floor((Date.now() - loadedAt) / 1000);
-        staleEl.textContent = fmtAge(age);
-      }}, 1000);
+    if (!staleEl) return;
+    var age = Math.max(0, Math.floor((Date.now() - generatedAtMs()) / 1000));
+    staleEl.textContent = fmtAge(age);
+  }}
+
+  function setRefreshState(text, state) {{
+    var el = document.querySelector('[data-refresh-state]');
+    if (!el) return;
+    el.textContent = text || '';
+    if (state) el.setAttribute('data-state', state);
+    else el.removeAttribute('data-state');
+  }}
+
+  function snapshotDetails() {{
+    var state = {{}};
+    document.querySelectorAll('details[id], details[data-detail-id]').forEach(function(el) {{
+      var key = el.id || el.getAttribute('data-detail-id');
+      if (key) state[key] = el.open;
+    }});
+    return state;
+  }}
+
+  function restoreDetails(state) {{
+    document.querySelectorAll('details[id], details[data-detail-id]').forEach(function(el) {{
+      var key = el.id || el.getAttribute('data-detail-id');
+      if (key && Object.prototype.hasOwnProperty.call(state, key)) el.open = !!state[key];
+    }});
+  }}
+
+  function patchRegions(regions) {{
+    var scrollX = window.scrollX;
+    var scrollY = window.scrollY;
+    var detailsState = snapshotDetails();
+    Object.keys(regions || {{}}).forEach(function(name) {{
+      var region = document.querySelector('[data-dashboard-region="' + name + '"]');
+      if (region) region.innerHTML = regions[name];
+    }});
+    restoreDetails(detailsState);
+    window.scrollTo(scrollX, scrollY);
+  }}
+
+  function setGeneratedAt(payload) {{
+    var renderedAt = document.querySelector('[data-rendered-at]');
+    if (!renderedAt) return;
+    if (payload.renderedAt) renderedAt.textContent = payload.renderedAt;
+    if (payload.generatedAt) renderedAt.setAttribute('data-generated-at', payload.generatedAt);
+    updateStaleAge();
+  }}
+
+  function refreshDashboard(options) {{
+    options = options || {{}};
+    if (!window.fetch) {{
+      setRefreshState('refresh unavailable', 'error');
+      return;
     }}
+    if (refreshing) return;
+    if (!options.force && shouldDeferRefresh()) {{
+      pendingRefresh = true;
+      setRefreshState('update ready', 'pending');
+      return;
+    }}
+
+    refreshing = true;
+    setRefreshState('refreshing', 'loading');
+    fetch(refreshEndpoint(), {{
+      cache: 'no-store',
+      headers: {{'Accept': 'application/json'}}
+    }})
+      .then(function(response) {{
+        if (!response.ok) throw new Error('refresh failed');
+        return response.json();
+      }})
+      .then(function(payload) {{
+        patchRegions(payload.regions || {{}});
+        setGeneratedAt(payload);
+        pendingRefresh = false;
+        setRefreshState('updated', 'ok');
+        window.setTimeout(function() {{
+          if (!pendingRefresh) setRefreshState('', '');
+        }}, 1500);
+      }})
+      .catch(function() {{
+        setRefreshState('refresh failed', 'error');
+      }})
+      .then(function() {{
+        refreshing = false;
+      }});
+  }}
+
+  function flushPendingRefresh() {{
+    if (pendingRefresh && !shouldDeferRefresh() && !document.hidden) {{
+      refreshDashboard({{force: true}});
+    }}
+  }}
+
+  function startPolling() {{
+    stopPolling();
+    refreshTimer = setInterval(function() {{
+      if (document.hidden) return;
+      refreshDashboard();
+    }}, REFRESH_MS);
+  }}
+
+  function stopPolling() {{
+    if (refreshTimer) {{ clearInterval(refreshTimer); refreshTimer = null; }}
+  }}
+
+  document.addEventListener('DOMContentLoaded', function() {{
+    updateStaleAge();
+    staleTimer = setInterval(updateStaleAge, 1000);
 
     var liveToggle = document.querySelector('input[name="live"]');
     var refreshBtn = document.querySelector('[data-refresh-now]');
@@ -457,7 +625,7 @@ def _refresh_script() -> str:
     if (refreshBtn) {{
       refreshBtn.addEventListener('click', function(e) {{
         e.preventDefault();
-        window.location.reload();
+        refreshDashboard({{force: true}});
       }});
     }}
 
@@ -475,6 +643,21 @@ def _refresh_script() -> str:
         if (liveToggle.checked) startPolling(); else stopPolling();
       }});
     }}
+
+    document.addEventListener('focusout', function() {{
+      window.setTimeout(flushPendingRefresh, 0);
+    }});
+    document.addEventListener('selectionchange', flushPendingRefresh);
+    document.addEventListener('visibilitychange', function() {{
+      if (document.hidden) return;
+      if (pendingRefresh) flushPendingRefresh();
+      else if (liveToggle && liveToggle.checked) refreshDashboard();
+    }});
+
+    window.addEventListener('beforeunload', function() {{
+      stopPolling();
+      if (staleTimer) clearInterval(staleTimer);
+    }});
   }});
 }})();
 </script>"""
@@ -524,6 +707,10 @@ html, body {{
   font-size: 13px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  /* Tell native widgets (date picker popup, scrollbars, autofill)
+     to render their dark variants. Without this the calendar popup
+     opens white-on-white on dark themes. */
+  color-scheme: dark;
 }}
 
 .page {{
@@ -647,68 +834,136 @@ p {{ margin: 0; }}
 .filter-row {{
   display: flex;
   flex-wrap: wrap;
-  gap: 12px 16px;
+  gap: 14px 18px;
   align-items: flex-end;
 }}
-.filter-row .field {{ display: flex; flex-direction: column; gap: 4px; }}
-.filter-row .field.grow {{ flex: 1 1 220px; }}
-.filter-row .label {{
+.filter-row .field {{
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 150px;
+}}
+.filter-row .field.grow {{ flex: 1 1 240px; }}
+.filter-row .label,
+.filter-row legend.label {{
   font-size: 11px;
-  color: var(--fg-3);
+  color: var(--fg-2);
   text-transform: lowercase;
   letter-spacing: 0.04em;
+  font-weight: 500;
 }}
+
+/* Inputs — uniform 32px height so date / search / fieldset bottom-align */
 .filter-row input[type="date"],
 .filter-row input[type="text"] {{
   background: var(--surface-1);
   border: 1px solid var(--surface-rule);
   color: var(--fg-1);
   font-family: var(--font-mono);
-  font-size: 12.5px;
-  padding: 6px 8px;
+  font-size: 13px;
+  padding: 6px 10px;
+  height: 32px;
   border-radius: 2px;
-  min-width: 140px;
+  min-width: 150px;
 }}
-.filter-row input:focus {{ outline: 1px solid var(--brand-dim); }}
-.filter-row fieldset {{
+.filter-row input::placeholder {{
+  color: var(--fg-3);
+  opacity: 1;  /* Firefox dims placeholders by default; override. */
+}}
+.filter-row input:hover {{ border-color: var(--fg-4); }}
+.filter-row input:focus {{
+  outline: none;
+  border-color: var(--brand-dim);
+  box-shadow: 0 0 0 2px var(--brand-glow);
+}}
+
+/* Native date-picker calendar icon — render white on the dark theme */
+.filter-row input[type="date"]::-webkit-calendar-picker-indicator {{
+  filter: invert(1);
+  cursor: pointer;
+  opacity: 0.85;
+}}
+.filter-row input[type="date"]::-webkit-calendar-picker-indicator:hover {{
+  opacity: 1;
+}}
+
+/* Agent fieldset — flush with inputs */
+.filter-row fieldset.field {{
   border: 1px solid var(--surface-rule);
   border-radius: 2px;
-  padding: 4px 8px;
+  padding: 4px 12px 6px;
   margin: 0;
-  display: flex;
-  gap: 12px;
+  background: var(--surface-1);
+  min-height: 32px;
+  flex-direction: row;
+  align-items: center;
+  gap: 14px;
   flex-wrap: wrap;
 }}
-.filter-row fieldset legend {{ padding: 0 4px; }}
+.filter-row fieldset.field legend {{
+  padding: 0 6px;
+  font-size: 11px;
+  color: var(--fg-2);
+  text-transform: lowercase;
+  letter-spacing: 0.04em;
+}}
 .filter-row .checkbox {{
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 12.5px;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--fg-1);
+  cursor: pointer;
+  user-select: none;
+}}
+.filter-row .checkbox input[type="checkbox"] {{
+  margin: 0;
+  accent-color: var(--brand);
   cursor: pointer;
 }}
-.filter-actions {{ display: flex; gap: 8px; align-items: center; }}
+
+.filter-actions {{
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  /* Align with the bottom of the inputs above */
+  margin-top: auto;
+}}
 .btn-primary, .btn-secondary {{
   font-family: var(--font-mono);
-  font-size: 12.5px;
-  padding: 6px 14px;
+  font-size: 13px;
+  padding: 0 16px;
+  height: 32px;
   border-radius: 2px;
   cursor: pointer;
   text-decoration: none;
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  transition: background 80ms ease, border-color 80ms ease, color 80ms ease;
 }}
 .btn-primary {{
   background: var(--brand);
   color: var(--surface-0);
-  border: 1px solid var(--brand-dim);
-  font-weight: 600;
+  border-color: var(--brand-dim);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}}
+.btn-primary:hover {{
+  background: var(--brand-dim);
+  color: var(--fg-1);
 }}
 .btn-secondary {{
-  background: transparent;
+  background: var(--surface-1);
   color: var(--fg-2);
-  border: 1px solid var(--surface-rule);
+  border-color: var(--surface-rule);
 }}
-.btn-secondary:hover {{ color: var(--fg-1); border-color: var(--fg-3); }}
+.btn-secondary:hover {{
+  color: var(--fg-1);
+  border-color: var(--fg-3);
+  background: var(--surface-2);
+}}
 
 /* Banners */
 .banner {{
@@ -748,6 +1003,16 @@ p {{ margin: 0; }}
   accent-color: var(--brand);
   cursor: pointer;
 }}
+.refresh-state {{
+  min-width: 7ch;
+  color: var(--fg-3);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}}
+.refresh-state[data-state="loading"] {{ color: var(--fg-2); }}
+.refresh-state[data-state="ok"] {{ color: var(--signal); }}
+.refresh-state[data-state="pending"] {{ color: var(--warning); }}
+.refresh-state[data-state="error"] {{ color: var(--error); }}
 [data-stale] {{
   color: var(--fg-3);
   font-variant-numeric: tabular-nums;
