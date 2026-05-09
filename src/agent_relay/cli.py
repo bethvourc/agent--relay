@@ -14,7 +14,7 @@ from agent_relay.dashboard_alerts import evaluate_alerts_for_view
 from agent_relay.errors import RelayError
 from agent_relay.exporters.jsonl import parse_header_pairs, tail_jsonl
 from agent_relay.exporters.otlp import serve_otlp
-from agent_relay.exporters.prometheus import serve_prometheus
+from agent_relay.exporters.prometheus import is_loopback_bind, serve_prometheus
 from agent_relay.integrity import require_session_mutable
 from agent_relay.lifecycle import LifecycleState, LifecycleViolation, plan_complete_command
 from agent_relay.locks import utc_now
@@ -731,10 +731,28 @@ def cmd_metrics_serve(args: argparse.Namespace) -> int:
     try:
         if args.prometheus:
             assert host is not None
+            allow_remote = bool(getattr(args, "allow_remote", False))
+            dashboard_enabled = not bool(getattr(args, "no_dashboard", False))
+            access_log_stream = sys.stderr if getattr(args, "access_log", False) else None
+
+            if not is_loopback_bind(host) and not allow_remote:
+                render_error(
+                    args.console,
+                    f"refusing to bind {host}: dashboard exposes session content. "
+                    "Pass --allow-remote to override (and accept the risk).",
+                )
+                return 2
+            if not is_loopback_bind(host):
+                sys.stderr.write(
+                    f"WARNING: binding {host} exposes session content (objectives, "
+                    "prompts, file paths) on the network. Dashboard has no auth.\n"
+                )
+
+            dashboard_msg = f"Dashboard at http://{host}:{port}/\n" if dashboard_enabled else ""
             sys.stderr.write(
                 f"Prometheus exporter listening on http://{host}:{port}/metrics  "
                 f"(refresh: {args.prometheus_refresh:.1f}s)\n"
-                f"Dashboard at http://{host}:{port}/\n"
+                f"{dashboard_msg}"
             )
             try:
                 rc = serve_prometheus(
@@ -742,9 +760,15 @@ def cmd_metrics_serve(args: argparse.Namespace) -> int:
                     host,
                     port,
                     refresh_interval=args.prometheus_refresh,
+                    dashboard_enabled=dashboard_enabled,
+                    allow_remote=allow_remote,
+                    access_log=access_log_stream,
                 )
             except OSError as exc:
                 render_error(args.console, f"failed to bind {host}:{port}: {exc}")
+                return 2
+            except RuntimeError as exc:
+                render_error(args.console, str(exc))
                 return 2
         else:
             # OTLP-only — block on the OTLP thread.
@@ -1517,6 +1541,21 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=30.0,
         help="Seconds between OTLP pushes (default: 30.0)",
+    )
+    metrics_serve.add_argument(
+        "--allow-remote",
+        action="store_true",
+        help="Bind a non-loopback address (exposes session content; no auth)",
+    )
+    metrics_serve.add_argument(
+        "--no-dashboard",
+        action="store_true",
+        help="Disable the HTML dashboard; serve only /metrics",
+    )
+    metrics_serve.add_argument(
+        "--access-log",
+        action="store_true",
+        help="Write JSONL access log entries to stderr",
     )
     metrics_serve.add_argument("--repo")
     metrics_serve.set_defaults(func=cmd_metrics_serve)

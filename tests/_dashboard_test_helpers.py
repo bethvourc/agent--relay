@@ -18,6 +18,7 @@ def start_dashboard_server(
     repo_root: Path,
     refresh_interval: float = 0.1,
     extractor: Any = None,
+    **serve_kwargs: Any,
 ) -> tuple[ThreadingHTTPServer, threading.Thread, int]:
     captured: dict[str, ThreadingHTTPServer] = {}
 
@@ -35,6 +36,7 @@ def start_dashboard_server(
     }
     if extractor is not None:
         kwargs["extractor"] = extractor
+    kwargs.update(serve_kwargs)
 
     thread = threading.Thread(
         target=serve_prometheus,
@@ -63,3 +65,13 @@ def get_dashboard(port: int, path: str) -> tuple[int, str, str]:
         resp = conn.getresponse()
         body = resp.read().decode("utf-8")
         return resp.status, resp.getheader("Content-Type", ""), body
+
+
+def get_dashboard_response(port: int, path: str) -> tuple[int, dict[str, str], str]:
+    """Variant of :func:`get_dashboard` that returns *all* response headers."""
+    with closing(http.client.HTTPConnection("127.0.0.1", port, timeout=2)) as conn:
+        conn.request("GET", path)
+        resp = conn.getresponse()
+        body = resp.read().decode("utf-8")
+        headers = {k: v for k, v in resp.getheaders()}
+        return resp.status, headers, body

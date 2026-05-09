@@ -27,6 +27,7 @@ from datetime import UTC, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import IO
 
 from agent_relay.alerts import alerts_config_path
 from agent_relay.dashboard import render_dashboard_html, render_dashboard_update_payload
@@ -67,6 +68,28 @@ _JSON_TYPE = "application/json; charset=utf-8"
 _SESSION_PATH = re.compile(r"^/session/([A-Za-z0-9-]+)(?:/(data))?$")
 _TURN_PATH = re.compile(r"^/session/([A-Za-z0-9-]+)/turn/(\d+)(?:/(data))?$")
 _ALERTS_PATH = re.compile(r"^/alerts(?:/(data))?$")
+
+# Tightened to what the dashboard actually loads: self-hosted markup,
+# inline styles (one <style> block), Google Fonts CSS + woff2 files.
+# No remote scripts, no remote XHR/fetch — Phase E SSE will need
+# ``connect-src 'self'``, which is already covered.
+_CSP_DASHBOARD = (
+    "default-src 'self'; "
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+    "font-src 'self' https://fonts.gstatic.com; "
+    "img-src 'self' data:; "
+    "connect-src 'self'; "
+    "script-src 'self' 'unsafe-inline'; "
+    "frame-ancestors 'none'; "
+    "base-uri 'none'; "
+    "form-action 'self'"
+)
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "0:0:0:0:0:0:0:1"})
+
+
+def is_loopback_bind(host: str) -> bool:
+    """True when ``host`` only accepts connections from the local machine."""
+    return host.strip().lower() in _LOOPBACK_HOSTS
 
 
 # ---------------------------------------------------------------------------
@@ -146,19 +169,42 @@ def serve_prometheus(
     refresh_interval: float = 5.0,
     extractor: Callable[[Path], CrossSessionMetrics] | None = None,
     server_factory: Callable[..., ThreadingHTTPServer] | None = None,
+    dashboard_enabled: bool = True,
+    allow_remote: bool = False,
+    access_log: IO[str] | None = None,
+    telemetry: DashboardTelemetry | None = None,
 ) -> int:
     """Run the Prometheus scrape endpoint and HTML dashboard until Ctrl-C.
 
+    Phase F adds three operability knobs:
+
+    * ``dashboard_enabled=False`` strips the HTML/JSON dashboard surface;
+      only ``/metrics`` answers and everything else 404s. Useful for
+      Prom-only deployments.
+    * ``allow_remote=False`` (default) refuses to bind anything but
+      loopback. Pass ``True`` only after the operator has accepted the
+      risk of exposing session content on the network.
+    * ``access_log`` (e.g. ``sys.stderr``) opt-in JSONL access log.
+
     ``extractor`` and ``server_factory`` exist so tests can swap them out.
     """
+    if not allow_remote and not is_loopback_bind(host):
+        raise RuntimeError(
+            f"refusing to bind {host}: dashboard exposes session content. "
+            "Pass allow_remote=True (CLI: --allow-remote) to override."
+        )
+
     extract = extractor or extract_cross_session_metrics
     ttl = max(0.0, float(refresh_interval))
     snapshot_cache: _Cache[CrossSessionMetrics] = _Cache(
         loader=lambda: extract(repo_root), ttl_seconds=ttl
     )
+    metrics_telemetry = telemetry or DashboardTelemetry()
     prom_cache: _Cache[str] = _Cache(
-        loader=lambda: render_prometheus_text(snapshot_cache.get()),
-        ttl_seconds=ttl,
+        loader=lambda: _render_prometheus_with_self_metrics(
+            snapshot_cache.get(), metrics_telemetry
+        ),
+        ttl_seconds=min(ttl, 1.0),
     )
 
     alert_config = AlertConfigCache(repo_root)
@@ -300,6 +346,9 @@ def serve_prometheus(
         render_turn_data_page,
         render_alerts_html_page,
         render_alerts_data,
+        dashboard_enabled=dashboard_enabled,
+        access_log=access_log,
+        telemetry=metrics_telemetry,
     )
     factory = server_factory or ThreadingHTTPServer
     server = factory((host, port), Handler)
@@ -317,6 +366,111 @@ def serve_prometheus(
 # ---------------------------------------------------------------------------
 # Internals
 # ---------------------------------------------------------------------------
+
+
+class DashboardTelemetry:
+    """Self-instrumentation for the dashboard HTTP surface.
+
+    Counters and timing samples render into ``/metrics`` so an operator
+    Grafana already pointed at this exporter can graph dashboard health
+    without any extra wiring.
+    """
+
+    __slots__ = ("_lock", "_requests", "_durations", "_sse_connections")
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._requests: dict[tuple[str, int], int] = {}
+        self._durations: dict[str, tuple[int, float]] = {}  # path → (count, sum_ms)
+        self._sse_connections = 0
+
+    def record_request(self, *, path: str, status: int, duration_ms: float) -> None:
+        with self._lock:
+            self._requests[(path, status)] = self._requests.get((path, status), 0) + 1
+            count, total = self._durations.get(path, (0, 0.0))
+            self._durations[path] = (count + 1, total + duration_ms)
+
+    def sse_connected(self) -> None:
+        with self._lock:
+            self._sse_connections += 1
+
+    def sse_disconnected(self) -> None:
+        with self._lock:
+            self._sse_connections = max(0, self._sse_connections - 1)
+
+    def render_prometheus_lines(self) -> list[str]:
+        with self._lock:
+            requests = dict(self._requests)
+            durations = dict(self._durations)
+            sse = self._sse_connections
+        lines: list[str] = []
+        lines.append(
+            "# HELP agent_relay_dashboard_requests_total Dashboard requests by path and status"
+        )
+        lines.append("# TYPE agent_relay_dashboard_requests_total counter")
+        for (path, status), count in sorted(requests.items()):
+            lines.append(
+                f"agent_relay_dashboard_requests_total"
+                f'{{path="{_esc(path)}",status="{status}"}} {count}'
+            )
+        lines.append(
+            "# HELP agent_relay_dashboard_render_duration_ms Render time per dashboard path"
+        )
+        lines.append("# TYPE agent_relay_dashboard_render_duration_ms summary")
+        for path, (count, total) in sorted(durations.items()):
+            lines.append(
+                f'agent_relay_dashboard_render_duration_ms_count{{path="{_esc(path)}"}} {count}'
+            )
+            lines.append(
+                f"agent_relay_dashboard_render_duration_ms_sum"
+                f'{{path="{_esc(path)}"}} {_fmt_float(total)}'
+            )
+        lines.append(
+            "# HELP agent_relay_dashboard_sse_connections Active SSE connections (0 until Phase E)"
+        )
+        lines.append("# TYPE agent_relay_dashboard_sse_connections gauge")
+        lines.append(f"agent_relay_dashboard_sse_connections {sse}")
+        return lines
+
+
+_PATH_TEMPLATES: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"^/session/[A-Za-z0-9-]+/turn/\d+/data$"), "/session/{id}/turn/{n}/data"),
+    (re.compile(r"^/session/[A-Za-z0-9-]+/turn/\d+$"), "/session/{id}/turn/{n}"),
+    (re.compile(r"^/session/[A-Za-z0-9-]+/data$"), "/session/{id}/data"),
+    (re.compile(r"^/session/[A-Za-z0-9-]+$"), "/session/{id}"),
+)
+_KNOWN_PATHS = frozenset(
+    {"/", "/dashboard", "/dashboard/data", "/alerts", "/alerts/data", "/metrics"}
+)
+
+
+def _label_path(raw_path: str) -> str:
+    """Bucket a request path into a label that won't blow Prom cardinality."""
+    if raw_path in _KNOWN_PATHS:
+        return raw_path
+    for pattern, template in _PATH_TEMPLATES:
+        if pattern.match(raw_path):
+            return template
+    if raw_path.startswith("/session/"):
+        return "/session/{id}"
+    return "other"
+
+
+def _write_access_log(
+    stream: IO[str], *, path: str, status: int, duration_ms: float, length: int
+) -> None:
+    record = {
+        "ts": datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+        "path": path,
+        "status": int(status),
+        "ms": round(duration_ms, 2),
+        "len": int(length),
+    }
+    try:
+        stream.write(json.dumps(record, separators=(",", ":")) + "\n")
+        stream.flush()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 class _Cache[T]:
@@ -401,32 +555,65 @@ def _make_handler(
     render_turn_data_page: Callable[[str, int, str], tuple[HTTPStatus, str]],
     render_alerts_html_page: Callable[[str], str],
     render_alerts_data: Callable[[str], str],
+    *,
+    dashboard_enabled: bool = True,
+    access_log: IO[str] | None = None,
+    telemetry: DashboardTelemetry | None = None,
 ) -> type[BaseHTTPRequestHandler]:
+    metrics_telemetry = telemetry or DashboardTelemetry()
+
+    def _dashboard_404() -> tuple[HTTPStatus, str, str]:
+        return HTTPStatus.NOT_FOUND, "dashboard disabled\n", _CONTENT_TYPE
+
     class _Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
             raw_path, _, query = self.path.partition("?")
+            started = time.monotonic()
+            label = _label_path(raw_path)
+            try:
+                status, body_len = self._dispatch(raw_path, query)
+            except Exception:  # noqa: BLE001
+                self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "internal server error")
+                status = HTTPStatus.INTERNAL_SERVER_ERROR
+                body_len = 0
+            duration_ms = (time.monotonic() - started) * 1000.0
+            metrics_telemetry.record_request(
+                path=label, status=int(status), duration_ms=duration_ms
+            )
+            if access_log is not None:
+                _write_access_log(
+                    access_log,
+                    path=raw_path,
+                    status=int(status),
+                    duration_ms=duration_ms,
+                    length=body_len,
+                )
+
+        def _dispatch(self, raw_path: str, query: str) -> tuple[HTTPStatus, int]:
             if raw_path == "/metrics":
-                self._send(prom_cache.get(), _CONTENT_TYPE)
-                return
+                return self._send(prom_cache.get(), _CONTENT_TYPE)
+
+            if not dashboard_enabled:
+                status, payload, content_type = _dashboard_404()
+                return self._send(payload, content_type, status=status)
+
             turn_match = _TURN_PATH.match(raw_path)
             if turn_match:
                 session_id, turn_text, data_suffix = turn_match.groups()
                 turn_number = int(turn_text)
                 if turn_number <= 0:
-                    self._send(
+                    return self._send(
                         render_turn_not_found_html(session_id, turn_number),
                         _HTML_TYPE,
                         status=HTTPStatus.NOT_FOUND,
                     )
-                    return
                 if data_suffix:
                     status, payload = render_turn_data_page(session_id, turn_number, query)
                     content_type = _JSON_TYPE if status == HTTPStatus.OK else _HTML_TYPE
                 else:
                     status, payload = render_turn_page(session_id, turn_number, query)
                     content_type = _HTML_TYPE
-                self._send(payload, content_type, status=status)
-                return
+                return self._send(payload, content_type, status=status)
             session_match = _SESSION_PATH.match(raw_path)
             if session_match:
                 session_id, data_suffix = session_match.groups()
@@ -436,35 +623,30 @@ def _make_handler(
                 else:
                     status, payload = render_session_page(session_id, query)
                     content_type = _HTML_TYPE
-                self._send(payload, content_type, status=status)
-                return
+                return self._send(payload, content_type, status=status)
             if raw_path in ("/", "/dashboard"):
                 filter, errors = parse_filter_from_query(query)
-                self._send(render_html(filter, errors), _HTML_TYPE)
-                return
+                return self._send(render_html(filter, errors), _HTML_TYPE)
             if raw_path == "/dashboard/data":
                 filter, errors = parse_filter_from_query(query)
-                self._send(render_dashboard_data(filter, errors), _JSON_TYPE)
-                return
+                return self._send(render_dashboard_data(filter, errors), _JSON_TYPE)
             alerts_match = _ALERTS_PATH.match(raw_path)
             if alerts_match:
                 if alerts_match.group(1):
-                    self._send(render_alerts_data(query), _JSON_TYPE)
-                else:
-                    self._send(render_alerts_html_page(query), _HTML_TYPE)
-                return
+                    return self._send(render_alerts_data(query), _JSON_TYPE)
+                return self._send(render_alerts_html_page(query), _HTML_TYPE)
             if raw_path.startswith("/session/"):
                 label = raw_path.removeprefix("/session/") or "unknown"
-                self._send(
+                return self._send(
                     render_session_not_found_html(label),
                     _HTML_TYPE,
                     status=HTTPStatus.NOT_FOUND,
                 )
-                return
             self.send_error(
                 HTTPStatus.NOT_FOUND,
                 "use /, /dashboard, /dashboard/data, /alerts, or /metrics",
             )
+            return HTTPStatus.NOT_FOUND, 0
 
         def _send(
             self,
@@ -472,22 +654,43 @@ def _make_handler(
             content_type: str,
             *,
             status: HTTPStatus = HTTPStatus.OK,
-        ) -> None:
+        ) -> tuple[HTTPStatus, int]:
             try:
                 body = payload.encode("utf-8")
             except Exception as exc:  # noqa: BLE001
                 self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
-                return
+                return HTTPStatus.INTERNAL_SERVER_ERROR, 0
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "no-referrer")
+            if content_type == _HTML_TYPE:
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Security-Policy", _CSP_DASHBOARD)
+                self.send_header("X-Frame-Options", "DENY")
+            elif content_type == _JSON_TYPE:
+                self.send_header("Cache-Control", "no-store")
+            else:
+                # /metrics text — short freshness.
+                self.send_header("Cache-Control", "no-cache")
             self.end_headers()
             self.wfile.write(body)
+            return status, len(body)
 
         def log_message(self, format: str, *args: object) -> None:  # noqa: A002
-            return  # silence default access log
+            return  # silence default access log; we have our own opt-in JSONL log
 
     return _Handler
+
+
+def _render_prometheus_with_self_metrics(
+    metrics: CrossSessionMetrics,
+    telemetry: DashboardTelemetry,
+) -> str:
+    body = render_prometheus_text(metrics).rstrip("\n")
+    extras = telemetry.render_prometheus_lines()
+    return body + "\n" + "\n".join(extras) + "\n"
 
 
 def _esc(value: str) -> str:
@@ -538,4 +741,9 @@ def _session_status_counts(metrics: CrossSessionMetrics) -> dict[str, int]:
     return out
 
 
-__all__ = ["render_prometheus_text", "serve_prometheus"]
+__all__ = [
+    "DashboardTelemetry",
+    "is_loopback_bind",
+    "render_prometheus_text",
+    "serve_prometheus",
+]
