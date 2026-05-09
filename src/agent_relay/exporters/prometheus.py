@@ -180,7 +180,7 @@ def serve_prometheus(
             metrics,
             filter=filter,
             filter_errors=errors,
-            alerts_banner_html=render_alert_banner_html(alerts),
+            alerts_banner_html=render_alert_banner_html(alerts, filtered=not filter.is_identity),
             generated_at=generated_at,
         )
 
@@ -191,7 +191,7 @@ def serve_prometheus(
             metrics,
             filter=filter,
             filter_errors=errors,
-            alerts_banner_html=render_alert_banner_html(alerts),
+            alerts_banner_html=render_alert_banner_html(alerts, filtered=not filter.is_identity),
             generated_at=generated_at,
         )
         return json.dumps(payload, separators=(",", ":"))
@@ -212,7 +212,7 @@ def serve_prometheus(
         filter, _errors = parse_filter_from_query(query)
         metrics, generated_at = load_dashboard_metrics(filter)
         alerts = evaluate_active_alerts(metrics)
-        payload = render_alerts_payload(alerts, generated_at=generated_at)
+        payload = render_alerts_payload(alerts, cfg=alert_config.get(), generated_at=generated_at)
         return json.dumps(payload, separators=(",", ":"))
 
     def load_session_view_parts(

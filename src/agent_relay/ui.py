@@ -788,6 +788,7 @@ _FALLBACK_COMMANDS: tuple[tuple[str, str], ...] = (
     ("agent-relay status", "Show relay sessions"),
     ("agent-relay watch", "Live view of an in-progress session"),
     ("agent-relay metrics", "Token / cost / latency metrics for sessions"),
+    ("agent-relay alerts", "Active alert firings against alerts.toml thresholds"),
     ("agent-relay metrics-tail", "Stream metric events as JSONL"),
     ("agent-relay metrics-serve", "Run a metrics exporter (Prometheus / OTLP)"),
     ("agent-relay discover", "Detect available agent CLIs"),

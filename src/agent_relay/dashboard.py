@@ -1171,6 +1171,11 @@ p {{ margin: 0; }}
 .alert-banner:hover {{ background: var(--surface-2); }}
 .alert-banner .alert-glyph {{ color: var(--alert-color, var(--warning)); font-weight: 700; }}
 .alert-banner .alert-count {{ color: var(--alert-color, var(--warning)); font-weight: 600; }}
+.alert-banner .alert-scope {{
+  border: 1px solid var(--surface-rule);
+  border-radius: 999px;
+  padding: 1px 7px;
+}}
 .alert-banner .alert-arrow {{ margin-left: auto; color: var(--fg-3); }}
 .alert-banner.alert-critical {{ --alert-color: var(--error); }}
 .alert-banner.alert-warning {{ --alert-color: var(--warning); }}
@@ -1179,6 +1184,7 @@ p {{ margin: 0; }}
 table.alerts-table tbody tr td {{ vertical-align: top; }}
 table.thresholds td {{ font-size: 12.5px; }}
 table.thresholds td:first-child {{ width: 200px; }}
+.tuning-hint h4 {{ color: var(--warning); }}
 .breadcrumb {{
   font-size: 12px;
   color: var(--fg-3);

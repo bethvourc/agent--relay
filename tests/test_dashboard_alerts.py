@@ -101,6 +101,28 @@ def _cross(*sessions: SessionMetrics) -> CrossSessionMetrics:
     )
 
 
+def _alert(
+    *,
+    severity: str = "warning",
+    rule: str = "cost_per_turn",
+    sid: str = "s1",
+    turn: int | None = 1,
+    threshold: float | int = 0.10,
+    observed: float | int = 0.20,
+    message: str = "m",
+) -> Alert:
+    return Alert(
+        rule=rule,
+        severity=severity,
+        session_id=sid,
+        turn_number=turn,
+        threshold=threshold,
+        observed=observed,
+        message=message,
+        timestamp="2026-05-07T10:00:00Z",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Evaluation
 # ---------------------------------------------------------------------------
@@ -177,45 +199,40 @@ class BannerRenderTests(TestCase):
         self.assertEqual(render_alert_banner_html(()), "")
 
     def test_count_and_link_to_alerts_page(self) -> None:
-        a = Alert(
-            rule="cost_per_turn",
-            severity="warning",
-            session_id="s1",
-            turn_number=1,
-            threshold=0.10,
-            observed=0.20,
-            message="m",
-            timestamp="2026-05-07T10:00:00Z",
-        )
+        a = _alert(severity="warning")
         html = render_alert_banner_html((a, a))
         self.assertIn("/alerts", html)
-        self.assertIn("2 alerts", html)
+        self.assertIn("2 warning", html)
         self.assertIn("alert-warning", html)
 
     def test_critical_severity_paints_banner_red(self) -> None:
-        warn = Alert(
-            rule="cost_per_turn",
-            severity="warning",
-            session_id="s1",
-            turn_number=1,
-            threshold=0.10,
-            observed=0.15,
-            message="m",
-            timestamp="t",
-        )
-        crit = Alert(
-            rule="cost_per_turn",
-            severity="critical",
-            session_id="s2",
-            turn_number=1,
-            threshold=0.10,
-            observed=0.50,
-            message="m",
-            timestamp="t",
-        )
+        warn = _alert(severity="warning", observed=0.15)
+        crit = _alert(severity="critical", sid="s2", observed=0.50)
         html = render_alert_banner_html((warn, crit))
         self.assertIn("alert-critical", html)
         self.assertIn("var(--error)", html)
+
+    def test_banner_shows_severity_breakdown_when_mixed(self) -> None:
+        warn = _alert(severity="warning")
+        crit = _alert(severity="critical", sid="s2")
+        html = render_alert_banner_html((warn, warn, crit))
+        self.assertIn("1 critical, 2 warning", html)
+
+    def test_banner_omits_zero_severities(self) -> None:
+        warn = _alert(severity="warning")
+        html = render_alert_banner_html((warn, warn, warn))
+        self.assertIn("3 warning", html)
+        self.assertNotIn("critical", html)
+
+    def test_banner_shows_filtered_scope_chip(self) -> None:
+        html = render_alert_banner_html((_alert(),), filtered=True)
+        self.assertIn("in current view", html)
+        self.assertNotIn("across all sessions", html)
+
+    def test_banner_shows_unfiltered_scope_chip(self) -> None:
+        html = render_alert_banner_html((_alert(),), filtered=False)
+        self.assertIn("across all sessions", html)
+        self.assertNotIn("in current view", html)
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +286,46 @@ class AlertsPageRenderTests(TestCase):
             (), AlertConfig(), available_filter_query="agent=claude&since=2026-05-01"
         )
         self.assertIn('href="/?agent=claude', html)
+
+    def test_alerts_page_links_to_external_history_sources(self) -> None:
+        html = render_alerts_page_html((), AlertConfig())
+        self.assertIn("prometheus", html)
+        self.assertIn("metrics-tail", html)
+        self.assertIn("metrics.alert", html)
+
+    def test_tuning_hint_hidden_below_threshold(self) -> None:
+        alerts = tuple(_alert(sid=f"s{i}") for i in range(9))
+        html = render_alerts_page_html(alerts, AlertConfig(cost_per_turn_usd=0.10))
+        self.assertNotIn("too noisy", html)
+
+    def test_tuning_hint_shown_at_or_above_threshold(self) -> None:
+        cost_alerts = tuple(
+            _alert(rule="cost_per_turn", sid=f"cost-{i}", observed=0.20) for i in range(5)
+        )
+        token_alerts = tuple(
+            _alert(
+                rule="tokens_per_turn",
+                sid=f"tokens-{i}",
+                threshold=100,
+                observed=200 + i,
+            )
+            for i in range(5)
+        )
+        html = render_alerts_page_html(
+            cost_alerts + token_alerts,
+            AlertConfig(cost_per_turn_usd=0.10, tokens_per_turn=100),
+        )
+        self.assertIn("too noisy", html)
+        self.assertIn("cost / turn", html)
+        self.assertIn("tokens / turn", html)
+
+    def test_tuning_hint_uses_highest_observed_value_per_rule(self) -> None:
+        alerts = tuple(
+            _alert(rule="cost_per_turn", sid=f"s{i}", observed=value)
+            for i, value in enumerate((0.10, 0.50, 0.30, 0.20, 0.21, 0.22, 0.23, 0.24, 0.25, 0.26))
+        )
+        html = render_alerts_page_html(alerts, AlertConfig(cost_per_turn_usd=0.01))
+        self.assertIn("$0.5000", html)
 
 
 # ---------------------------------------------------------------------------
@@ -443,3 +500,8 @@ class AlertsRoutingTests(TestCase):
         self.assertIn('href="/alerts"', body)
         # The banner uses critical color since 0.42 / 0.10 = 4.2x → critical.
         self.assertIn("alert-critical", body)
+
+    def test_banner_chip_appears_in_dashboard_when_filter_active(self) -> None:
+        status, _ct, body = self._get("/?agent=claude")
+        self.assertEqual(status, 200)
+        self.assertIn("in current view", body)

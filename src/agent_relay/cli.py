@@ -9,6 +9,8 @@ from datetime import UTC
 from pathlib import Path
 
 from agent_relay.agents import AGENT_NAMES, AGENT_REGISTRY, resolve_agent_key
+from agent_relay.alerts import alerts_config_path, load_alert_config
+from agent_relay.dashboard_alerts import evaluate_alerts_for_view
 from agent_relay.errors import RelayError
 from agent_relay.exporters.jsonl import parse_header_pairs, tail_jsonl
 from agent_relay.exporters.otlp import serve_otlp
@@ -19,10 +21,12 @@ from agent_relay.metrics import (
     extract_session_metrics,
 )
 from agent_relay.metrics_ui import (
+    emit_alerts_quiet,
     emit_cross_session_metrics_json,
     emit_cross_session_metrics_quiet,
     emit_session_metrics_json,
     emit_session_metrics_quiet,
+    render_alerts_terminal,
     render_cross_session_metrics,
     render_session_metrics,
 )
@@ -579,6 +583,42 @@ def cmd_metrics(args: argparse.Namespace) -> int:
         emit_session_metrics_quiet(metrics)
     else:
         render_session_metrics(args.console, metrics)
+    return 0
+
+
+def cmd_alerts(args: argparse.Namespace) -> int:
+    """Show active alert firings for the current metrics view."""
+    repo_root = _resolve_repo(args.repo)
+    cfg = load_alert_config(repo_root)
+
+    since_dt = None
+    if getattr(args, "since", None):
+        try:
+            since_dt = _parse_since(args.since)
+        except ValueError as exc:
+            render_error(args.console, str(exc))
+            return 2
+
+    metrics_filter = MetricsFilter(
+        since=since_dt,
+        agents=tuple(getattr(args, "agent", None) or ()),
+    )
+    metrics = extract_cross_session_metrics(repo_root, filter=metrics_filter)
+    alerts = evaluate_alerts_for_view(metrics, cfg)
+    config_path = alerts_config_path(repo_root)
+
+    if args.json:
+        emit_json(
+            {
+                "command": "alerts",
+                "alerts": [alert.to_dict() for alert in alerts],
+                "config_path": str(config_path),
+            }
+        )
+    elif args.quiet:
+        emit_alerts_quiet(alerts)
+    else:
+        render_alerts_terminal(args.console, alerts, cfg, config_path)
     return 0
 
 
@@ -1301,6 +1341,41 @@ def build_parser() -> argparse.ArgumentParser:
     )
     metrics.add_argument("--repo")
     metrics.set_defaults(func=cmd_metrics)
+
+    # agent-relay alerts — active threshold firings for the metrics view
+    alerts = subparsers.add_parser(
+        "alerts",
+        help="Active alert firings against alerts.toml thresholds",
+    )
+    alerts.add_argument(
+        "--all",
+        action="store_true",
+        help="Evaluate all sessions (default; kept for metrics command symmetry)",
+    )
+    alerts.add_argument(
+        "--since",
+        help="Lower bound on session start (YYYY-MM-DD or ISO-8601)",
+    )
+    alerts.add_argument(
+        "--agent",
+        action="append",
+        help="Filter to one or more agent keys (repeatable)",
+    )
+    alerts.add_argument(
+        "--json",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="Machine-readable JSON output",
+    )
+    alerts.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="Minimal output",
+    )
+    alerts.add_argument("--repo")
+    alerts.set_defaults(func=cmd_alerts)
 
     # agent-relay metrics-tail — JSONL stream of metric events
     metrics_tail = subparsers.add_parser(

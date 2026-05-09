@@ -11,10 +11,18 @@ import json
 import sys
 
 from rich.console import Console
+from rich.markup import escape as rich_escape
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from agent_relay.alerts import Alert, AlertConfig
+from agent_relay.dashboard_alerts import (
+    _RULE_LABEL,
+    _SEVERITY_GLYPH,
+    _format_rule_value,
+    _format_severity_counts,
+)
 from agent_relay.formatting import fmt_cost, fmt_duration_ms, fmt_int
 from agent_relay.metrics import (
     CrossSessionMetrics,
@@ -180,6 +188,56 @@ def render_metrics_panel(metrics: SessionMetrics) -> Panel:
     return Panel(body, title="[heading]metrics so far[/]", border_style="surface.rule")
 
 
+def render_alerts_terminal(
+    console: Console,
+    alerts: tuple[Alert, ...],
+    cfg: AlertConfig,
+    config_path: object,
+) -> None:
+    """Render active alert firings using the same compact table grammar as metrics."""
+    _ = cfg
+    if not alerts:
+        console.print(f"  [muted]no alerts firing.  thresholds in:[/] {config_path}")
+        console.print()
+        return
+
+    header = Text()
+    header.append("alerts ", style="muted")
+    header.append(_format_severity_counts(alerts), style="value")
+    header.append("  ")
+    header.append("thresholds ", style="muted")
+    header.append(str(config_path), style="label")
+    console.print(header)
+
+    table = Table(
+        show_header=True,
+        header_style="heading",
+        border_style="surface.rule",
+        padding=(0, 1),
+        title="[heading]active alerts[/]",
+        title_style="heading",
+    )
+    table.add_column("severity", no_wrap=True)
+    table.add_column("rule")
+    table.add_column("observed", justify="right")
+    table.add_column("threshold", justify="right")
+    table.add_column("session", style="brand", no_wrap=True)
+    table.add_column("turn", justify="right", no_wrap=True)
+    table.add_column("message")
+    for alert in alerts:
+        table.add_row(
+            _severity_terminal_cell(alert),
+            rich_escape(_RULE_LABEL.get(alert.rule, alert.rule)),
+            rich_escape(_format_rule_value(alert.rule, alert.observed)),
+            rich_escape(_format_rule_value(alert.rule, alert.threshold)),
+            rich_escape(alert.session_id),
+            "-" if alert.turn_number is None else str(alert.turn_number),
+            rich_escape(alert.message),
+        )
+    console.print(table)
+    console.print()
+
+
 # ---------------------------------------------------------------------------
 # JSON / quiet output
 # ---------------------------------------------------------------------------
@@ -215,6 +273,16 @@ def emit_session_metrics_quiet(metrics: SessionMetrics) -> None:
 def emit_cross_session_metrics_quiet(metrics: CrossSessionMetrics) -> None:
     for s in metrics.sessions:
         emit_session_metrics_quiet(s)
+
+
+def emit_alerts_quiet(alerts: tuple[Alert, ...]) -> None:
+    for alert in alerts:
+        turn = "-" if alert.turn_number is None else str(alert.turn_number)
+        sys.stdout.write(
+            f"{alert.severity}\t{alert.rule}\t{alert.observed}\t{alert.threshold}\t"
+            f"{alert.session_id}\t{turn}\n"
+        )
+    sys.stdout.flush()
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +333,12 @@ def _format_by_agent(
     return "   ".join(parts) if parts else "-"
 
 
+def _severity_terminal_cell(alert: Alert) -> str:
+    style = "error" if alert.severity == "critical" else "warning"
+    glyph = _SEVERITY_GLYPH.get(alert.severity, "◌")
+    return f"[{style}]{glyph} {rich_escape(alert.severity)}[/]"
+
+
 # Backwards-compatible aliases for tests / external callers.
 _fmt_int = fmt_int
 _fmt_cost = fmt_cost
@@ -297,9 +371,11 @@ __all__ = [
     "render_session_metrics",
     "render_cross_session_metrics",
     "render_metrics_panel",
+    "render_alerts_terminal",
     "emit_session_metrics_json",
     "emit_cross_session_metrics_json",
     "emit_session_metrics_quiet",
     "emit_cross_session_metrics_quiet",
+    "emit_alerts_quiet",
     "metrics_to_jsonl_line",
 ]

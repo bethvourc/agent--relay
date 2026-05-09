@@ -118,6 +118,14 @@ def highest_severity(alerts: tuple[Alert, ...]) -> str | None:
     return max(alerts, key=lambda a: _SEVERITY_ORDER.get(a.severity, 0)).severity
 
 
+def _format_severity_counts(alerts: tuple[Alert, ...]) -> str:
+    counts: dict[str, int] = {}
+    for alert in alerts:
+        counts[alert.severity] = counts.get(alert.severity, 0) + 1
+    ordered = sorted(counts.items(), key=lambda kv: -_SEVERITY_ORDER.get(kv[0], 0))
+    return ", ".join(f"{count} {severity}" for severity, count in ordered)
+
+
 # ---------------------------------------------------------------------------
 # Config cache (mtime-aware, threadsafe)
 # ---------------------------------------------------------------------------
@@ -159,7 +167,11 @@ class AlertConfigCache:
 # ---------------------------------------------------------------------------
 
 
-def render_alert_banner_html(alerts: tuple[Alert, ...]) -> str:
+def render_alert_banner_html(
+    alerts: tuple[Alert, ...],
+    *,
+    filtered: bool = False,
+) -> str:
     """One-line summary with a link to ``/alerts``. Empty string when no
     alerts, so the surrounding region collapses cleanly."""
     if not alerts:
@@ -167,13 +179,12 @@ def render_alert_banner_html(alerts: tuple[Alert, ...]) -> str:
     sev = highest_severity(alerts) or "warning"
     glyph = _SEVERITY_GLYPH.get(sev, "◌")
     color = _SEVERITY_COLOR.get(sev, "var(--warning)")
-    count = len(alerts)
-    plural = "alert" if count == 1 else "alerts"
+    scope = "in current view" if filtered else "across all sessions"
     return f"""\
 <a class="alert-banner alert-{escape(sev)}" href="/alerts" style="--alert-color: {color};">
   <span class="alert-glyph">{glyph}</span>
-  <span class="alert-count">{count} {plural}</span>
-  <span class="muted small">click for details</span>
+  <span class="alert-count">{escape(_format_severity_counts(alerts))}</span>
+  <span class="alert-scope muted small">{escape(scope)}</span>
   <span class="alert-arrow">›</span>
 </a>"""
 
@@ -223,8 +234,10 @@ def _render_alerts_body(
             '<main class="page">',
             _render_alerts_header(alerts, generated_at),
             breadcrumb,
+            _render_region("tuning-hint", _render_tuning_hint(alerts, cfg)),
             _render_region("alerts-list", _render_alerts_list(alerts)),
             _render_alerts_config_card(cfg, config_path),
+            _render_alerts_history_card(),
             _render_alerts_footer(),
             "</main>",
         ]
@@ -353,6 +366,52 @@ def _render_alerts_config_card(cfg: AlertConfig, config_path: Path | None) -> st
 </section>"""
 
 
+def _render_alerts_history_card() -> str:
+    return """\
+<section class="card">
+  <h4>looking for history?</h4>
+  <p class="muted">
+    alerts are evaluated live and not stored locally. for trend analysis, history,
+    or paging, scrape <code class="path">/metrics</code> with prometheus, or pipe
+    <code class="path">agent-relay metrics-tail --webhook URL</code> to your log
+    aggregator. each alert firing is emitted as
+    <code class="path">{"kind": "metrics.alert", ...}</code> jsonl.
+  </p>
+</section>"""
+
+
+def _render_tuning_hint(alerts: tuple[Alert, ...], cfg: AlertConfig) -> str:
+    _ = cfg
+    if len(alerts) < 10:
+        return ""
+
+    by_rule: dict[str, float | int] = {}
+    for alert in alerts:
+        prev = by_rule.get(alert.rule)
+        if prev is None or float(alert.observed) > float(prev):
+            by_rule[alert.rule] = alert.observed
+
+    rows = "\n      ".join(
+        f"<tr><td class='muted'>{escape(_RULE_LABEL.get(rule, rule))}</td>"
+        f"<td class='num'>{escape(_format_rule_value(rule, value))}</td></tr>"
+        for rule, value in sorted(by_rule.items())
+    )
+    return f"""\
+<section class="card tuning-hint">
+  <h4>too noisy?</h4>
+  <p class="muted">
+    {len(alerts)} alerts firing across {len(by_rule)} rules. consider raising your
+    thresholds in <code class="path">.agent-relay/config/alerts.toml</code>. highest
+    observed values from current alerts:
+  </p>
+  <table class="data thresholds">
+    <tbody>
+      {rows}
+    </tbody>
+  </table>
+</section>"""
+
+
 def _render_alerts_footer() -> str:
     return """\
 <footer class="muted small">
@@ -369,13 +428,17 @@ def _render_alerts_footer() -> str:
 def render_alerts_payload(
     alerts: tuple[Alert, ...],
     *,
+    cfg: AlertConfig | None = None,
     generated_at: datetime | str | None = None,
 ) -> dict[str, object]:
     generated = _normalize_generated_at(generated_at or datetime.now(UTC))
+    if cfg is None:
+        cfg = AlertConfig()
     return {
         "generatedAt": generated["iso"],
         "renderedAt": generated["label"],
         "regions": {
+            "tuning-hint": _render_tuning_hint(alerts, cfg),
             "alerts-list": _render_alerts_list(alerts),
         },
     }
