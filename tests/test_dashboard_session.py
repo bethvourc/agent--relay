@@ -256,6 +256,19 @@ class DashboardSessionRenderTests(TestCase):
         self.assertIn("/session/s1/turn/1", html)
         self.assertIn("/session/s1/turn/2", html)
 
+    def test_render_session_detail_includes_per_turn_charts(self) -> None:
+        metrics = _session_metrics(_turn_metrics(1), _turn_metrics(2))
+        html = render_session_detail_html(
+            session_id="s1",
+            metrics=metrics,
+            integrity=_integrity_report(),
+            objective="Build session detail",
+        )
+        self.assertIn('data-dashboard-region="charts"', html)
+        self.assertIn("per-turn trends", html)
+        self.assertIn("chart-stack", html)
+        self.assertIn("chart-sparkline", html)
+
     def test_render_session_detail_empty_turns_uses_empty_state(self) -> None:
         html = render_session_detail_html(
             session_id="s1",

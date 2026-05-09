@@ -8,6 +8,7 @@ from html import escape
 from typing import Any
 from urllib.parse import quote
 
+from agent_relay.charts import sparkline, stacked_bar_chart
 from agent_relay.dashboard import (
     _STATUS_COLOR,
     _STATUS_GLYPH,
@@ -158,6 +159,7 @@ def _session_body(
             '<main class="page">',
             _render_region("header", regions["header"]),
             _render_region("totals", regions["totals"]),
+            _render_region("charts", regions["charts"]),
             _render_region("per-turn", regions["per-turn"]),
             _render_region("decisions", regions["decisions"]),
             _render_region("blockers", regions["blockers"]),
@@ -223,6 +225,7 @@ def _session_regions(
             generated_at=generated_at,
         ),
         "totals": _render_session_totals(metrics),
+        "charts": _render_session_charts(metrics),
         "per-turn": _render_per_turn(metrics, available_filter_query=available_filter_query),
         "decisions": _render_bulleted_card("decisions", integrity.decisions),
         "blockers": _render_bulleted_card("blockers", integrity.blockers),
@@ -329,6 +332,82 @@ def _render_session_totals(metrics: SessionMetrics) -> str:
     {_metric("duration", fmt_duration_ms(metrics.total_duration_ms))}
   </div>
 </section>"""
+
+
+def _render_session_charts(metrics: SessionMetrics) -> str:
+    """Per-turn cost / duration / tokens trends for a single session."""
+    if not metrics.turns:
+        return ""
+    turns = metrics.turns
+    turn_labels = tuple(f"turn {t.turn_number}" for t in turns)
+
+    cost_values = tuple((t.cost_usd or 0.0) for t in turns)
+    duration_values = tuple((t.duration_ms or 0) for t in turns)
+    tokens_stacks = tuple(((t.tokens.input or 0), (t.tokens.output or 0)) for t in turns)
+
+    cost_total = sum(t.cost_usd for t in turns if t.cost_usd is not None)
+    duration_total = sum(t.duration_ms or 0 for t in turns)
+    tokens_total = metrics.total_tokens.total or 0
+
+    cards = [
+        _render_chart_card(
+            title="cost / turn",
+            summary=fmt_cost(cost_total or None),
+            chart=sparkline(
+                cost_values,
+                width=220,
+                height=64,
+                stroke="var(--brand)",
+                fill="var(--brand-glow)",
+                title="cost per turn",
+            ),
+            range_label=f"{len(turns)} turn{'s' if len(turns) != 1 else ''}",
+        ),
+        _render_chart_card(
+            title="duration / turn",
+            summary=fmt_duration_ms(duration_total),
+            chart=sparkline(
+                duration_values,
+                width=220,
+                height=64,
+                stroke="var(--signal)",
+                title="duration per turn",
+            ),
+            range_label=f"{len(turns)} turn{'s' if len(turns) != 1 else ''}",
+        ),
+        _render_chart_card(
+            title="tokens in/out · turn",
+            summary=fmt_int(tokens_total),
+            chart=stacked_bar_chart(
+                tokens_stacks,
+                labels=turn_labels,
+                series_labels=("in", "out"),
+                width=220,
+                height=64,
+                fills=("var(--brand-dim)", "var(--brand)"),
+                title="tokens per turn",
+            ),
+            range_label=f"{len(turns)} turn{'s' if len(turns) != 1 else ''}",
+        ),
+    ]
+    return f"""\
+<section class="card">
+  <h4>per-turn trends</h4>
+  <div class="chart-grid">
+    {"".join(cards)}
+  </div>
+</section>"""
+
+
+def _render_chart_card(*, title: str, summary: str, chart: str, range_label: str) -> str:
+    return (
+        '<div class="chart-card">'
+        f'<div class="chart-head"><span class="label">{escape(title)}</span>'
+        f'<span class="value mono">{escape(summary)}</span></div>'
+        f'<div class="chart-svg">{chart}</div>'
+        f'<div class="chart-foot muted small mono">{escape(range_label)}</div>'
+        "</div>"
+    )
 
 
 def _render_per_turn(metrics: SessionMetrics, *, available_filter_query: str) -> str:

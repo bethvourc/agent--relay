@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -794,12 +794,95 @@ def _rebuild_session_with_turns(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class DailyBucket:
+    """One day's worth of aggregated metrics. Produced by :func:`bucketize`.
+
+    ``label`` is an ISO date (``YYYY-MM-DD``); zero-fill days for missing
+    data. ``cost`` is None when no turn in the bucket had a cost (preserves
+    the "unknown vs $0" distinction).
+    """
+
+    label: str
+    tokens: int
+    cost: float | None
+    turns: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "label": self.label,
+            "tokens": self.tokens,
+            "cost": self.cost,
+            "turns": self.turns,
+        }
+
+
+def bucketize(
+    metrics: CrossSessionMetrics,
+    *,
+    by: str = "day",
+    limit: int = 30,
+) -> tuple[DailyBucket, ...]:
+    """Aggregate per-turn data into time buckets for charting.
+
+    Currently only ``by="day"`` is supported; the parameter exists so future
+    "week" / "hour" variants can plug in without touching call sites.
+
+    Returns an ordered tuple of :class:`DailyBucket`, oldest first, with
+    ``limit`` controlling the trailing window in days. Gap days are
+    zero-filled so charts produce a continuous timeline.
+    """
+    if by != "day":
+        raise ValueError(f"unsupported bucket: {by!r}")
+
+    tokens_by_day: dict[str, int] = {}
+    cost_by_day: dict[str, float | None] = {}
+    turns_by_day: dict[str, int] = {}
+
+    for session in metrics.sessions:
+        fallback_day = _iso_day(session.started_at) or _iso_day(session.updated_at)
+        for turn in session.turns:
+            day = _iso_day(turn.started_at) or _iso_day(turn.finished_at) or fallback_day
+            if day is None:
+                continue
+            tokens_by_day[day] = tokens_by_day.get(day, 0) + (turn.tokens.total or 0)
+            turns_by_day[day] = turns_by_day.get(day, 0) + 1
+            if turn.cost_usd is not None:
+                cost_by_day[day] = (cost_by_day.get(day) or 0.0) + turn.cost_usd
+
+    if not tokens_by_day and not turns_by_day:
+        return ()
+
+    days_with_data = sorted(set(tokens_by_day) | set(turns_by_day) | set(cost_by_day))
+    last_day = date.fromisoformat(days_with_data[-1])
+    span = max(1, min(limit, (last_day - date.fromisoformat(days_with_data[0])).days + 1))
+    first_day = last_day - timedelta(days=span - 1)
+
+    buckets: list[DailyBucket] = []
+    cursor = first_day
+    while cursor <= last_day:
+        key = cursor.isoformat()
+        buckets.append(
+            DailyBucket(
+                label=key,
+                tokens=tokens_by_day.get(key, 0),
+                cost=cost_by_day.get(key),
+                turns=turns_by_day.get(key, 0),
+            )
+        )
+        cursor += timedelta(days=1)
+    return tuple(buckets)
+
+
 __all__ = [
     "TokenUsage",
     "TurnMetrics",
     "SessionMetrics",
     "CrossSessionMetrics",
+    "DailyBucket",
+    "MetricsFilter",
     "extract_turn_metrics",
     "extract_session_metrics",
     "extract_cross_session_metrics",
+    "bucketize",
 ]

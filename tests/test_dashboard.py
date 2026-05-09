@@ -12,6 +12,7 @@ from agent_relay.metrics import (
     CrossSessionMetrics,
     SessionMetrics,
     TokenUsage,
+    TurnMetrics,
 )
 from tests._dashboard_test_helpers import (
     get_dashboard,
@@ -45,6 +46,70 @@ def _build_sample_metrics() -> CrossSessionMetrics:
         total_tokens=TokenUsage(input=10, output=20),
         total_cost_usd=0.1841,
         total_duration_ms=2600,
+        session_count=1,
+    )
+
+
+def _build_metrics_with_turns() -> CrossSessionMetrics:
+    turns = (
+        TurnMetrics(
+            session_id="20260507-101010-aae0fb",
+            turn_number=1,
+            agent="claude",
+            model=None,
+            started_at="2026-05-07T09:00:00Z",
+            finished_at="2026-05-07T09:00:01Z",
+            duration_ms=1000,
+            api_duration_ms=None,
+            tokens=TokenUsage(input=10, output=5),
+            cost_usd=0.10,
+            tool_calls=0,
+            status="ok",
+            succeeded=True,
+        ),
+        TurnMetrics(
+            session_id="20260507-101010-aae0fb",
+            turn_number=2,
+            agent="claude",
+            model=None,
+            started_at="2026-05-08T10:00:00Z",
+            finished_at="2026-05-08T10:00:02Z",
+            duration_ms=2000,
+            api_duration_ms=None,
+            tokens=TokenUsage(input=4, output=6),
+            cost_usd=0.05,
+            tool_calls=1,
+            status="ok",
+            succeeded=True,
+        ),
+    )
+    sm = SessionMetrics(
+        session_id="20260507-101010-aae0fb",
+        current_agent="claude",
+        current_status="active",
+        objective="o",
+        started_at="2026-05-07T09:00:00Z",
+        updated_at="2026-05-08T10:00:02Z",
+        turn_count=2,
+        successful_turns=2,
+        total_tokens=TokenUsage(input=14, output=11),
+        total_cost_usd=0.15,
+        total_duration_ms=3000,
+        by_agent={"claude": TokenUsage(input=14, output=11)},
+        cost_by_agent={"claude": 0.15},
+        turns=turns,
+    )
+    return CrossSessionMetrics(
+        sessions=(sm,),
+        by_agent={"claude": TokenUsage(input=14, output=11)},
+        cost_by_agent={"claude": 0.15},
+        by_day={
+            "2026-05-07": TokenUsage(input=10, output=5),
+            "2026-05-08": TokenUsage(input=4, output=6),
+        },
+        total_tokens=TokenUsage(input=14, output=11),
+        total_cost_usd=0.15,
+        total_duration_ms=3000,
         session_count=1,
     )
 
@@ -104,6 +169,23 @@ class DashboardRendererTests(TestCase):
         )
         self.assertIn("2026-05-07 10:11:00 UTC", html)
         self.assertIn('data-generated-at="2026-05-07T10:11:00Z"', html)
+
+    def test_renders_chart_region_with_trends(self) -> None:
+        html = render_dashboard_html(_build_metrics_with_turns())
+        self.assertIn('data-dashboard-region="charts"', html)
+        self.assertIn("trends · last", html)
+        # Bar SVG for tokens/day.
+        self.assertIn("chart-bars", html)
+        # Sparkline for cost/day.
+        self.assertIn("chart-sparkline", html)
+        # CSS var fills (no inline hex codes for chart strokes).
+        self.assertIn("var(--brand-dim)", html)
+
+    def test_chart_region_omitted_when_no_buckets(self) -> None:
+        html = render_dashboard_html(CrossSessionMetrics(sessions=()))
+        # Region wrapper still emitted, but inner chart card is absent.
+        self.assertIn('data-dashboard-region="charts"', html)
+        self.assertNotIn("chart-bars", html)
 
     def test_update_payload_contains_patchable_regions(self) -> None:
         payload = render_dashboard_update_payload(

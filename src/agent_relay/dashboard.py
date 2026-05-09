@@ -21,8 +21,15 @@ from html import escape
 from urllib.parse import quote, urlencode
 
 from agent_relay import tokens as T
+from agent_relay.charts import bar_chart, sparkline
 from agent_relay.formatting import fmt_cost, fmt_duration_ms, fmt_int
-from agent_relay.metrics import CrossSessionMetrics, MetricsFilter, SessionMetrics, TokenUsage
+from agent_relay.metrics import (
+    CrossSessionMetrics,
+    MetricsFilter,
+    SessionMetrics,
+    TokenUsage,
+    bucketize,
+)
 
 DASHBOARD_REFRESH_SECONDS = 5
 
@@ -161,6 +168,7 @@ def _render_body(
             _render_region("alerts", regions["alerts"]),
             _render_filter_bar(filter, available_agents),
             _render_region("totals", regions["totals"]),
+            _render_region("charts", regions["charts"]),
             _render_region("by-agent", regions["by-agent"]),
             _render_region("sessions", regions["sessions"]),
             _render_region("by-day", regions["by-day"]),
@@ -200,6 +208,7 @@ def _render_dashboard_regions(
         "filter-errors": _render_filter_errors(filter_errors),
         "alerts": alerts_banner_html,
         "totals": _render_totals(metrics),
+        "charts": _render_charts(metrics),
         "by-agent": _render_by_agent(metrics),
         "sessions": _render_sessions(metrics, filter_query=filter_query),
         "by-day": _render_by_day(metrics),
@@ -394,19 +403,94 @@ def _render_session_row(s: SessionMetrics, *, filter_query: str = "") -> str:
     )
 
 
+def _render_charts(metrics: CrossSessionMetrics) -> str:
+    """Tokens / cost / turns over the trailing 30 days, as side-by-side SVGs."""
+    buckets = bucketize(metrics, by="day", limit=30)
+    if not buckets:
+        return ""
+    labels = tuple(b.label for b in buckets)
+    tokens = tuple(b.tokens for b in buckets)
+    cost = tuple((b.cost or 0.0) for b in buckets)
+    turns = tuple(b.turns for b in buckets)
+    first_day = labels[0]
+    last_day = labels[-1]
+    range_label = first_day if first_day == last_day else f"{first_day} → {last_day}"
+
+    tokens_total = sum(tokens)
+    cost_total = sum(b.cost for b in buckets if b.cost is not None)
+    turns_total = sum(turns)
+
+    cards = [
+        _render_chart_card(
+            title="tokens / day",
+            summary=fmt_int(tokens_total),
+            chart=bar_chart(
+                tokens,
+                labels=labels,
+                width=240,
+                height=80,
+                fill="var(--brand-dim)",
+                title="tokens per day",
+            ),
+            range_label=range_label,
+        ),
+        _render_chart_card(
+            title="cost / day",
+            summary=fmt_cost(cost_total or None),
+            chart=sparkline(
+                cost,
+                width=240,
+                height=80,
+                stroke="var(--brand)",
+                fill="var(--brand-glow)",
+                title="cost per day",
+            ),
+            range_label=range_label,
+        ),
+        _render_chart_card(
+            title="turns / day",
+            summary=fmt_int(turns_total),
+            chart=bar_chart(
+                turns,
+                labels=labels,
+                width=240,
+                height=80,
+                fill="var(--signal-dim)",
+                title="turns per day",
+            ),
+            range_label=range_label,
+        ),
+    ]
+    return f"""\
+<section class="card">
+  <h4>trends · last {len(buckets)}d</h4>
+  <div class="chart-grid">
+    {"".join(cards)}
+  </div>
+</section>"""
+
+
+def _render_chart_card(*, title: str, summary: str, chart: str, range_label: str) -> str:
+    return (
+        '<div class="chart-card">'
+        f'<div class="chart-head"><span class="label">{escape(title)}</span>'
+        f'<span class="value mono">{escape(summary)}</span></div>'
+        f'<div class="chart-svg">{chart}</div>'
+        f'<div class="chart-foot muted small mono">{escape(range_label)}</div>'
+        "</div>"
+    )
+
+
 def _render_by_day(metrics: CrossSessionMetrics) -> str:
     if not metrics.by_day:
         return ""
     days = sorted(metrics.by_day.items())
-    max_total = max((u.total or 0) for _, u in days) or 1
     rows: list[str] = []
     for day, usage in days:
         total = usage.total or 0
-        pct = int(round(100 * total / max_total))
         rows.append(
             "<tr>"
             f'<td class="muted mono">{escape(day)}</td>'
-            f'<td class="bar"><span class="bar-fill" style="width:{pct}%"></span></td>'
             f"<td class=num>{escape(fmt_int(total))}</td>"
             "</tr>"
         )
@@ -414,7 +498,8 @@ def _render_by_day(metrics: CrossSessionMetrics) -> str:
     return f"""\
 <section class="card">
   <h4>by day</h4>
-  <table class="data bars">
+  <table class="data">
+    <thead><tr><th>day</th><th class=num>tokens</th></tr></thead>
     <tbody>
       {body}
     </tbody>
@@ -815,6 +900,53 @@ html, body {{
   font-size: 18px;
   font-weight: 700;
   color: var(--fg-1);
+}}
+
+.chart-grid {{
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}}
+.chart-card {{
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px 8px;
+  background: var(--surface-1);
+  border: 1px solid var(--surface-rule);
+  border-radius: 2px;
+}}
+.chart-head {{
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}}
+.chart-head .label {{
+  font-size: 11px;
+  color: var(--fg-3);
+  text-transform: lowercase;
+  letter-spacing: 0.04em;
+}}
+.chart-head .value {{
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--fg-1);
+}}
+.chart-svg {{
+  display: block;
+  width: 100%;
+}}
+.chart-svg svg.chart {{
+  display: block;
+  width: 100%;
+  height: auto;
+}}
+.chart-foot {{
+  font-size: 10.5px;
+}}
+@media (max-width: 600px) {{
+  .chart-grid {{ grid-template-columns: 1fr; }}
 }}
 
 table.data {{
