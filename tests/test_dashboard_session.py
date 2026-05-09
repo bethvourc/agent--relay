@@ -67,7 +67,12 @@ def _write_turn_artifacts(repo: Path, sid: str, n: int = 3) -> Path:
     return tdir
 
 
-def _turn_metrics(n: int = 1, *, prompt_agent: str = "claude") -> TurnMetrics:
+def _turn_metrics(
+    n: int = 1,
+    *,
+    prompt_agent: str = "claude",
+    cost_usd: float | None = 0.1234,
+) -> TurnMetrics:
     return TurnMetrics(
         session_id="s1",
         turn_number=n,
@@ -78,7 +83,7 @@ def _turn_metrics(n: int = 1, *, prompt_agent: str = "claude") -> TurnMetrics:
         duration_ms=42000,
         api_duration_ms=31000,
         tokens=TokenUsage(input=10, output=20, cache_read=3, cache_creation=4),
-        cost_usd=0.1234,
+        cost_usd=cost_usd,
         tool_calls=1,
         status="completed",
         succeeded=True,
@@ -87,11 +92,12 @@ def _turn_metrics(n: int = 1, *, prompt_agent: str = "claude") -> TurnMetrics:
 
 def _session_metrics(*turns: TurnMetrics, sid: str = "s1") -> SessionMetrics:
     total = TokenUsage()
-    total_cost = 0.0
+    total_cost: float | None = None
     total_duration = 0
     for turn in turns:
         total = total + turn.tokens
-        total_cost += turn.cost_usd or 0.0
+        if turn.cost_usd is not None:
+            total_cost = (total_cost or 0.0) + turn.cost_usd
         total_duration += turn.duration_ms or 0
     return SessionMetrics(
         session_id=sid,
@@ -103,10 +109,10 @@ def _session_metrics(*turns: TurnMetrics, sid: str = "s1") -> SessionMetrics:
         turn_count=len(turns),
         successful_turns=len([turn for turn in turns if turn.succeeded]),
         total_tokens=total,
-        total_cost_usd=total_cost if turns else None,
+        total_cost_usd=total_cost,
         total_duration_ms=total_duration,
         by_agent={"claude": total} if turns else {},
-        cost_by_agent={"claude": total_cost} if turns else {},
+        cost_by_agent={"claude": total_cost} if turns and total_cost is not None else {},
         turns=turns,
     )
 
@@ -268,6 +274,50 @@ class DashboardSessionRenderTests(TestCase):
         self.assertIn("per-turn trends", html)
         self.assertIn("chart-stack", html)
         self.assertIn("chart-sparkline", html)
+        self.assertNotIn("duration / turn", html)
+        self.assertNotIn("duration per turn", html)
+
+    def test_render_session_detail_cost_chart_shows_empty_state_when_cost_missing(self) -> None:
+        metrics = _session_metrics(_turn_metrics(1, cost_usd=None), _turn_metrics(2, cost_usd=None))
+        html = render_session_detail_html(
+            session_id="s1",
+            metrics=metrics,
+            integrity=_integrity_report(),
+            objective="Build session detail",
+        )
+        self.assertIn("no cost data", html)
+        self.assertIn("chart-empty", html)
+        self.assertIn('<span class="value mono">-</span>', html)
+
+    def test_render_session_detail_cost_chart_plots_only_known_costs(self) -> None:
+        metrics = _session_metrics(
+            _turn_metrics(1, cost_usd=None),
+            _turn_metrics(2, cost_usd=0.25),
+            _turn_metrics(3, cost_usd=0.50),
+        )
+        html = render_session_detail_html(
+            session_id="s1",
+            metrics=metrics,
+            integrity=_integrity_report(),
+            objective="Build session detail",
+        )
+        self.assertIn("$0.7500", html)
+        self.assertIn("2 cost points", html)
+        self.assertNotIn("chart-empty", html)
+
+    def test_render_session_detail_per_turn_table_marks_missing_cost_and_omits_duration(
+        self,
+    ) -> None:
+        metrics = _session_metrics(_turn_metrics(1, cost_usd=None))
+        html = render_session_detail_html(
+            session_id="s1",
+            metrics=metrics,
+            integrity=_integrity_report(),
+            objective="Build session detail",
+        )
+        self.assertIn('<td class=num><span class="muted">no cost data</span></td>', html)
+        self.assertNotIn("<th class=num>duration</th>", html)
+        self.assertNotIn("duration / turn", html)
 
     def test_render_session_detail_empty_turns_uses_empty_state(self) -> None:
         html = render_session_detail_html(

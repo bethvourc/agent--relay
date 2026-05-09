@@ -8,7 +8,7 @@ from html import escape
 from typing import Any
 from urllib.parse import quote
 
-from agent_relay.charts import sparkline, stacked_bar_chart
+from agent_relay.charts import empty_chart, sparkline, stacked_bar_chart
 from agent_relay.dashboard import (
     _STATUS_COLOR,
     _STATUS_GLYPH,
@@ -335,45 +335,41 @@ def _render_session_totals(metrics: SessionMetrics) -> str:
 
 
 def _render_session_charts(metrics: SessionMetrics) -> str:
-    """Per-turn cost / duration / tokens trends for a single session."""
+    """Per-turn cost and token trends for a single session."""
     if not metrics.turns:
         return ""
     turns = metrics.turns
     turn_labels = tuple(f"turn {t.turn_number}" for t in turns)
 
-    cost_values = tuple((t.cost_usd or 0.0) for t in turns)
-    duration_values = tuple((t.duration_ms or 0) for t in turns)
+    cost_values = tuple(t.cost_usd for t in turns if t.cost_usd is not None)
     tokens_stacks = tuple(((t.tokens.input or 0), (t.tokens.output or 0)) for t in turns)
 
-    cost_total = sum(t.cost_usd for t in turns if t.cost_usd is not None)
-    duration_total = sum(t.duration_ms or 0 for t in turns)
+    cost_total = sum(cost_values) if cost_values else None
     tokens_total = metrics.total_tokens.total or 0
+    cost_chart = (
+        sparkline(
+            cost_values,
+            width=220,
+            height=64,
+            stroke="var(--brand)",
+            fill="var(--brand-glow)",
+            title="cost per turn",
+        )
+        if cost_values
+        else empty_chart(width=220, height=64, label="no cost data")
+    )
+    cost_range = (
+        f"{len(cost_values)} cost point{'s' if len(cost_values) != 1 else ''}"
+        if len(cost_values) != len(turns)
+        else f"{len(turns)} turn{'s' if len(turns) != 1 else ''}"
+    )
 
     cards = [
         _render_chart_card(
             title="cost / turn",
-            summary=fmt_cost(cost_total or None),
-            chart=sparkline(
-                cost_values,
-                width=220,
-                height=64,
-                stroke="var(--brand)",
-                fill="var(--brand-glow)",
-                title="cost per turn",
-            ),
-            range_label=f"{len(turns)} turn{'s' if len(turns) != 1 else ''}",
-        ),
-        _render_chart_card(
-            title="duration / turn",
-            summary=fmt_duration_ms(duration_total),
-            chart=sparkline(
-                duration_values,
-                width=220,
-                height=64,
-                stroke="var(--signal)",
-                title="duration per turn",
-            ),
-            range_label=f"{len(turns)} turn{'s' if len(turns) != 1 else ''}",
+            summary=fmt_cost(cost_total),
+            chart=cost_chart,
+            range_label=cost_range,
         ),
         _render_chart_card(
             title="tokens in/out · turn",
@@ -427,8 +423,7 @@ def _render_per_turn(metrics: SessionMetrics, *, available_filter_query: str) ->
             f"<td>{escape(turn.agent)}</td>"
             f"<td class=num>{escape(fmt_int(turn.tokens.input))}</td>"
             f"<td class=num>{escape(fmt_int(turn.tokens.output))}</td>"
-            f"<td class=num>{escape(fmt_cost(turn.cost_usd))}</td>"
-            f"<td class=num>{escape(fmt_duration_ms(turn.duration_ms))}</td>"
+            f"<td class=num>{_format_turn_cost_cell(turn.cost_usd)}</td>"
             f"<td class=num>{escape(fmt_int(turn.tool_calls))}</td>"
             f"<td>{_status_badge(turn.status or ('ok' if turn.succeeded else 'failed'))}</td>"
             "</tr>"
@@ -441,7 +436,7 @@ def _render_per_turn(metrics: SessionMetrics, *, available_filter_query: str) ->
     <thead>
       <tr>
         <th>#</th><th>agent</th><th class=num>tokens in</th><th class=num>tokens out</th>
-        <th class=num>cost</th><th class=num>duration</th><th class=num>tools</th><th>status</th>
+        <th class=num>cost</th><th class=num>tools</th><th>status</th>
       </tr>
     </thead>
     <tbody>
@@ -449,6 +444,12 @@ def _render_per_turn(metrics: SessionMetrics, *, available_filter_query: str) ->
     </tbody>
   </table>
 </section>"""
+
+
+def _format_turn_cost_cell(cost_usd: float | None) -> str:
+    if cost_usd is None:
+        return '<span class="muted">no cost data</span>'
+    return escape(fmt_cost(cost_usd))
 
 
 def _render_bulleted_card(title: str, items: tuple[str, ...]) -> str:
