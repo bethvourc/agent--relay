@@ -73,31 +73,31 @@ Releases and downloadable artifacts live on the
   context from every AI coding agent on the machine and hands off
   automatically when one rate-limits. Drive it from the CLI, or let it
   run in the background. See [the always-on guide](https://agent-relay.dev/always-on).
-- **`relay install` / `uninstall` / `doctor`** — detects installed agents
+- `relay install` / `uninstall` / `doctor` — detects installed agents
   (Claude Code, Cursor, Antigravity, Windsurf, VS Code, Codex CLI, aider,
   Gemini CLI, Warp), wires hooks/extensions/configs, and registers the
   daemon for auto-start via launchd / systemd user units / Windows
   Startup folder. `doctor` runs six health checks.
-- **`relay daemon start|stop|status|tail`** — manages the background
+- `relay daemon start|stop|status|tail` — manages the background
   process; `tail` streams live events from every adapter.
-- **`relay wrap <cmd>`** — PTY-wraps any CLI agent (codex, aider,
+- `relay wrap <cmd>` — PTY-wraps any CLI agent (codex, aider,
   gemini-cli, sgpt, llm) so its rate-limits and lifecycle are captured
   without disturbing colours, prompts, or `^C`.
-- **`relay resume <snapshot-id>`** + **`relay snapshots`** — list and
+- `relay resume <snapshot-id>` + `relay snapshots` — list and
   reopen handoff snapshots produced by the daemon.
-- **`relay dashboard`** — local web UI showing live sessions, snapshots,
+- `relay dashboard` — local web UI showing live sessions, snapshots,
   and a handoff trigger. Built into the binary; no external service.
-- **`relay proxy start|status|cert`** — opt-in HTTPS proxy (requires
+- `relay proxy start|status|cert` — opt-in HTTPS proxy (requires
   `pip install agent-relay-tool[proxy]`) for lossless rate-limit capture
   from Anthropic / OpenAI / Google response headers.
-- **`relay mcp serve`** — MCP server that lets Warp's native agent (or
+- `relay mcp serve` — MCP server that lets Warp's native agent (or
   any MCP-aware client) feed events into the relay log.
-- **`relay self-update`** — pulls the latest binary release and replaces
+- `relay self-update` — pulls the latest binary release and replaces
   the running executable atomically.
-- **`relay` short command** — declared alongside `agent-relay` in the
+- `relay` short command — declared alongside `agent-relay` in the
   PyPI package, so the canonical short name works regardless of install
   method.
-- **`--version` / `-V`** flag on the root parser.
+- `--version` / `-V` flag on the root parser.
 - **VS Code-family extension** — one extension published to Open VSX and
   the VS Code Marketplace covers Cursor, Antigravity, VS Code, Windsurf,
   Trae, Void, and any future VS Code fork. Includes a `Relay: Hand off
