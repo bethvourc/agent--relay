@@ -9,6 +9,22 @@ Releases and downloadable artifacts live on the
 
 ## [Unreleased]
 
+## [0.6.2] — 2026-05-20
+
+### Changed
+- **VS Code extension publish is no longer automated.** The Marketplace
+  publisher Members / Azure DevOps identity dance proved brittle in CI;
+  publishing the `.vsix` by hand from a laptop is a five-minute step per
+  release and avoids surprises. The recipe lives as a comment in
+  `release.yml`. The extension's `package.json` now tracks the main
+  package version (`0.6.2` here) so manual publishes stay in step.
+
+### Fixed
+- **Homebrew bump PR**. The release workflow tried to `cp` the rendered
+  formula into `tap/Formula/agent-relay.rb`, but a freshly-created tap
+  repo doesn't have a `Formula/` directory yet. Added `mkdir -p
+  tap/Formula` before the copy.
+
 ## [0.6.1] — 2026-05-20
 
 ### Removed
@@ -208,7 +224,8 @@ Releases and downloadable artifacts live on the
 - Status / dashboard rendering for inspecting sessions from the CLI.
 - Migration path from legacy session files into v2 sessions.
 
-[Unreleased]: https://github.com/bethvourc/agent--relay/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/bethvourc/agent--relay/compare/v0.6.2...HEAD
+[0.6.2]: https://github.com/bethvourc/agent--relay/releases/tag/v0.6.2
 [0.6.1]: https://github.com/bethvourc/agent--relay/releases/tag/v0.6.1
 [0.6.0]: https://github.com/bethvourc/agent--relay/releases/tag/v0.6.0
 [0.5.6]: https://github.com/bethvourc/agent--relay/releases/tag/v0.5.6
