@@ -9,6 +9,16 @@ Releases and downloadable artifacts live on the
 
 ## [Unreleased]
 
+## [0.6.3] — 2026-05-20
+
+### Fixed
+- **Homebrew bump PR**: `git push` from the rendered formula failed
+  because `gh repo clone` authenticates via `GH_TOKEN` but `git push`
+  falls back to the git credential helper which has no credentials in
+  CI. Now we rewrite the tap remote URL to embed the PAT
+  (`https://x-access-token:$GH_TOKEN@github.com/…`) right after clone so
+  subsequent pushes succeed without any extra credential helper setup.
+
 ## [0.6.2] — 2026-05-20
 
 ### Changed
@@ -224,7 +234,8 @@ Releases and downloadable artifacts live on the
 - Status / dashboard rendering for inspecting sessions from the CLI.
 - Migration path from legacy session files into v2 sessions.
 
-[Unreleased]: https://github.com/bethvourc/agent--relay/compare/v0.6.2...HEAD
+[Unreleased]: https://github.com/bethvourc/agent--relay/compare/v0.6.3...HEAD
+[0.6.3]: https://github.com/bethvourc/agent--relay/releases/tag/v0.6.3
 [0.6.2]: https://github.com/bethvourc/agent--relay/releases/tag/v0.6.2
 [0.6.1]: https://github.com/bethvourc/agent--relay/releases/tag/v0.6.1
 [0.6.0]: https://github.com/bethvourc/agent--relay/releases/tag/v0.6.0
