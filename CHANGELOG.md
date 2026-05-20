@@ -9,6 +9,71 @@ Releases and downloadable artifacts live on the
 
 ## [Unreleased]
 
+### Removed
+- **Intel macOS native binary** (`relay-darwin-x64`). GitHub deprecated the
+  `macos-13` runner in 2026 and capacity collapsed — jobs targeting that
+  label routinely queue for hours without starting. Intel-Mac users now
+  fall through automatically to `install.sh`'s `uv tool install` fallback;
+  the curl one-liner still works on Intel Macs, it just takes the source
+  path instead of a binary download. Apple Silicon, Linux x64, Linux
+  arm64, and Windows x64 binaries are unaffected. Revisit when (if) we
+  need cross-compile-from-arm64 to bring back the native binary.
+
+## [0.6.0] — 2026-05-20
+
+### Added
+- **Always-on layer**: a small local daemon plus four adapters captures
+  context from every AI coding agent on the machine and hands off
+  automatically when one rate-limits. Drive it from the CLI, or let it
+  run in the background. See [the always-on guide](https://agent-relay.dev/always-on).
+- **`relay install` / `uninstall` / `doctor`** — detects installed agents
+  (Claude Code, Cursor, Antigravity, Windsurf, VS Code, Codex CLI, aider,
+  Gemini CLI, Warp), wires hooks/extensions/configs, and registers the
+  daemon for auto-start via launchd / systemd user units / Windows
+  Startup folder. `doctor` runs six health checks.
+- **`relay daemon start|stop|status|tail`** — manages the background
+  process; `tail` streams live events from every adapter.
+- **`relay wrap <cmd>`** — PTY-wraps any CLI agent (codex, aider,
+  gemini-cli, sgpt, llm) so its rate-limits and lifecycle are captured
+  without disturbing colours, prompts, or `^C`.
+- **`relay resume <snapshot-id>`** + **`relay snapshots`** — list and
+  reopen handoff snapshots produced by the daemon.
+- **`relay dashboard`** — local web UI showing live sessions, snapshots,
+  and a handoff trigger. Built into the binary; no external service.
+- **`relay proxy start|status|cert`** — opt-in HTTPS proxy (requires
+  `pip install agent-relay-tool[proxy]`) for lossless rate-limit capture
+  from Anthropic / OpenAI / Google response headers.
+- **`relay mcp serve`** — MCP server that lets Warp's native agent (or
+  any MCP-aware client) feed events into the relay log.
+- **`relay self-update`** — pulls the latest binary release and replaces
+  the running executable atomically.
+- **`relay` short command** — declared alongside `agent-relay` in the
+  PyPI package, so the canonical short name works regardless of install
+  method.
+- **`--version` / `-V`** flag on the root parser.
+- **VS Code-family extension** — one extension published to Open VSX and
+  the VS Code Marketplace covers Cursor, Antigravity, VS Code, Windsurf,
+  Trae, Void, and any future VS Code fork. Includes a `Relay: Hand off
+  this session` command on `Cmd+Shift+R`.
+- **Native binary distribution** — PyInstaller bundles for macOS arm64 /
+  macOS x64 / Linux x64 / Linux arm64 / Windows x64, published on every
+  release via GitHub Actions. The curl one-liner at agent-relay.dev now
+  detects platform and pulls the right binary, with a `uv tool` fallback.
+- **Homebrew tap** at `bethvourc/homebrew-tap` — `brew install
+  bethvourc/tap/agent-relay` installs the native binary.
+- **Docs site**: new pages at `/always-on`, `/architecture`, `/privacy`,
+  `/adapters/{claude-code,cursor,warp,cli}`.
+
+### Changed
+- `pyproject.toml` cleaned up — `[project.optional-dependencies]` was
+  previously nested inside `[project]`, which silently dropped
+  `authors` / `keywords` / `classifiers` under the wrong section.
+- Release pipeline split: `publish.yml` keeps PyPI ownership;
+  `release.yml` owns platform binaries (uploaded to the public mirror
+  via a scoped PAT), VS Code extension publishing, and the Homebrew bump
+  PR. Source code stays on the private origin; only compiled artifacts
+  surface publicly.
+
 ## [0.5.6] — 2026-05-14
 
 ### Added
@@ -134,7 +199,8 @@ Releases and downloadable artifacts live on the
 - Status / dashboard rendering for inspecting sessions from the CLI.
 - Migration path from legacy session files into v2 sessions.
 
-[Unreleased]: https://github.com/bethvourc/agent--relay/compare/v0.5.6...HEAD
+[Unreleased]: https://github.com/bethvourc/agent--relay/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/bethvourc/agent--relay/releases/tag/v0.6.0
 [0.5.6]: https://github.com/bethvourc/agent--relay/releases/tag/v0.5.6
 [0.5.5]: https://github.com/bethvourc/agent--relay/releases/tag/v0.5.5
 [0.5.0]: https://github.com/bethvourc/agent--relay/releases/tag/v0.5.0
