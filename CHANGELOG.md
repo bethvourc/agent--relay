@@ -9,6 +9,8 @@ Releases and downloadable artifacts live on the
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-05-20
+
 ### Removed
 - **Intel macOS native binary** (`relay-darwin-x64`). GitHub deprecated the
   `macos-13` runner in 2026 and capacity collapsed — jobs targeting that
@@ -18,6 +20,13 @@ Releases and downloadable artifacts live on the
   path instead of a binary download. Apple Silicon, Linux x64, Linux
   arm64, and Windows x64 binaries are unaffected. Revisit when (if) we
   need cross-compile-from-arm64 to bring back the native binary.
+
+### Fixed
+- The v0.6.0 release shipped without the Homebrew bump PR (the
+  `bump-homebrew` job depended on the cancelled darwin-x64 matrix entry).
+  With darwin-x64 dropped from the matrix, v0.6.1 produces a clean
+  Homebrew bump PR automatically, so `brew install bethvourc/tap/agent-relay`
+  now works.
 
 ## [0.6.0] — 2026-05-20
 
@@ -199,7 +208,8 @@ Releases and downloadable artifacts live on the
 - Status / dashboard rendering for inspecting sessions from the CLI.
 - Migration path from legacy session files into v2 sessions.
 
-[Unreleased]: https://github.com/bethvourc/agent--relay/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/bethvourc/agent--relay/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/bethvourc/agent--relay/releases/tag/v0.6.1
 [0.6.0]: https://github.com/bethvourc/agent--relay/releases/tag/v0.6.0
 [0.5.6]: https://github.com/bethvourc/agent--relay/releases/tag/v0.5.6
 [0.5.5]: https://github.com/bethvourc/agent--relay/releases/tag/v0.5.5
