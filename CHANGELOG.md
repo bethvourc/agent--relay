@@ -9,6 +9,18 @@ Releases and downloadable artifacts live on the
 
 ## [Unreleased]
 
+### Added
+- `scripts/release.sh X.Y.Z` — one-command release prep. Bumps
+  `__version__`, the extension `package.json`, regenerates the lockfile,
+  rewrites `CHANGELOG.md`'s `[Unreleased]` header to a dated `[X.Y.Z]`,
+  regenerates the docs-site changelog + search-index JSON, and stages
+  everything for a PR. Doesn't commit/push/tag — leaves that to the
+  user's branch workflow.
+
+### Fixed
+- Docs-site changelog page now renders `**bold**` markdown properly
+  (was showing literal `**` characters in the v0.6.x entries).
+
 ## [0.6.3] — 2026-05-20
 
 ### Fixed
