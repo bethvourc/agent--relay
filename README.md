@@ -383,6 +383,28 @@ Notes:
 - If a concurrent run ends in `manual_resolution_required`, use `inspect-conflicts` first to see the saved versions, then `resolve` to continue the resolution workflow.
 - If a concurrent run ends in `max_time`, `interrupted`, `incomplete`, or `agent_error`, use `race --continue <session-id> ...` to continue the broader task.
 
+### REPL permission backends
+
+Relay now keeps repo-local permission backend config in:
+
+```text
+.agent-relay/permissions.toml
+```
+
+From the REPL:
+
+```text
+/permissions
+/permissions set claude mode dontAsk
+/permissions set codex approval_policy on-request
+/permissions set codex sandbox_mode danger-full-access
+```
+
+Important limitation: this currently controls launch-time permission behavior
+for turn-mode agents like Claude and Codex. It does not yet provide generic
+cross-agent per-tool approval unless the underlying CLI exposes pending tool
+requests in a machine-readable way.
+
 ### Preserve planning-only work
 
 If there are no file changes yet, pass the planning and proposed-edit context explicitly:
@@ -416,6 +438,16 @@ This is the best fallback when an agent did useful planning but did not write co
 | ------------------------------------ | -------------------------------- |
 | `AGENT_RELAY_CLAUDE_LAUNCH_TEMPLATE` | Custom launch command for Claude |
 | `AGENT_RELAY_CODEX_LAUNCH_TEMPLATE`  | Custom launch command for Codex  |
+
+### Permission backend overrides
+
+| Variable | Description |
+| --- | --- |
+| `AGENT_RELAY_CLAUDE_PERMISSION_MODE` | Override Claude REPL/concurrent permission mode |
+| `AGENT_RELAY_CODEX_APPROVAL_POLICY` | Override Codex approval policy (`-a`) |
+| `AGENT_RELAY_CODEX_SANDBOX_MODE` | Override Codex sandbox mode (`-s`) |
+| `AGENT_RELAY_CAPTURE_PERMISSION_PTY=1` | Capture raw PTY permission prompt output for adapter development |
+| `AGENT_RELAY_PERMISSION_CAPTURE_DIR=<path>` | Override the PTY permission capture directory |
 
 ### Capture hook templates
 
