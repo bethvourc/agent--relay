@@ -10,12 +10,75 @@ Releases and downloadable artifacts live on the
 ## [Unreleased]
 
 ### Added
+- **Interactive REPL** (`relay` with no subcommand). Persistent slash
+  shell modeled on Claude Code / Codex: every existing CLI command is
+  also a `/`-prefixed slash command, bare text is forwarded to the
+  active agent's PTY, and the inline Textual panel redraws on every
+  keystroke. Driven by a single `SlashRegistry` so `/help`, the slash
+  menu, and `docs/repl.md` never drift.
+- **Tmux integration**. `relay --tmux` wraps the REPL in
+  `relay-<sha256(cwd)[:8]>` for crash-safety; `relay --attach`
+  reattaches. `/tmux status|detach|split <agent>` from inside the REPL.
+  First-run prompt persists the choice to `tmux_auto` in
+  `config.toml`.
+- **Structured JSONL logging** at `~/.config/relay/repl.log`
+  (rotating 5×1 MB). Captures session lifecycle, slash dispatch
+  (cmd / duration_ms / ok / error), agent spawn/exit, signal events.
+  `RELAY_LOG_LEVEL` honored.
+- **`/diagnose`** — shareable bundle (version + redacted log tail)
+  for bug reports.
+- **Crash recovery** — pidfile reaper at startup. PID files live in
+  `~/.config/relay/agents/`; on next launch we cross-check the live
+  command line against the recorded agent and only signal genuine
+  orphans. Reused PIDs are skipped silently.
+- **Onboarding wizard** on first run (config file missing). Detects
+  agents, picks a default, asks about tmux, persists to
+  `config.toml`. Re-runnable via `/setup`. `--no-onboarding` skips it
+  for CI/scripts.
+- **`[repl.env]` config section** for opting in additional env
+  forwards to spawned agents. Keys validated as proper env-variable
+  names; values still scrubbed by the deny-list unless on the
+  per-agent provider allowlist.
+- **Performance budgets** + gated micro-benches in
+  `tests/bench_repl.py` (`RELAY_BENCH=1`). 16 ms p99
+  keystroke-to-render target documented in `docs/performance.md`.
+- **Auto-generated slash-command reference** (`docs/repl.md`) plus a
+  CI gate (`tests/test_repl_docs.py`) that fails the build if the
+  registry and the doc drift.
+- New docs: `docs/repl.md`, `docs/architecture.md`,
+  `docs/performance.md`, `docs/security.md` (env contract +
+  redaction pipeline + validation rules).
 - `scripts/release.sh X.Y.Z` — one-command release prep. Bumps
   `__version__`, the extension `package.json`, regenerates the lockfile,
   rewrites `CHANGELOG.md`'s `[Unreleased]` header to a dated `[X.Y.Z]`,
   regenerates the docs-site changelog + search-index JSON, and stages
   everything for a PR. Doesn't commit/push/tag — leaves that to the
   user's branch workflow.
+
+### Changed
+- **Per-agent env allowlist**. `build_agent_env` now takes an
+  `agent=` parameter and only forwards a provider key (e.g.
+  `ANTHROPIC_API_KEY`) when launching that agent. All other forwarded
+  keys whose values match a known-secret prefix (`sk-`, `AKIA`,
+  `ghp_`, `xox`, …) are replaced with `[REDACTED]` before reaching
+  the child.
+- **Slash parser hardening**. Every string / list-of-string argument
+  passes through `validate_string` (rejects null bytes and control
+  chars outside `\t\n\r`); `ArgSpec.choices` is now enforced; paths
+  go through `resolve_safe_path` (rejects `..` traversal, absolute,
+  `~`, and symlink escapes unless `--allow-outside-cwd`).
+
+### Security
+- **`logger.exception(...)` no longer leaks secrets to disk.**
+  `_JsonlFormatter.format` now runs `redact()` over `exc_info`,
+  pre-cached `exc_text`, and `stack_info` — the last hop before the
+  JSONL file. Previously the redaction filter only touched the
+  message and structured extras, so a traceback containing
+  `key=sk-…` survived to disk.
+- **`/diagnose --json` no longer leaks the working directory path.**
+  The JSON payload's `cwd` field now goes through the same
+  `redact()` call the text path uses, so output is safe to paste
+  into a bug report from any project.
 
 ### Fixed
 - Docs-site changelog page now renders `**bold**` markdown properly

@@ -82,6 +82,52 @@ agent-relay metrics
 
 Agent aliases: `c` = Claude, `x` = Codex. Use `agent-relay discover` to see all available agents and aliases.
 
+## Interactive REPL
+
+Run `relay` with no arguments to drop into the persistent slash-shell:
+
+```bash
+relay                       # interactive REPL (the default when no subcommand is given)
+relay --tmux                # wrap the REPL in a tmux session for crash-safety
+relay --attach              # reattach to this project's relay tmux session
+relay --no-tmux             # skip the first-run tmux prompt for this run
+relay --no-onboarding       # skip the first-run wizard (useful in CI/scripts)
+```
+
+Inside the shell:
+
+- Type `/` to live-filter the slash menu (every CLI subcommand is available as a
+  slash command). `Tab` accepts, `Enter` submits.
+- Type `?` on an empty input to open a shortcut overlay; `Esc` closes overlays.
+- Bare text (no leading `/`) is forwarded to the active agent's PTY — switch
+  agents with `/use claude`, `/use codex`, …
+- `Ctrl+C` clears the input on first press; a second press within ~2 s exits.
+- `Ctrl+D` exits immediately.
+
+On first launch Relay runs a brief wizard (detects agents, asks about tmux),
+persists your choices to `~/.config/relay/config.toml`, and never asks again.
+Re-run anytime with `/setup`. State and logs live under `~/.config/relay/`:
+
+| Path | Purpose |
+| --- | --- |
+| `config.toml` | User preferences (default agent, `tmux_auto`, `[repl.env]`) |
+| `history` | Prompt history (mode 0600; secrets redacted before write) |
+| `repl.log` | Structured JSONL log (rotating 5×1 MB, redacted) |
+| `agents/` | PID files for orphan-process recovery |
+
+For full details:
+
+- [`docs/repl.md`](docs/repl.md) — every slash command (auto-generated from the
+  registry; CI ensures this never drifts).
+- [`docs/architecture.md`](docs/architecture.md) — REPL internals: shell loop,
+  agent layer, env contract, observability.
+- [`docs/security.md`](docs/security.md) — input validation, env allowlist,
+  redaction pipeline.
+- [`docs/performance.md`](docs/performance.md) — keystroke-to-render budgets
+  and how to run the micro-benches.
+- [`docs/troubleshooting.md`](docs/troubleshooting.md) — orphan reaper, log
+  location, common gotchas.
+
 ## Best practices
 
 ### Start inside Relay for the strongest handoffs
@@ -395,7 +441,7 @@ From the REPL:
 
 ```text
 /permissions
-/permissions set claude mode dontAsk
+/permissions set claude mode bypassPermissions
 /permissions set codex approval_policy on-request
 /permissions set codex sandbox_mode danger-full-access
 ```
