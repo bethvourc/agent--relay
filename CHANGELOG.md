@@ -9,6 +9,8 @@ Releases and downloadable artifacts live on the
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-06-02
+
 ### Added
 - **Interactive REPL** (`relay` with no subcommand). Persistent slash
   shell modeled on Claude Code / Codex: every existing CLI command is
@@ -54,6 +56,15 @@ Releases and downloadable artifacts live on the
   regenerates the docs-site changelog + search-index JSON, and stages
   everything for a PR. Doesn't commit/push/tag — leaves that to the
   user's branch workflow.
+- **Hook-based automatic rate-limit handoff.** `relay install` now wires
+  Claude Code `Notification` and Codex `Stop` hooks, normalizes hook
+  payloads into daemon `rate_limited` events, and lets live REPL sessions
+  execute a matching automatic handoff through the configured fallback
+  order.
+- **Install-time fallback-order setup.** `relay install` infers
+  `[handoff].order` from detected Claude, Codex, and Gemini CLIs when no
+  order exists. Use `relay install --handoff-order ...` to override or
+  `--no-handoff-order` to skip.
 
 ### Changed
 - **Per-agent env allowlist**. `build_agent_env` now takes an
@@ -67,6 +78,10 @@ Releases and downloadable artifacts live on the
   chars outside `\t\n\r`); `ArgSpec.choices` is now enforced; paths
   go through `resolve_safe_path` (rejects `..` traversal, absolute,
   `~`, and symlink escapes unless `--allow-outside-cwd`).
+- **Docs now treat `relay` as the primary workflow.** README, web docs,
+  public concept pages, and examples were updated around the interactive
+  shell, repo-local session lineage, automatic handoff triggers, and the
+  current command surfaces.
 
 ### Security
 - **`logger.exception(...)` no longer leaks secrets to disk.**
@@ -309,7 +324,8 @@ Releases and downloadable artifacts live on the
 - Status / dashboard rendering for inspecting sessions from the CLI.
 - Migration path from legacy session files into v2 sessions.
 
-[Unreleased]: https://github.com/bethvourc/agent--relay/compare/v0.6.3...HEAD
+[Unreleased]: https://github.com/bethvourc/agent--relay/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/bethvourc/agent--relay/releases/tag/v0.7.0
 [0.6.3]: https://github.com/bethvourc/agent--relay/releases/tag/v0.6.3
 [0.6.2]: https://github.com/bethvourc/agent--relay/releases/tag/v0.6.2
 [0.6.1]: https://github.com/bethvourc/agent--relay/releases/tag/v0.6.1

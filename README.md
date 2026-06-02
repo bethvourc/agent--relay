@@ -3,18 +3,18 @@
 [![PyPI Downloads](https://static.pepy.tech/personalized-badge/agent-relay-tool?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/agent-relay-tool)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-ffdd00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/buildwithbeth)
 
-Agent Relay is a local-first CLI for handing work from one coding agent to another without losing context, decisions, or validation state.
+Agent Relay is a local-first interactive layer for working with multiple coding agents in one durable project session.
 
-It is built for the moment when one agent needs to stop because of rate limits, tool limits, or a manual handoff. Agent Relay captures a structured checkpoint, renders an immutable resume packet, and records the launch/resume flow in a repo-local session journal.
+It is built for the moment when one agent needs to stop because of rate limits, tool limits, or a manual handoff. Start inside Relay, talk to Claude, Codex, or Gemini from the same shell, and Relay keeps the observable session context, decisions, validation state, and handoff packets on disk so the next agent can continue from the same point.
 
-Built-in agent adapters currently support `Claude Code` and `Codex`.
+Built-in agent adapters currently support `Claude Code`, `Codex`, and `Gemini`.
 
 ## Why use it
 
-- keep one durable session history across multiple agent handoffs
+- keep one durable session history across multiple agent turns and handoffs
 - capture checkpoints with decisions, blockers, touched files, and validation state
 - render agent-specific resume packets from the latest checkpoint
-- preview or execute a prepared launch command
+- switch agents manually or automatically when a rate limit is detected
 - recover and inspect session state from on-disk journal data
 
 ## Installation
@@ -25,6 +25,14 @@ Python 3.11 or newer is required.
 
 ```bash
 curl -fsSL https://agent-relay.dev/install.sh | sh
+```
+
+**Homebrew**
+
+```bash
+brew tap bethvourc/tap
+brew install agent-relay
+relay install
 ```
 
 **Windows (PowerShell)**
@@ -44,15 +52,39 @@ Full per-OS walkthroughs and verification steps:
 
 ## Quick start
 
-Run the CLI inside the repository whose work you want to hand off:
+Run Relay inside the repository whose work you want to hand off:
 
 ```bash
 cd /path/to/your/repo
 
-# One-command relay: hand off to another agent
+# First-time local wiring: hooks, daemon, and fallback order
+relay install
+
+# Start the interactive layer
+relay
+```
+
+Inside the REPL, bare text goes to the active agent and slash commands control Relay:
+
+```text
+/use claude
+Fix the failing tests
+
+/use codex
+Continue the release prep from the current Relay session
+
+/handoff-order claude codex gemini
+/status
+/metrics
+```
+
+Scriptable commands are still available when you need a one-off or automation-friendly flow:
+
+```bash
+# One-command relay: hand off to another agent from outside the REPL
 agent-relay codex --task "Continue the release prep"
 
-# Single-agent managed run (best for handoffs — see Best Practices)
+# Single-agent managed run
 agent-relay run c "Fix the failing tests"
 
 # Turn-based conversation between agents
@@ -76,11 +108,11 @@ agent-relay status
 # Live view of an in-progress session (auto-picks newest active)
 agent-relay watch
 
-# Token / cost / duration rollup for a session
+# Token / cost / duration rollup
 agent-relay metrics
 ```
 
-Agent aliases: `c` = Claude, `x` = Codex. Use `agent-relay discover` to see all available agents and aliases.
+Agent aliases: `c` = Claude, `x` = Codex, `g` = Gemini. Use `agent-relay discover` to see all available agents and aliases.
 
 ## Interactive REPL
 
@@ -99,8 +131,12 @@ Inside the shell:
 - Type `/` to live-filter the slash menu (every CLI subcommand is available as a
   slash command). `Tab` accepts, `Enter` submits.
 - Type `?` on an empty input to open a shortcut overlay; `Esc` closes overlays.
-- Bare text (no leading `/`) is forwarded to the active agent's PTY — switch
-  agents with `/use claude`, `/use codex`, …
+- Bare text (no leading `/`) is forwarded to the active agent. Relay persists
+  the prompt/output artifacts into the active repo-local session and uses that
+  same session lineage for later handoffs.
+- Switch agents with `/use claude`, `/use codex`, or `/use gemini`. If there is
+  live context, Relay routes the switch through the handoff machinery so the
+  target starts with a resume packet.
 - `Ctrl+C` clears the input on first press; a second press within ~2 s exits.
 - `Ctrl+D` exits immediately.
 
@@ -130,23 +166,38 @@ For full details:
 
 ## Best practices
 
-### Start inside Relay for the strongest handoffs
+### Start inside the interactive Relay shell for the strongest handoffs
 
 The single most important thing you can do for better handoffs is **start the work inside Relay** instead of only calling Relay after an agent stops.
 
-When Relay manages the session from the beginning, it runs the agent in `--print` mode and captures the full output stream — including the agent's reasoning, tool calls, decisions, and structured state. This means the handoff packet contains everything the next agent needs: recent conversation history, the current plan, blockers, remaining work, intended edits, and any provider-exported session state.
+When Relay manages the session from the beginning, the REPL owns the live agent process, forwards your bare prompts to the active agent, captures the observable output stream, and persists turn artifacts under `.agent-relay/sessions/`. This means the handoff packet contains everything Relay can observe or export: recent conversation history, the current plan, blockers, remaining work, intended edits, and any provider-exported session state.
 
 When Relay joins after the fact, it can only hand off what is still observable: the working tree changes, any notes you provide, and whatever the provider can export at that moment. Private reasoning, in-progress drafts, and tool-call history from an unmanaged session are lost.
 
 **In simple terms: if Relay was there while the work was happening, handoffs are much stronger. If Relay joins later, it can only hand off what it can still see.**
 
-### Use `run` as the default starting point
+### Use `relay` as the default starting point
+
+```bash
+relay
+```
+
+`relay` is the recommended way to start day-to-day work. It:
+
+- keeps a long-lived active agent process for the current repo
+- stores each prompt/output turn in the active Relay session
+- restores visible session transcript when you resume a prior session
+- hands off through resume packets when you switch agents with `/use`
+- listens for daemon rate-limit handoff events when `relay install` has wired hooks
+- auto-compacts older saved context when the session grows large
+
+### Use `run` when you need a scriptable single-agent command
 
 ```bash
 agent-relay run c "Fix the failing tests"
 ```
 
-`run` is the recommended way to start any single-agent task when you know a handoff might happen later. It:
+`run` is still useful for CI, scripts, or one-off single-agent tasks. It:
 
 - runs the agent with live output capture (reasoning, tool calls, decisions)
 - extracts structured state from each turn (status, remaining work, blockers)
@@ -186,7 +237,7 @@ If an agent was working outside of Relay and needs to hand off, open a new termi
 
 ## What Relay can recover
 
-### When Relay managed the session (run, chat, race)
+### When Relay managed the session (REPL, run, chat, race)
 
 - full conversation turn history (prompts, outputs, reasoning)
 - structured state from each turn (status, plan, blockers, remaining work)
@@ -233,7 +284,7 @@ If an agent was working outside of Relay and needs to hand off, open a new termi
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `agent-relay discover`                  | Show available agents, aliases, and CLI paths.                                                                                                                                                                                                                      |
 | `agent-relay status`                    | List all relay sessions in the current repo.                                                                                                                                                                                                                        |
-| `agent-relay watch [session-id]`        | Live TUI of an in-progress session. Auto-picks newest active when no id is given. `--json` streams JSONL events; `--quiet` streams one terse line per event; `--no-follow` prints a single snapshot and exits. Add `--metrics` for a token / cost / duration panel. |
+| `agent-relay watch [session-id]`        | Live TUI of an in-progress session. Auto-picks newest active when no id is given. Use root `--json` / `--quiet` before the subcommand for alternate output modes. `--no-follow` prints a single snapshot and exits. Add `--metrics` for a token / cost / duration panel. |
 | `agent-relay metrics [session-id]`      | Token / cost / latency rollup for a session. Use `--all` for cross-session totals, `--since YYYY-MM-DD` to filter, `--agent claude` (repeatable) to scope.                                                                                                          |
 | `agent-relay metrics-tail [session-id]` | Stream metric events as JSONL — one line per `turn_completed`, plus a final session rollup. Optional `--webhook URL` POSTs each line.                                                                                                                               |
 | `agent-relay metrics-serve`             | Run a metrics exporter. `--prometheus :9464` exposes `/metrics` in Prometheus text format; `--otlp http://collector:4318/v1/metrics` pushes OTLP/HTTP-JSON every 30s. Both can run together.                                                                        |
@@ -290,7 +341,7 @@ agent-relay watch
 agent-relay watch <session-id>
 
 # Stream events as JSONL — pipe into other tools
-agent-relay watch --json | jq -c '{ts: .timestamp, kind: .kind}'
+agent-relay --json watch | jq -c '{ts: .timestamp, kind: .kind}'
 
 # Print a single snapshot of current state and exit
 agent-relay watch --no-follow
@@ -322,8 +373,8 @@ agent-relay metrics --all
 agent-relay metrics --all --since 2026-05-01 --agent claude
 
 # Machine-readable
-agent-relay metrics --json
-agent-relay metrics --quiet      # one TSV line per session
+agent-relay --json metrics
+agent-relay --quiet metrics      # minimal output
 
 # Live JSONL stream — one line per turn_completed plus a final session rollup
 agent-relay metrics-tail
