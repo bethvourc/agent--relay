@@ -5,9 +5,9 @@
 
 Agent Relay is a local-first interactive layer for working with multiple coding agents in one durable project session.
 
-It is built for the moment when one agent needs to stop because of rate limits, tool limits, or a manual handoff. Start inside Relay, talk to Claude, Codex, or Gemini from the same shell, and Relay keeps the observable session context, decisions, validation state, and handoff packets on disk so the next agent can continue from the same point.
+It is built for the moment when one agent needs to stop because of rate limits, tool limits, or a manual handoff. Start inside Relay, talk to Claude, Codex, Gemini, or OpenCode from the same shell, and Relay keeps the observable session context, decisions, validation state, and handoff packets on disk so the next agent can continue from the same point.
 
-Built-in agent adapters currently support `Claude Code`, `Codex`, and `Gemini`.
+Built-in agent adapters currently support `Claude Code`, `Codex`, `Gemini`, and `OpenCode`.
 
 ## Why use it
 
@@ -73,7 +73,7 @@ Fix the failing tests
 /use codex
 Continue the release prep from the current Relay session
 
-/handoff-order claude codex gemini
+/handoff-order claude codex gemini opencode
 /status
 /metrics
 ```
@@ -112,7 +112,7 @@ agent-relay watch
 agent-relay metrics
 ```
 
-Agent aliases: `c` = Claude, `x` = Codex, `g` = Gemini. Use `agent-relay discover` to see all available agents and aliases.
+Agent aliases: `c` = Claude, `x` = Codex, `g` = Gemini, `o` = OpenCode. Use `agent-relay discover` to see all available agents and aliases.
 
 ## Interactive REPL
 
@@ -258,6 +258,7 @@ If an agent was working outside of Relay and needs to hand off, open a new termi
 - private hidden reasoning from an unmanaged session
 - UI-only drafts that were never saved anywhere
 - proposed edits shown in a tool UI but never accepted, exported, or passed to Relay
+- hidden OpenCode state unless OpenCode exposes it through `opencode export`
 
 ## Commands
 
@@ -552,6 +553,14 @@ This is the best fallback when an agent did useful planning but did not write co
 | ------------------------------------- | -------------------------------------- |
 | `AGENT_RELAY_CLAUDE_CAPTURE_TEMPLATE` | Custom capture hook for Claude exports |
 | `AGENT_RELAY_CODEX_CAPTURE_TEMPLATE`  | Custom capture hook for Codex exports  |
+| `AGENT_RELAY_OPENCODE_CAPTURE_TEMPLATE` | Custom capture hook for OpenCode exports |
+
+Relay-managed OpenCode turns always carry Relay's observable artifacts
+(prompts, outputs, and turn state) into handoff packets. When Relay can
+determine the native OpenCode session id, it also runs the default sanitized
+export command `opencode export {session_id} --sanitize` and cites the result
+as a provider session export. If OpenCode export fails or the native session id
+is unavailable, handoff continues with Relay's observable artifacts.
 
 ### Template placeholders
 

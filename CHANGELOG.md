@@ -9,6 +9,22 @@ Releases and downloadable artifacts live on the
 
 ## [Unreleased]
 
+### Added
+- **OpenCode adapter support.** Relay now includes OpenCode in agent
+  discovery, aliases (`o`), REPL handoff routing, fallback-order inference,
+  dashboard badges, and managed run/handoff flows.
+- **OpenCode install and daemon plugin integration.** `relay install` now
+  writes a Relay-owned OpenCode plugin when OpenCode is detected, routes
+  selected OpenCode events through `relay hook opencode-event`, and removes
+  only the Relay-owned plugin on uninstall.
+- **OpenCode session export capture.** Relay-managed OpenCode sessions attach
+  sanitized `opencode export` output to handoff packets when the native
+  OpenCode session id is known; missing ids or export failures remain
+  non-fatal and fall back to Relay's observable turn artifacts.
+- **Gemini hook-based rate-limit ingestion.** `relay install` now wires a
+  Gemini CLI `Notification` hook into `~/.gemini/settings.json` and routes
+  quota/rate-limit notifications through `relay hook gemini-notification`.
+
 ## [0.7.0] — 2026-06-02
 
 ### Added
