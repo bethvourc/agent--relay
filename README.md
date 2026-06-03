@@ -288,7 +288,7 @@ If an agent was working outside of Relay and needs to hand off, open a new termi
 | `agent-relay watch [session-id]`        | Live TUI of an in-progress session. Auto-picks newest active when no id is given. Use root `--json` / `--quiet` before the subcommand for alternate output modes. `--no-follow` prints a single snapshot and exits. Add `--metrics` for a token / cost / duration panel. |
 | `agent-relay metrics [session-id]`      | Token / cost / latency rollup for a session. Use `--all` for cross-session totals, `--since YYYY-MM-DD` to filter, `--agent claude` (repeatable) to scope.                                                                                                          |
 | `agent-relay metrics-tail [session-id]` | Stream metric events as JSONL — one line per `turn_completed`, plus a final session rollup. Optional `--webhook URL` POSTs each line.                                                                                                                               |
-| `agent-relay metrics-serve`             | Run a metrics exporter. `--prometheus :9464` exposes `/metrics` in Prometheus text format; `--otlp http://collector:4318/v1/metrics` pushes OTLP/HTTP-JSON every 30s. Both can run together.                                                                        |
+| `agent-relay metrics-serve`             | Run a metrics exporter (requires at least one of `--prometheus` / `--otlp`). `--prometheus :9464` exposes `/metrics` in Prometheus text format; `--otlp http://collector:4318/v1/metrics` pushes OTLP/HTTP-JSON every 30s. Both can run together.                       |
 | `agent-relay clean`                     | Remove all sessions. Use `--all` to remove entire `.agent-relay/` directory.                                                                                                                                                                                        |
 
 ### Options
@@ -392,7 +392,9 @@ output tokens are priced separately. Estimates do not include account discounts,
 Batch/Flex or priority processing, data residency uplift, long-context uplift,
 or separately billed tool fees.
 
-For dashboards and long-running collection, `metrics-serve` runs an exporter:
+For dashboards and long-running collection, `metrics-serve` runs an exporter.
+At least one of `--prometheus` or `--otlp` is required — running it with no
+exporter flag exits with an error:
 
 ```bash
 # Prometheus pull-based scrape endpoint (stdlib only)
