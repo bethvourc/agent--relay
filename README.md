@@ -5,9 +5,9 @@
 
 Agent Relay is a local-first interactive layer for working with multiple coding agents in one durable project session.
 
-It is built for the moment when one agent needs to stop because of rate limits, tool limits, or a manual handoff. Start inside Relay, talk to Claude, Codex, Gemini, or OpenCode from the same shell, and Relay keeps the observable session context, decisions, validation state, and handoff packets on disk so the next agent can continue from the same point.
+It is built for the moment when one agent needs to stop because of rate limits, tool limits, or a manual handoff. Start inside Relay, talk to Claude, Codex, Gemini, Kimi, or OpenCode from the same shell, and Relay keeps the observable session context, decisions, validation state, and handoff packets on disk so the next agent can continue from the same point.
 
-Built-in agent adapters currently support `Claude Code`, `Codex`, `Gemini`, and `OpenCode`.
+Built-in agent adapters currently support `Claude Code`, `Codex`, `Gemini`, `Kimi Code`, and `OpenCode`.
 
 ## Why use it
 
@@ -73,7 +73,7 @@ Fix the failing tests
 /use codex
 Continue the release prep from the current Relay session
 
-/handoff-order claude codex gemini opencode
+/handoff-order claude codex gemini kimi opencode
 /status
 /metrics
 ```
@@ -112,7 +112,7 @@ agent-relay watch
 agent-relay metrics
 ```
 
-Agent aliases: `c` = Claude, `x` = Codex, `g` = Gemini, `o` = OpenCode. Use `agent-relay discover` to see all available agents and aliases.
+Agent aliases: `c` = Claude, `x` = Codex, `g` = Gemini, `k` = Kimi, `o` = OpenCode. Use `agent-relay discover` to see all available agents and aliases.
 
 ## Interactive REPL
 
@@ -538,6 +538,9 @@ This is the best fallback when an agent did useful planning but did not write co
 | ------------------------------------ | -------------------------------- |
 | `AGENT_RELAY_CLAUDE_LAUNCH_TEMPLATE` | Custom launch command for Claude |
 | `AGENT_RELAY_CODEX_LAUNCH_TEMPLATE`  | Custom launch command for Codex  |
+| `AGENT_RELAY_GEMINI_LAUNCH_TEMPLATE` | Custom launch command for Gemini |
+| `AGENT_RELAY_KIMI_LAUNCH_TEMPLATE` | Custom launch command for Kimi |
+| `AGENT_RELAY_OPENCODE_LAUNCH_TEMPLATE` | Custom launch command for OpenCode |
 
 ### Permission backend overrides
 
