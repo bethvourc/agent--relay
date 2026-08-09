@@ -9,6 +9,32 @@ Releases and downloadable artifacts live on the
 
 ## [Unreleased]
 
+### Added
+- **`relay limits` / `/limits`.** Real subscription usage for the agent CLIs —
+  Claude Code's 5-hour and weekly windows, and Codex's quota — read from each
+  CLI's own authoritative source rather than estimated. Agents that expose no
+  quota surface report that explicitly instead of being omitted, so "we cannot
+  see it" is never mistaken for "it has room".
+
+### Fixed
+- **Automatic handoff could return to the agent that just ran out.** Fallback
+  selection took the first agent in the configured order that differed from
+  the current one, with no memory and no availability check — so with an order
+  of `codex, claude`, a rate-limited claude went to codex, and a rate-limited
+  codex went straight back to claude. Relay now remembers which agents are
+  rate-limited (account-scoped, so it survives a restart and applies across
+  repos) and skips agents whose CLI is not installed. When no agent can take
+  over, the message names the actual obstacle — `gemini is not installed`,
+  `claude is rate-limited` — instead of the old catch-all, and the checkpoint
+  is preserved for `relay resume`. Explicit `/use` is unaffected: asking for a
+  specific agent still switches to it.
+- **Handoff packets told the next agent to hand off.** The packet's
+  `Next action` line — the most directive thing the successor reads — was
+  filled with Relay's own bookkeeping (`Hand off to Codex`), and new sessions
+  recorded `Continue work in <the agent that just stopped>`. Both now carry the
+  work itself: the task, or the session objective. Affects every handoff,
+  including manual `/use` and `relay <agent>`.
+
 ## [0.7.5] — 2026-08-09
 
 ### Added
