@@ -10,6 +10,27 @@ Releases and downloadable artifacts live on the
 ## [Unreleased]
 
 ### Added
+- **Relay picks your next agent before you run out.** When the running agent
+  crosses 90% of a usage window, Relay asks it — while it still has the quota
+  to answer — what remains to finish the job and which of the *installed,
+  authenticated, not-already-limited* agents should continue. The answer is
+  parked on disk. When the limit actually hits, the handoff is immediate:
+  no model call at the worst possible moment, just a decision that was already
+  made. The remaining-scope half becomes the successor's `Next action`, so it
+  picks up the whole job rather than the slice that happened to be in flight.
+
+  One line on screen (`relay: claude at 91% — codex will continue if the limit
+  hits`), and one when it fires. The analysis runs out-of-band on the post-turn
+  worker, so it never blocks a turn, never enters your agent's conversation,
+  and never puts raw output on screen. Every failure — no CLI, a timeout,
+  unparseable output — leaves the feature disarmed and the existing reactive
+  handoff untouched.
+
+  Requires real quota telemetry, so it arms for Claude Code and Codex only;
+  Gemini, Kimi and OpenCode keep exactly today's behaviour. Tune or disable
+  with `handoff.successor_threshold` (0 disables).
+- **Relay offers your preferred agent back.** When a rate-limited agent's
+  window resets, Relay says so once — an offer, not an automatic switch.
 - **`relay limits` / `/limits`.** Real subscription usage for the agent CLIs —
   Claude Code's 5-hour and weekly windows, and Codex's quota — read from each
   CLI's own authoritative source rather than estimated. Agents that expose no
