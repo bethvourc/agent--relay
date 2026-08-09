@@ -9,6 +9,8 @@ Releases and downloadable artifacts live on the
 
 ## [Unreleased]
 
+## [0.7.5] — 2026-08-09
+
 ### Added
 - **Account-specific models in `/model`.** The REPL picker now lists the models
   your signed-in account can actually use, asking each agent's own tooling where
@@ -48,8 +50,6 @@ Releases and downloadable artifacts live on the
 - **Gemini hook-based rate-limit ingestion.** `relay install` now wires a
   Gemini CLI `Notification` hook into `~/.gemini/settings.json` and routes
   quota/rate-limit notifications through `relay hook gemini-notification`.
-
-### Added
 - **`!` runs shell commands without leaving the session.** `!git status` at the
   prompt (or typed mid-turn, running between turns) executes in the repo root
   and streams its output into the transcript, so what it showed feeds handoffs.
@@ -447,7 +447,8 @@ Releases and downloadable artifacts live on the
 - Status / dashboard rendering for inspecting sessions from the CLI.
 - Migration path from legacy session files into v2 sessions.
 
-[Unreleased]: https://github.com/bethvourc/agent--relay/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/bethvourc/agent--relay/compare/v0.7.5...HEAD
+[0.7.5]: https://github.com/bethvourc/agent--relay/releases/tag/v0.7.5
 [0.7.0]: https://github.com/bethvourc/agent--relay/releases/tag/v0.7.0
 [0.6.3]: https://github.com/bethvourc/agent--relay/releases/tag/v0.6.3
 [0.6.2]: https://github.com/bethvourc/agent--relay/releases/tag/v0.6.2
