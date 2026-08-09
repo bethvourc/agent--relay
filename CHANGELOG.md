@@ -10,6 +10,30 @@ Releases and downloadable artifacts live on the
 ## [Unreleased]
 
 ### Added
+- **Account-specific models in `/model`.** The REPL picker now lists the models
+  your signed-in account can actually use, asking each agent's own tooling where
+  it can (Codex's model cache, `agy models`, `opencode models`) and falling back
+  to Relay's curated suggestions otherwise. This brings the CLI level with the
+  desktop model menu, and makes OpenCode model selection possible at all — its
+  models are account-specific, so the curated-only picker could offer nothing
+  but "default". Detection is cached for a few minutes; `/model --refresh`
+  re-detects. An unrecognised name is still accepted, now with a warning and
+  close-match suggestions.
+- **Readable provider failures.** A turn that fails at the provider (an
+  unavailable model, an expired login, a context overflow) now reports one
+  actionable sentence instead of the agent's raw protocol JSON. Checked
+  independently of the exit code, because some agent CLIs report the failure
+  in-band and still exit zero. Rate limits are untouched and still drive
+  automatic handoffs.
+- **`relay discover` reports models.** `--json` now includes each agent's
+  `models` and `model_flag` (already on the underlying result, but dropped by
+  the command), the table shows a model count, and `--models` lists them. There
+  was previously no way to enumerate models without opening the picker.
+- **`relay run --model` warns on an unrecognised name.** Same wording and
+  close-match suggestions as `/model`, since `--model` is sticky and a typo
+  otherwise persists as the repo default. Advisory only: the model is still
+  applied. Warnings go to stderr, so `--json` stdout stays parseable, and are
+  repeated in the payload as `model_warnings`.
 - **OpenCode adapter support.** Relay now includes OpenCode in agent
   discovery, aliases (`o`), REPL handoff routing, fallback-order inference,
   dashboard badges, and managed run/handoff flows.
@@ -24,6 +48,89 @@ Releases and downloadable artifacts live on the
 - **Gemini hook-based rate-limit ingestion.** `relay install` now wires a
   Gemini CLI `Notification` hook into `~/.gemini/settings.json` and routes
   quota/rate-limit notifications through `relay hook gemini-notification`.
+
+### Added
+- **`!` runs shell commands without leaving the session.** `!git status` at the
+  prompt (or typed mid-turn, running between turns) executes in the repo root
+  and streams its output into the transcript, so what it showed feeds handoffs.
+  Each `!` is a fresh shell — no state carries between commands. Non-zero exits
+  are reported, and `Ctrl+C` kills the whole pipeline.
+- **Queue messages while an agent is working.** Typing during a turn used to go
+  nowhere: the input panel is closed for the duration so agent output can stream
+  into real terminal scrollback, which left no input surface at all. The REPL now
+  reads keystrokes during a turn, shows a standing `› type to queue a follow-up`
+  input line with what you are typing, lists what is already waiting, and runs
+  queued messages in order when the turn ends — the way Claude Code and Codex
+  do. `↑` on an empty line pulls the newest queued message back into the input
+  to edit before it is sent; it goes back on the end when you press Enter.
+  Enter is the contract: only submitted lines run. A line still half-typed when
+  the turn ends pre-fills the next prompt instead of being sent, a multi-line
+  paste stays one message rather than becoming one turn per line, and pasted
+  code keeps its indentation. A failed or interrupted turn discards the queue
+  and prints what was dropped, rather than running follow-ups against a state
+  you did not expect. POSIX terminals only; Windows and piped stdin behave
+  exactly as before.
+
+### Changed
+- **Agent reasoning is shown but never persisted.** Thinking text used to be
+  written into the session transcript, which lands on disk and feeds the
+  handoff packet the next agent receives. Reasoning is unbounded agent text —
+  it quotes system prompts, files it just read, whatever it happened to see —
+  and none of that belongs in a durable artifact handed onward. It still
+  renders live; `/thinking off` hides it on screen too.
+- **Claude model labels no longer pin a version.** The picker read `Opus 4.8`
+  while the `opus` alias had already moved to `claude-opus-5`, so it advertised
+  the wrong model. Labels are now bare tier names (`Fable`, `Opus`, `Sonnet`,
+  `Haiku`), which cannot go stale — Anthropic repoints the aliases at each
+  release and the ids follow automatically.
+- **Edit previews render as a diff, not a raw patch.** An agent's edit now
+  shows as `Update(README.md)` with a plain-language count (`Added 4 lines,
+  removed 2 lines`), real file line numbers, surrounding context, and colour
+  carrying the add/remove distinction. A `⋯` marks regions the diff skipped, so
+  a jump in the line numbers cannot be misread as a deletion. Previously the raw
+  unified diff was dumped into a markdown fence, where four of six lines were
+  machinery (`--- a/…`, `+++ b/…`, `@@`) and the paths came out doubly-slashed
+  (`a//Users/you/repo/README.md`).
+- **Escape sequences in agent output can no longer restyle the UI.** File
+  content shown in a diff, reasoning text, and spinner labels are now stripped
+  of ANSI escapes and control characters before rendering. A file whose bytes
+  contain `ESC[31m` was being passed through to the terminal — recolouring
+  Relay's own UI and, because escapes are not zero-width, pushing rows past the
+  console edge. (Streamed agent output is unchanged: the existing sanitizer
+  still allows an agent to colour its own text.)
+- **Agent reasoning renders as dimmed prose.** It was a Markdown blockquote,
+  which Rich draws with a full-height `▌` bar and renders as Markdown — so the
+  least important thing on screen also got boxed code blocks and highlighted
+  spans. It is now quiet text that reads as secondary to the answer.
+- **The turn transcript repeats itself less, and breathes.** An edit printed
+  two lines naming the same file — `Editing /long/absolute/path` and then the
+  diff's own header — so the tool line is gone and the diff header carries it.
+  Reasoning that only restates the reply it precedes ("Done! The README header
+  has been updated…", immediately followed by the agent saying exactly that) is
+  no longer shown. And a blank line now separates reasoning, tool calls, diffs
+  and the reply, instead of running them together.
+- **The per-turn latency breakdown is no longer printed after each reply.** It
+  was a development instrument that shipped in 0.7.0 by accident. The timings
+  are still recorded in the session's `metadata.latency_ms`, so anything
+  reading them off disk is unaffected.
+
+### Fixed
+- **Every slash command answers `--help`.** None of them did before: session
+  commands fed the flag to their own argument parsing (`/use --help` failed
+  with "unknown agent: --help") and registry commands rejected it as an unknown
+  flag. Handled centrally in the dispatcher, so it covers both families and
+  their aliases (`/c -h`), and prints the command's arguments and flags, or its
+  example for a session command.
+- **`/help` lists every command the shell answers to, with examples.** Seven
+  working commands were missing, `/use` among them, because the listing was
+  hand-maintained in two places that had drifted from the dispatcher and from
+  each other. Session commands now come from one source shared by `/help`, the
+  slash menu, and `docs/repl.md`, each with an example (`e.g. /use claude`), and
+  a test pins that source to the dispatcher.
+- **A provider error no longer crashes a run.** Claude and Codex stream
+  normalization assumed every JSON line was an object with an object-valued
+  `message`; a provider error puts a string there, which raised an
+  `AttributeError` and took down the whole session with a traceback.
 
 ## [0.7.0] — 2026-06-02
 

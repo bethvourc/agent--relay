@@ -137,6 +137,26 @@ Inside the shell:
 - Switch agents with `/use claude`, `/use codex`, or `/use gemini`. If there is
   live context, Relay routes the switch through the handoff machinery so the
   target starts with a resume packet.
+- Pick the active agent's model with `/model`. The picker lists the models your
+  signed-in account can actually use, asking the agent's own tooling where it
+  can (Codex's model cache, `agy models`, `opencode models`) and falling back to
+  Relay's suggestions otherwise. `/model <name>` sets one directly and
+  `/model default` clears it; an unrecognised name is still accepted, since
+  providers ship models faster than Relay tracks them. Results are cached for a
+  few minutes, so use `/model --refresh` after changing your account's models.
+- Keep typing while the agent works. What you type appears on the line below
+  the spinner and `Enter` queues it; what is waiting is listed above, and `↑`
+  on an empty line pulls the newest one back to edit before it is sent. Queued
+  messages run in order once the turn finishes. Only submitted lines run — a half-typed line carries into the next
+  prompt instead of being sent, and a multi-line paste stays one message. If a
+  turn fails or you press `Ctrl+C`, the queue is discarded and printed back so
+  nothing is silently lost.
+- Prefix a line with `!` to run it as a shell command in the repo root without
+  leaving the session (`!git status`). Each `!` is a fresh shell; output lands
+  in the transcript, so it feeds handoffs. Typed mid-turn, a `!` command runs
+  between turns.
+- Run `/help` for every command, each with an example, or `<command> --help`
+  (also `-h`, and aliases like `/c -h`) for one command's arguments and flags.
 - `Ctrl+C` clears the input on first press; a second press within ~2 s exits.
 - `Ctrl+D` exits immediately.
 
