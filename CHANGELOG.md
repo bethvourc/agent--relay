@@ -9,6 +9,8 @@ Releases and downloadable artifacts live on the
 
 ## [Unreleased]
 
+## [0.7.6] — 2026-08-10
+
 ### Added
 - **Relay picks your next agent before you run out.** When the running agent
   crosses 90% of a usage window, Relay asks it — while it still has the quota
@@ -494,7 +496,8 @@ Releases and downloadable artifacts live on the
 - Status / dashboard rendering for inspecting sessions from the CLI.
 - Migration path from legacy session files into v2 sessions.
 
-[Unreleased]: https://github.com/bethvourc/agent--relay/compare/v0.7.5...HEAD
+[Unreleased]: https://github.com/bethvourc/agent--relay/compare/v0.7.6...HEAD
+[0.7.6]: https://github.com/bethvourc/agent--relay/releases/tag/v0.7.6
 [0.7.5]: https://github.com/bethvourc/agent--relay/releases/tag/v0.7.5
 [0.7.0]: https://github.com/bethvourc/agent--relay/releases/tag/v0.7.0
 [0.6.3]: https://github.com/bethvourc/agent--relay/releases/tag/v0.6.3
