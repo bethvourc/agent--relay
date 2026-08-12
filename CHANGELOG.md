@@ -10,6 +10,9 @@ Releases and downloadable artifacts live on the
 ## [Unreleased]
 
 ### Added
+- **`relay handoff arm` also reports agents whose window has reset.** It is
+  the call that already runs after every turn, so recovery is heard without
+  waiting for a second handoff to happen to be needed.
 - **`relay handoff plan` / `relay handoff arm`.** The rate-limit handoff
   decision — who continues, and why not everyone else — is now a command
   rather than something only the interactive REPL could reach. `plan` answers
