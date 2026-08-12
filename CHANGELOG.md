@@ -9,6 +9,24 @@ Releases and downloadable artifacts live on the
 
 ## [Unreleased]
 
+### Added
+- **`relay handoff plan` / `relay handoff arm`.** The rate-limit handoff
+  decision — who continues, and why not everyone else — is now a command
+  rather than something only the interactive REPL could reach. `plan` answers
+  offline and immediately from the shared rate-limit ledger, the installed
+  CLIs, and any successor already parked; `arm` is the predictive half that
+  asks the running agent while it still has quota to answer.
+
+  This exists so the desktop app can stop guessing. It had grown its own
+  parallel failover in TypeScript that picked the next name off a hardcoded
+  list, with no memory of which agents were already spent. Both now ask the
+  same Python.
+
+### Changed
+- Rate-limit records now carry the provider's **real reset time** when a quota
+  reading is cached, instead of always expiring after a flat hour. The ledger
+  always promised this; nothing had been supplying it.
+
 ## [0.7.6] — 2026-08-10
 
 ### Added
