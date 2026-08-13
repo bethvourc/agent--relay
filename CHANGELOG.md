@@ -9,14 +9,14 @@ Releases and downloadable artifacts live on the
 
 ## [Unreleased]
 
-## [0.7.7] — 2026-08-12
+## [0.7.7] - 2026-08-12
 
 ### Added
 - **`relay handoff arm` also reports agents whose window has reset.** It is
   the call that already runs after every turn, so recovery is heard without
   waiting for a second handoff to happen to be needed.
 - **`relay handoff plan` / `relay handoff arm`.** The rate-limit handoff
-  decision — who continues, and why not everyone else — is now a command
+  decision (who continues, and why not everyone else) is now a command
   rather than something only the interactive REPL could reach. `plan` answers
   offline and immediately from the shared rate-limit ledger, the installed
   CLIs, and any successor already parked; `arm` is the predictive half that
@@ -32,32 +32,32 @@ Releases and downloadable artifacts live on the
   reading is cached, instead of always expiring after a flat hour. The ledger
   always promised this; nothing had been supplying it.
 
-## [0.7.6] — 2026-08-10
+## [0.7.6] - 2026-08-10
 
 ### Added
 - **Relay picks your next agent before you run out.** When the running agent
-  crosses 90% of a usage window, Relay asks it — while it still has the quota
-  to answer — what remains to finish the job and which of the *installed,
+  crosses 90% of a usage window, Relay asks it, while it still has the quota
+  to answer, what remains to finish the job and which of the *installed,
   authenticated, not-already-limited* agents should continue. The answer is
   parked on disk. When the limit actually hits, the handoff is immediate:
   no model call at the worst possible moment, just a decision that was already
   made. The remaining-scope half becomes the successor's `Next action`, so it
   picks up the whole job rather than the slice that happened to be in flight.
 
-  One line on screen (`relay: claude at 91% — codex will continue if the limit
+  One line on screen (`relay: claude at 91%: codex will continue if the limit
   hits`), and one when it fires. The analysis runs out-of-band on the post-turn
   worker, so it never blocks a turn, never enters your agent's conversation,
-  and never puts raw output on screen. Every failure — no CLI, a timeout,
-  unparseable output — leaves the feature disarmed and the existing reactive
+  and never puts raw output on screen. Every failure, whether no CLI, a timeout,
+  or unparseable output, leaves the feature disarmed and the existing reactive
   handoff untouched.
 
   Requires real quota telemetry, so it arms for Claude Code and Codex only;
   Gemini, Kimi and OpenCode keep exactly today's behaviour. Tune or disable
   with `handoff.successor_threshold` (0 disables).
 - **Relay offers your preferred agent back.** When a rate-limited agent's
-  window resets, Relay says so once — an offer, not an automatic switch.
-- **`relay limits` / `/limits`.** Real subscription usage for the agent CLIs —
-  Claude Code's 5-hour and weekly windows, and Codex's quota — read from each
+  window resets, Relay says so once. It is an offer, not an automatic switch.
+- **`relay limits` / `/limits`.** Real subscription usage for the agent CLIs
+  (Claude Code's 5-hour and weekly windows, and Codex's quota), read from each
   CLI's own authoritative source rather than estimated. Agents that expose no
   quota surface report that explicitly instead of being omitted, so "we cannot
   see it" is never mistaken for "it has room".
@@ -65,30 +65,30 @@ Releases and downloadable artifacts live on the
 ### Fixed
 - **Automatic handoff could return to the agent that just ran out.** Fallback
   selection took the first agent in the configured order that differed from
-  the current one, with no memory and no availability check — so with an order
+  the current one, with no memory and no availability check, so with an order
   of `codex, claude`, a rate-limited claude went to codex, and a rate-limited
   codex went straight back to claude. Relay now remembers which agents are
   rate-limited (account-scoped, so it survives a restart and applies across
   repos) and skips agents whose CLI is not installed. When no agent can take
-  over, the message names the actual obstacle — `gemini is not installed`,
-  `claude is rate-limited` — instead of the old catch-all, and the checkpoint
+  over, the message names the actual obstacle (`gemini is not installed`,
+  `claude is rate-limited`) instead of the old catch-all, and the checkpoint
   is preserved for `relay resume`. Explicit `/use` is unaffected: asking for a
   specific agent still switches to it.
 - **Handoff packets told the next agent to hand off.** The packet's
-  `Next action` line — the most directive thing the successor reads — was
+  `Next action` line, the most directive thing the successor reads, was
   filled with Relay's own bookkeeping (`Hand off to Codex`), and new sessions
   recorded `Continue work in <the agent that just stopped>`. Both now carry the
   work itself: the task, or the session objective. Affects every handoff,
   including manual `/use` and `relay <agent>`.
 
-## [0.7.5] — 2026-08-09
+## [0.7.5] - 2026-08-09
 
 ### Added
 - **Account-specific models in `/model`.** The REPL picker now lists the models
   your signed-in account can actually use, asking each agent's own tooling where
   it can (Codex's model cache, `agy models`, `opencode models`) and falling back
   to Relay's curated suggestions otherwise. This brings the CLI level with the
-  desktop model menu, and makes OpenCode model selection possible at all — its
+  desktop model menu, and makes OpenCode model selection possible at all. Its
   models are account-specific, so the curated-only picker could offer nothing
   but "default". Detection is cached for a few minutes; `/model --refresh`
   re-detects. An unrecognised name is still accepted, now with a warning and
@@ -125,14 +125,14 @@ Releases and downloadable artifacts live on the
 - **`!` runs shell commands without leaving the session.** `!git status` at the
   prompt (or typed mid-turn, running between turns) executes in the repo root
   and streams its output into the transcript, so what it showed feeds handoffs.
-  Each `!` is a fresh shell — no state carries between commands. Non-zero exits
+  Each `!` is a fresh shell, so no state carries between commands. Non-zero exits
   are reported, and `Ctrl+C` kills the whole pipeline.
 - **Queue messages while an agent is working.** Typing during a turn used to go
   nowhere: the input panel is closed for the duration so agent output can stream
   into real terminal scrollback, which left no input surface at all. The REPL now
   reads keystrokes during a turn, shows a standing `› type to queue a follow-up`
   input line with what you are typing, lists what is already waiting, and runs
-  queued messages in order when the turn ends — the way Claude Code and Codex
+  queued messages in order when the turn ends, the way Claude Code and Codex
   do. `↑` on an empty line pulls the newest queued message back into the input
   to edit before it is sent; it goes back on the end when you press Enter.
   Enter is the contract: only submitted lines run. A line still half-typed when
@@ -146,14 +146,14 @@ Releases and downloadable artifacts live on the
 ### Changed
 - **Agent reasoning is shown but never persisted.** Thinking text used to be
   written into the session transcript, which lands on disk and feeds the
-  handoff packet the next agent receives. Reasoning is unbounded agent text —
-  it quotes system prompts, files it just read, whatever it happened to see —
+  handoff packet the next agent receives. Reasoning is unbounded agent text:
+  it quotes system prompts, files it just read, whatever it happened to see,
   and none of that belongs in a durable artifact handed onward. It still
   renders live; `/thinking off` hides it on screen too.
 - **Claude model labels no longer pin a version.** The picker read `Opus 4.8`
   while the `opus` alias had already moved to `claude-opus-5`, so it advertised
   the wrong model. Labels are now bare tier names (`Fable`, `Opus`, `Sonnet`,
-  `Haiku`), which cannot go stale — Anthropic repoints the aliases at each
+  `Haiku`), which cannot go stale, because Anthropic repoints the aliases at each
   release and the ids follow automatically.
 - **Edit previews render as a diff, not a raw patch.** An agent's edit now
   shows as `Update(README.md)` with a plain-language count (`Added 4 lines,
@@ -166,17 +166,17 @@ Releases and downloadable artifacts live on the
 - **Escape sequences in agent output can no longer restyle the UI.** File
   content shown in a diff, reasoning text, and spinner labels are now stripped
   of ANSI escapes and control characters before rendering. A file whose bytes
-  contain `ESC[31m` was being passed through to the terminal — recolouring
+  contain `ESC[31m` was being passed through to the terminal, recolouring
   Relay's own UI and, because escapes are not zero-width, pushing rows past the
   console edge. (Streamed agent output is unchanged: the existing sanitizer
   still allows an agent to colour its own text.)
 - **Agent reasoning renders as dimmed prose.** It was a Markdown blockquote,
-  which Rich draws with a full-height `▌` bar and renders as Markdown — so the
+  which Rich draws with a full-height `▌` bar and renders as Markdown, so the
   least important thing on screen also got boxed code blocks and highlighted
   spans. It is now quiet text that reads as secondary to the answer.
 - **The turn transcript repeats itself less, and breathes.** An edit printed
-  two lines naming the same file — `Editing /long/absolute/path` and then the
-  diff's own header — so the tool line is gone and the diff header carries it.
+  two lines naming the same file (`Editing /long/absolute/path` and then the
+  diff's own header), so the tool line is gone and the diff header carries it.
   Reasoning that only restates the reply it precedes ("Done! The README header
   has been updated…", immediately followed by the agent saying exactly that) is
   no longer shown. And a blank line now separates reasoning, tool calls, diffs
@@ -204,7 +204,7 @@ Releases and downloadable artifacts live on the
   `message`; a provider error puts a string there, which raised an
   `AttributeError` and took down the whole session with a traceback.
 
-## [0.7.0] — 2026-06-02
+## [0.7.0] - 2026-06-02
 
 ### Added
 - **Interactive REPL** (`relay` with no subcommand). Persistent slash
@@ -222,9 +222,9 @@ Releases and downloadable artifacts live on the
   (rotating 5×1 MB). Captures session lifecycle, slash dispatch
   (cmd / duration_ms / ok / error), agent spawn/exit, signal events.
   `RELAY_LOG_LEVEL` honored.
-- **`/diagnose`** — shareable bundle (version + redacted log tail)
+- **`/diagnose`**: shareable bundle (version + redacted log tail)
   for bug reports.
-- **Crash recovery** — pidfile reaper at startup. PID files live in
+- **Crash recovery**: pidfile reaper at startup. PID files live in
   `~/.config/relay/agents/`; on next launch we cross-check the live
   command line against the recorded agent and only signal genuine
   orphans. Reused PIDs are skipped silently.
@@ -245,11 +245,11 @@ Releases and downloadable artifacts live on the
 - New docs: `docs/repl.md`, `docs/architecture.md`,
   `docs/performance.md`, `docs/security.md` (env contract +
   redaction pipeline + validation rules).
-- `scripts/release.sh X.Y.Z` — one-command release prep. Bumps
+- `scripts/release.sh X.Y.Z`: one-command release prep. Bumps
   `__version__`, the extension `package.json`, regenerates the lockfile,
   rewrites `CHANGELOG.md`'s `[Unreleased]` header to a dated `[X.Y.Z]`,
   regenerates the docs-site changelog + search-index JSON, and stages
-  everything for a PR. Doesn't commit/push/tag — leaves that to the
+  everything for a PR. It doesn't commit/push/tag, leaving that to the
   user's branch workflow.
 - **Hook-based automatic rate-limit handoff.** `relay install` now wires
   Claude Code `Notification` and Codex `Stop` hooks, normalizes hook
@@ -281,7 +281,7 @@ Releases and downloadable artifacts live on the
 ### Security
 - **`logger.exception(...)` no longer leaks secrets to disk.**
   `_JsonlFormatter.format` now runs `redact()` over `exc_info`,
-  pre-cached `exc_text`, and `stack_info` — the last hop before the
+  pre-cached `exc_text`, and `stack_info`, the last hop before the
   JSONL file. Previously the redaction filter only touched the
   message and structured extras, so a traceback containing
   `key=sk-…` survived to disk.
@@ -294,7 +294,7 @@ Releases and downloadable artifacts live on the
 - Docs-site changelog page now renders `**bold**` markdown properly
   (was showing literal `**` characters in the v0.6.x entries).
 
-## [0.6.3] — 2026-05-20
+## [0.6.3] - 2026-05-20
 
 ### Fixed
 - **Homebrew bump PR**: `git push` from the rendered formula failed
@@ -304,7 +304,7 @@ Releases and downloadable artifacts live on the
   (`https://x-access-token:$GH_TOKEN@github.com/…`) right after clone so
   subsequent pushes succeed without any extra credential helper setup.
 
-## [0.6.2] — 2026-05-20
+## [0.6.2] - 2026-05-20
 
 ### Changed
 - **VS Code extension publish is no longer automated.** The Marketplace
@@ -320,11 +320,11 @@ Releases and downloadable artifacts live on the
   repo doesn't have a `Formula/` directory yet. Added `mkdir -p
   tap/Formula` before the copy.
 
-## [0.6.1] — 2026-05-20
+## [0.6.1] - 2026-05-20
 
 ### Removed
 - **Intel macOS native binary** (`relay-darwin-x64`). GitHub deprecated the
-  `macos-13` runner in 2026 and capacity collapsed — jobs targeting that
+  `macos-13` runner in 2026 and capacity collapsed, so jobs targeting that
   label routinely queue for hours without starting. Intel-Mac users now
   fall through automatically to `install.sh`'s `uv tool install` fallback;
   the curl one-liner still works on Intel Macs, it just takes the source
@@ -339,53 +339,53 @@ Releases and downloadable artifacts live on the
   Homebrew bump PR automatically, so `brew install bethvourc/tap/agent-relay`
   now works.
 
-## [0.6.0] — 2026-05-20
+## [0.6.0] - 2026-05-20
 
 ### Added
 - **Always-on layer**: a small local daemon plus four adapters captures
   context from every AI coding agent on the machine and hands off
   automatically when one rate-limits. Drive it from the CLI, or let it
   run in the background. See [the always-on guide](https://agent-relay.dev/always-on).
-- `relay install` / `uninstall` / `doctor` — detects installed agents
+- `relay install` / `uninstall` / `doctor`: detects installed agents
   (Claude Code, Cursor, Antigravity, Windsurf, VS Code, Codex CLI, aider,
   Gemini CLI, Warp), wires hooks/extensions/configs, and registers the
   daemon for auto-start via launchd / systemd user units / Windows
   Startup folder. `doctor` runs six health checks.
-- `relay daemon start|stop|status|tail` — manages the background
+- `relay daemon start|stop|status|tail`: manages the background
   process; `tail` streams live events from every adapter.
-- `relay wrap <cmd>` — PTY-wraps any CLI agent (codex, aider,
+- `relay wrap <cmd>`: PTY-wraps any CLI agent (codex, aider,
   gemini-cli, sgpt, llm) so its rate-limits and lifecycle are captured
   without disturbing colours, prompts, or `^C`.
-- `relay resume <snapshot-id>` + `relay snapshots` — list and
+- `relay resume <snapshot-id>` + `relay snapshots`: list and
   reopen handoff snapshots produced by the daemon.
-- `relay dashboard` — local web UI showing live sessions, snapshots,
+- `relay dashboard`: local web UI showing live sessions, snapshots,
   and a handoff trigger. Built into the binary; no external service.
-- `relay proxy start|status|cert` — opt-in HTTPS proxy (requires
+- `relay proxy start|status|cert`: opt-in HTTPS proxy (requires
   `pip install agent-relay-tool[proxy]`) for lossless rate-limit capture
   from Anthropic / OpenAI / Google response headers.
-- `relay mcp serve` — MCP server that lets Warp's native agent (or
+- `relay mcp serve`: MCP server that lets Warp's native agent (or
   any MCP-aware client) feed events into the relay log.
-- `relay self-update` — pulls the latest binary release and replaces
+- `relay self-update`: pulls the latest binary release and replaces
   the running executable atomically.
-- `relay` short command — declared alongside `agent-relay` in the
+- `relay` short command, declared alongside `agent-relay` in the
   PyPI package, so the canonical short name works regardless of install
   method.
 - `--version` / `-V` flag on the root parser.
-- **VS Code-family extension** — one extension published to Open VSX and
+- **VS Code-family extension**: one extension published to Open VSX and
   the VS Code Marketplace covers Cursor, Antigravity, VS Code, Windsurf,
   Trae, Void, and any future VS Code fork. Includes a `Relay: Hand off
   this session` command on `Cmd+Shift+R`.
-- **Native binary distribution** — PyInstaller bundles for macOS arm64 /
+- **Native binary distribution**: PyInstaller bundles for macOS arm64 /
   macOS x64 / Linux x64 / Linux arm64 / Windows x64, published on every
   release via GitHub Actions. The curl one-liner at agent-relay.dev now
   detects platform and pulls the right binary, with a `uv tool` fallback.
-- **Homebrew tap** at `bethvourc/homebrew-tap` — `brew install
+- **Homebrew tap** at `bethvourc/homebrew-tap`: `brew install
   bethvourc/tap/agent-relay` installs the native binary.
 - **Docs site**: new pages at `/always-on`, `/architecture`, `/privacy`,
   `/adapters/{claude-code,cursor,warp,cli}`.
 
 ### Changed
-- `pyproject.toml` cleaned up — `[project.optional-dependencies]` was
+- `pyproject.toml` cleaned up: `[project.optional-dependencies]` was
   previously nested inside `[project]`, which silently dropped
   `authors` / `keywords` / `classifiers` under the wrong section.
 - Release pipeline split: `publish.yml` keeps PyPI ownership;
@@ -394,7 +394,7 @@ Releases and downloadable artifacts live on the
   PR. Source code stays on the private origin; only compiled artifacts
   surface publicly.
 
-## [0.5.6] — 2026-05-14
+## [0.5.6] - 2026-05-14
 
 ### Added
 - `deactivate` command (alias `complete`) for marking a session as finished
@@ -413,7 +413,7 @@ Releases and downloadable artifacts live on the
 - Installation scripts (`install.sh`, `install.ps1`) refined for clearer
   platform-specific guidance.
 
-## [0.5.5] — 2026-05-10
+## [0.5.5] - 2026-05-10
 
 ### Changed
 - Improved cost estimation and model handling in metrics + CLI; cost labels
@@ -421,7 +421,7 @@ Releases and downloadable artifacts live on the
   values are estimates rather than billed amounts.
 - Last release before the public-mirror split.
 
-## [0.5.0] — 2026-05-09
+## [0.5.0] - 2026-05-09
 
 ### Added
 - `alerts` command for inspecting threshold breaches across sessions, with
@@ -429,7 +429,7 @@ Releases and downloadable artifacts live on the
   view.
 - Live-update controls for the dashboard: opt-in soft-refresh with JSON
   payloads so the page can update in place without a full reload.
-- `MetricsFilter` for scoped metric queries — filter dashboard views by
+- `MetricsFilter` for scoped metric queries: filter dashboard views by
   session, agent, time window, and more.
 - HTML dashboard surface for the Prometheus exporter so operators get a
   browsable view alongside the scrape endpoint.
@@ -450,10 +450,10 @@ Releases and downloadable artifacts live on the
 - Deprecated CLI and integration test files cleaned out as part of the
   metrics refactor.
 
-## [0.4.0] — 2026-05-05
+## [0.4.0] - 2026-05-05
 
 ### Added
-- `watch` command — live session monitoring that follows an in-progress
+- `watch` command: live session monitoring that follows an in-progress
   session and auto-picks the latest active session when none is given.
   Includes a `--metrics` panel that refreshes per turn.
 - `metrics` command for token / cost / latency rollups per session.
@@ -466,10 +466,10 @@ Releases and downloadable artifacts live on the
 - Fallback logic in `watch` improved so the command picks the latest
   session when no id is supplied, instead of erroring out.
 
-## [0.3.0] — 2026-04-03
+## [0.3.0] - 2026-04-03
 
 ### Added
-- Gemini agent adapter — Agent Relay now drives Gemini alongside Claude and
+- Gemini agent adapter. Agent Relay now drives Gemini alongside Claude and
   Codex.
 
 ### Changed
@@ -477,7 +477,7 @@ Releases and downloadable artifacts live on the
   improving conversation flow when context is already loaded.
 - Session snapshot rendering in `handoffs` cleaned up for a tighter output.
 
-## [0.2.0] — 2026-03-31
+## [0.2.0] - 2026-03-31
 
 ### Added
 - `converse` command for agent-to-agent turn-based interaction.
@@ -502,12 +502,12 @@ Releases and downloadable artifacts live on the
 - Workstream kind defaults to `mixed` in concurrent execution; schema
   validation added.
 
-## [0.1.0] — 2026-03-27
+## [0.1.0] - 2026-03-27
 
 ### Added
 - Initial release. Agent Relay ships as a local-first CLI for handing off
   coding sessions between AI agents.
-- `agent-relay <agent>` — the one command that captures the current session
+- `agent-relay <agent>`: the one command that captures the current session
   state, generates a handoff packet, and launches the next agent with
   context preserved.
 - v2 session model: per-repo storage at `<repo>/.agent-relay/` with
