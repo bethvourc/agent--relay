@@ -291,8 +291,8 @@ Releases and downloadable artifacts live on the
   into a bug report from any project.
 
 ### Fixed
-- Docs-site changelog page now renders `**bold**` markdown properly
-  (was showing literal `**` characters in the v0.6.x entries).
+- Docs-site changelog page now formats bold text correctly (the v0.6.x
+  entries used to show formatting markers literally).
 
 ## [0.6.3] - 2026-05-20
 
