@@ -312,7 +312,7 @@ If an agent was working outside of Relay and needs to hand off, open a new termi
 | `agent-relay metrics [session-id]`      | Token / cost / latency rollup for a session. Use `--all` for cross-session totals, `--since YYYY-MM-DD` to filter, `--agent claude` (repeatable) to scope.                                                                                                          |
 | `agent-relay metrics-tail [session-id]` | Stream metric events as JSONL — one line per `turn_completed`, plus a final session rollup. Optional `--webhook URL` POSTs each line.                                                                                                                               |
 | `agent-relay metrics-serve`             | Run a metrics exporter (requires at least one of `--prometheus` / `--otlp`). `--prometheus :9464` exposes `/metrics` in Prometheus text format; `--otlp http://collector:4318/v1/metrics` pushes OTLP/HTTP-JSON every 30s. Both can run together.                       |
-| `agent-relay clean`                     | Remove all sessions. Use `--all` to remove entire `.agent-relay/` directory.                                                                                                                                                                                        |
+| `agent-relay clean`                     | Remove all sessions and their stored images. `--attachments` deletes stored images only (sessions keep a record of what was sent); `--all` removes the entire `.agent-relay/` directory.                                                                            |
 
 ### Options
 
