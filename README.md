@@ -299,6 +299,18 @@ If an agent was working outside of Relay and needs to hand off, open a new termi
 | `agent-relay resolve --latest`               | Resume the most recent unresolved conflict.                       |
 | `agent-relay inspect-conflicts <session-id>` | Inspect saved conflict artifacts, versions, and resolution hints. |
 
+### Task graphs
+
+Behind the `task_graphs` feature (`task_graphs = true` under `[features]` in `~/.relay/config.toml`).
+
+| Command | Description |
+| --- | --- |
+| `agent-relay graph run <file>` | Run a graph of subagent steps written as JSON or TOML (`-` for stdin, `--inline TEXT`) under the latest session (`--session` to choose). Each step runs in its own worktree; a step marked `may_edit` has its changes applied when it succeeds. `--dry-run` only validates. Ctrl+C cancels. |
+| `agent-relay graph status [graph-id]` | Show a graph's steps and results, or list a session's graphs. |
+| `agent-relay graph cancel <graph-id> [--node <id>]` | Cancel a graph, or one step and the steps after it. |
+| `agent-relay graph retry <graph-id> <node-id>` | Give a failed, cancelled, or skipped step a fresh attempt (`--confirm-applied` if it already changed the repo), then `graph resume`. |
+| `agent-relay graph reconcile <graph-id>` | Repair a graph whose scheduler stopped; see `docs/runbooks/taskgraph-recovery.md`. |
+
 ### Session management
 
 | Command                                 | Description                                                                                                                                                                                                                                                         |
