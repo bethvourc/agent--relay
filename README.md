@@ -247,6 +247,26 @@ agent-relay race c x "Build the auth module"
 3. **Merge and review**: Relay only merges in-scope work back to the main repo.
 4. **Conflict handling**: Relay saves conflict artifacts, can run an automatic resolver/reviewer pass, and hands off to `resolve` when human judgment is still needed.
 
+With the `race_scoring` feature on, Relay also measures each candidate after implementation: your tests, lint, and build, plus diff size, files touched outside its claim, and time taken. Relay only runs commands you configure, in `.agent-relay/config.toml`:
+
+```toml
+[race.scoring]
+test_command = "{repo}/.venv/bin/python -m pytest -q"
+lint_command = "{repo}/node_modules/.bin/eslint ."
+```
+
+A signal with no command, or one that times out, is shown as unavailable rather than counted against the candidate. See [`docs/spec/config.md`](docs/spec/config.md#racescoring) for timeouts, the time budget, and retries.
+
+Relay then ranks the candidates and recommends one, explaining every signal's contribution. A candidate whose tests failed is never recommended. The recommendation is advice: the candidate you pick is recorded next to it in `.agent-relay/sessions/<race>/scores/scores.json`. To change how much each signal counts, set relative weights in `~/.config/relay/config.toml` (0 ignores a signal):
+
+```toml
+[race.weights]
+tests = 0.5
+cost = 0
+```
+
+`relay race` prints the ranking after the summary (`--json` adds it under `scores`), and `relay resolve` shows how the race being resolved ranked. Add `--judge auto` to also get an AI review of the candidates' diffs. The judge is advisory: it never changes the ranking or lets a candidate whose tests failed be recommended.
+
 ### Fall back to one-command relay when Relay was not managing the session
 
 ```bash
@@ -335,6 +355,7 @@ Behind the `task_graphs` feature (`task_graphs = true` under `[features]` in `~/
 | `--continue`          | Continue from a prior relay session id                        |
 | `-n`                  | Max turns for `run`/`chat` (default: 10)                      |
 | `--max-time`          | Max seconds for `race` (default: 600)                         |
+| `--judge AGENT`       | With race scoring on: ask AGENT, or `auto` (an installed agent not in the race), for an advisory review of the candidates |
 | `--open-terminals`    | Auto-open terminal windows/tabs for `race`/`resolve` on macOS |
 | `--no-open-terminals` | Disable auto-open terminal behavior                           |
 | `--from`              | Source agent for relay (auto-detected by default)             |
